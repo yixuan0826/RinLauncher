@@ -46,7 +46,8 @@ ColumnLayout {
     function read() {
         return {
             "type": actionType,
-            "target": targetField.text.trim(),
+            // 按键动作没有目标，字段里的陈年残留不落盘。
+            "target": actionType === "keyboard" ? "" : targetField.text.trim(),
             "arguments": argsField.text.trim(),
             "working_dir": workdirField.text.trim(),
             "run_as": adminSwitch.checked ? "admin" : "user",
@@ -112,11 +113,13 @@ ColumnLayout {
 
     FormRow {
         label: qsTr("目标")
+        // 行按动作类型条件显示：按键动作没有目标，整个隐藏。
+        visible: form.actionType !== "keyboard"
+        objectName: "actionFormTargetRow"
         TextField {
             id: targetField
             Layout.fillWidth: true
             placeholderText: form.targetHint()
-            enabled: form.actionType !== "keyboard"
         }
         ToolButton {
             icon.name: "ic_fluent_folder_open_20_regular"
@@ -133,6 +136,9 @@ ColumnLayout {
 
     FormRow {
         label: qsTr("参数")
+        // 参数 / 工作目录 / 管理员只对文件与命令行有意义。
+        visible: form.actionType === "file" || form.actionType === "cmd"
+        objectName: "actionFormArgsRow"
         TextField {
             id: argsField
             Layout.fillWidth: true
@@ -142,6 +148,8 @@ ColumnLayout {
 
     FormRow {
         label: qsTr("工作目录")
+        visible: form.actionType === "file" || form.actionType === "cmd"
+        objectName: "actionFormWorkdirRow"
         TextField {
             id: workdirField
             Layout.fillWidth: true
@@ -151,10 +159,10 @@ ColumnLayout {
 
     FormRow {
         label: qsTr("管理员运行")
-        description: qsTr("仅对文件 / 命令行类型有效")
+        visible: form.actionType === "file" || form.actionType === "cmd"
+        objectName: "actionFormAdminRow"
         Switch {
             id: adminSwitch
-            enabled: form.actionType === "file" || form.actionType === "cmd"
             checkedText: qsTr("是")
             uncheckedText: qsTr("否")
         }
@@ -185,6 +193,7 @@ ColumnLayout {
     Text {
         Layout.fillWidth: true
         Layout.topMargin: 4
+        visible: form.actionType !== "keyboard"
         wrapMode: Text.Wrap
         typography: Typography.Caption
         color: Theme.currentTheme.colors.textSecondaryColor

@@ -116,6 +116,30 @@ class ActionExecutor:
             resolved = resolved.replace(token, value)
         return resolved
 
+    def _elevation_blocked(self, action: dict[str, Any]) -> bool:
+        """「自动提权」关掉后，隐式提权动作直接拦下并提醒。
+
+        显式提权（右键「以管理员身份打开」，payload 带 ``_explicit_admin``）
+        是用户点名要的，不走这道闸。
+        """
+        if action.get("_explicit_admin"):
+            return False
+        manager = self.config_manager
+        if manager is None:
+            return False
+        try:
+            allowed = bool(manager.config["settings"].get("adminAutoElevate", True))
+        except Exception:
+            return False
+        if allowed:
+            return False
+        logger.info("adminAutoElevate is off, skipping elevated action %r",
+                    action.get("name", "?"))
+        notify = getattr(manager, "notify", None)
+        if callable(notify):
+            notify("已在设置里关闭自动提权，这个动作没有执行", "warning")
+        return True
+
     # ------------------------------------------------------------------
     # Action handlers
     # ------------------------------------------------------------------
@@ -131,7 +155,10 @@ class ActionExecutor:
 
         args = self._expand(action.get("arguments"))
         cwd = self._expand(action.get("working_dir")) or str(Path(program).parent)
-        return self._spawn(program, args, cwd, elevated=action.get("run_as") == "admin")
+        elevated = action.get("run_as") == "admin"
+        if elevated and not is_admin() and self._elevation_blocked(action):
+            return False
+        return self._spawn(program, args, cwd, elevated=elevated)
 
     def _run_cmd(self, action: dict[str, Any]) -> bool:
         command = self._expand(action.get("target"))
@@ -143,6 +170,8 @@ class ActionExecutor:
         shell_command = f"{command} {args}".strip()
 
         if action.get("run_as") == "admin" and not is_admin():
+            if self._elevation_blocked(action):
+                return False
             return run_elevated("cmd.exe", f"/c {shell_command}", cwd)
         return self._spawn_shell(shell_command, cwd)
 

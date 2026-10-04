@@ -101,6 +101,18 @@ Menu {
     topPadding: 5
     bottomPadding: 5
 
+    // 本地补丁（同步 RinUI 上游时保留）：enter 动画会把 height 定格在动画结束
+    // 那一刻的 implicitHeight；菜单条目在首开后布局才稳定时，height 就会停在
+    // 偏小的值上，表现为「最后一行被裁掉/显示不全」。动画不跑的时候把 height
+    // 钉回 implicitHeight（后续布局变化也能跟上）。
+    Binding {
+        target: root
+        property: "height"
+        value: root.implicitHeight
+        when: !enter.running
+        restoreMode: Binding.RestoreNone
+    }
+
     background: Rectangle {
         anchors.fill: parent
         radius: Theme.currentTheme.appearance.windowRadius

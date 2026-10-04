@@ -5,8 +5,10 @@ __pycache__/
 build/
 dist/
 .venv/
+.venv*/
 venv/
 .ruff_cache/
+.pytest_cache/
 
 # PyInstaller
 *.manifest

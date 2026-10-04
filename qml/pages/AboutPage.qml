@@ -111,7 +111,7 @@ Item {
                                 Text {
                                     typography: Typography.Caption
                                     color: Theme.currentTheme.colors.textSecondaryColor
-                                    text: qsTr("v%1").arg(aboutPage.runtime.version || "1.1.0")
+                                    text: qsTr("v%1").arg(aboutPage.runtime.version || "-")
                                 }
                             }
 
@@ -240,10 +240,10 @@ Item {
 
                     FormRow {
                         label: qsTr("本项目")
-                        description: qsTr("以 GPL-3.0-or-later 发布")
+                        description: qsTr("以 MIT 许可证发布")
                         Hyperlink {
-                            text: qsTr("查看 GPL-3.0 全文")
-                            openUrl: "https://www.gnu.org/licenses/gpl-3.0.html"
+                            text: qsTr("查看 MIT 全文")
+                            openUrl: "https://opensource.org/license/mit"
                         }
                     }
 

@@ -101,3 +101,18 @@ def set_run_on_startup(enable: bool) -> bool:
         logger.exception("Failed to update the run-at-login registry value")
         return False
     return True
+
+
+def run_on_startup_enabled() -> bool:
+    """注册表里有没有我们的开机自启动值（给三态启动方式的回查用）。"""
+    if sys.platform != "win32":
+        return False
+
+    import winreg
+
+    try:
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY) as key:
+            winreg.QueryValueEx(key, _RUN_VALUE)
+        return True
+    except OSError:
+        return False

@@ -4,12 +4,13 @@ import QtQuick.Layouts 2.15
 import RinUI
 
 import "../components"
+import "../dialogs"
 
-// 快捷操作。
+// 快捷操作（动作模板库）。
 //
-// 只读的模板库：左边分区、右边条目，这里只负责「看」和「复制到启动台」——
-// 条目的创建和编辑已经合进启动台（每一格都能改动作、名称和图标），复制过去
-// 以后两边各管各的。页面入口收在完整窗口标题栏右上角的「…」菜单里。
+// 左边分区、右边条目：条目和分区都在这里维护（新增 / 编辑 / 删除），
+// 「复制到启动台」把一份内容拷到面板格子里，之后两边各管各的。
+// 页面入口收在完整窗口标题栏右上角的「…」菜单里。
 Item {
     id: recordsPage
 
@@ -17,6 +18,20 @@ Item {
     property var entries: []
     property string selectedCategory: ""
     property string query: ""
+
+    ConfirmDialog {
+        id: confirmDialog
+    }
+
+    RecordEntryDialog {
+        id: entryDialog
+        onSaved: recordsPage.reload()
+    }
+
+    CategoryEditorDialog {
+        id: categoryDialog
+        onSaved: recordsPage.reload()
+    }
 
     ColumnLayout {
         anchors.fill: parent
@@ -42,7 +57,7 @@ Item {
                 Text {
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("只读模板库：复制到启动台，之后各管各的")
+                    text: qsTr("动作模板库：在这里维护，复制一份到启动台使用")
                 }
             }
 
@@ -79,9 +94,17 @@ Item {
                         }
                         Item { Layout.fillWidth: true }
                         Text {
+                            Layout.alignment: Qt.AlignVCenter
                             typography: Typography.Caption
                             color: Theme.currentTheme.colors.textSecondaryColor
                             text: qsTr("%1 个").arg(recordsPage.categories.length)
+                        }
+                        ToolButton {
+                            Layout.alignment: Qt.AlignVCenter
+                            objectName: "recordsAddCategoryButton"
+                            icon.name: "ic_fluent_add_20_regular"
+                            ToolTip.text: qsTr("新增分区")
+                            onClicked: recordsPage.addCategory()
                         }
                     }
 
@@ -101,6 +124,13 @@ Item {
                             color: recordsPage.selectedCategory === modelData.name
                                 ? Theme.currentTheme.colors.subtleSecondaryColor
                                 : Theme.currentTheme.colors.cardColor
+
+                            // MouseArea 先声明、RowLayout 后声明：后声明的在上层，
+                            // 行尾按钮才收得到点击；空白处的点击会落到 MouseArea。
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: recordsPage.selectCategory(modelData.name)
+                            }
 
                             RowLayout {
                                 anchors.fill: parent
@@ -132,16 +162,25 @@ Item {
                                         elide: Text.ElideRight
                                         typography: Typography.Caption
                                         color: Theme.currentTheme.colors.textSecondaryColor
-                                        text: qsTr("%1 项 · 排序 %2")
-                                            .arg(modelData.entryCount)
-                                            .arg(modelData.order)
+                                        text: qsTr("%1 项").arg(modelData.entryCount)
                                     }
                                 }
-                            }
 
-                            MouseArea {
-                                anchors.fill: parent
-                                onClicked: recordsPage.selectCategory(modelData.name)
+                                ToolButton {
+                                    // 「默认」是所有落单条目的归宿，不让改也不让删。
+                                    Layout.alignment: Qt.AlignVCenter
+                                    visible: modelData.name !== "默认"
+                                    icon.name: "ic_fluent_edit_20_regular"
+                                    ToolTip.text: qsTr("重命名 / 换图标")
+                                    onClicked: recordsPage.editCategory(modelData)
+                                }
+                                ToolButton {
+                                    Layout.alignment: Qt.AlignVCenter
+                                    visible: modelData.name !== "默认"
+                                    icon.name: "ic_fluent_delete_20_regular"
+                                    ToolTip.text: qsTr("删除分区（条目会移到默认）")
+                                    onClicked: recordsPage.deleteCategory(modelData)
+                                }
                             }
                         }
                     }
@@ -187,6 +226,13 @@ Item {
                         }
 
                         Item { Layout.fillWidth: true }
+
+                        Button {
+                            Layout.alignment: Qt.AlignVCenter
+                            text: qsTr("新增条目")
+                            icon.name: "ic_fluent_add_20_regular"
+                            onClicked: recordsPage.addEntry()
+                        }
                     }
 
                     ListView {
@@ -268,6 +314,17 @@ Item {
                                         tip: qsTr("复制到启动台")
                                         onClicked: recordsPage.copyToLauncher(modelData)
                                     }
+                                    MiniIconButton {
+                                        iconName: "ic_fluent_edit_20_regular"
+                                        tip: qsTr("编辑")
+                                        onClicked: recordsPage.editEntry(modelData)
+                                    }
+                                    MiniIconButton {
+                                        iconName: "ic_fluent_delete_20_regular"
+                                        tip: qsTr("删除")
+                                        danger: true
+                                        onClicked: recordsPage.deleteEntry(modelData)
+                                    }
                                 }
                             }
                         }
@@ -281,8 +338,7 @@ Item {
                         verticalAlignment: Text.AlignVCenter
                         wrapMode: Text.Wrap
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("这里还没有操作。导入配置或恢复默认后会出现在这里，"
-                                   + "点行尾的按钮就能复制到启动台。")
+                        text: qsTr("还没有条目：点右上角「新增条目」开始。")
                     }
                 }
             }
@@ -375,5 +431,32 @@ Item {
     // 行尾按钮：拷一份到启动台面板（两边从此各管各的）。
     function copyToLauncher(entry) {
         ConfigManager.addActionToLauncher(entry.id, 0)
+    }
+
+    // ── 编辑（条目 + 分区都在这里维护）──
+    function addEntry() {
+        entryDialog.openFor(null, recordsPage.selectedCategory)
+    }
+
+    function editEntry(entry) {
+        entryDialog.openFor(entry, recordsPage.selectedCategory)
+    }
+
+    function deleteEntry(entry) {
+        confirmDialog.ask(qsTr("删除「%1」？引用了它的启动台格子会一起移除。").arg(entry.name),
+                          function () { ConfigManager.deleteAction(entry.id) })
+    }
+
+    function addCategory() {
+        categoryDialog.openFor(null)
+    }
+
+    function editCategory(category) {
+        categoryDialog.openFor(category)
+    }
+
+    function deleteCategory(category) {
+        confirmDialog.ask(qsTr("删除分区「%1」？里面的条目会移到「默认」。").arg(category.name),
+                          function () { ConfigManager.deleteCategory(category.id) })
     }
 }

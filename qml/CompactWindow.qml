@@ -70,6 +70,29 @@ Window {
     onHeightChanged: snapToCorner()
 
     // ------------------------------------------------------------------
+    // 动画总开关：设置里关掉后把 RinUI 的全局动画时长清成 0。
+    // ------------------------------------------------------------------
+    property var _animDefaults: null
+
+    function applyAnimationSetting() {
+        if (compact._animDefaults === null) {
+            // 第一次把 RinUI 的默认值抄下来，之后在默认值和 0 之间来回切。
+            compact._animDefaults = {
+                "animationSpeed": Utils.animationSpeed,
+                "animationSpeedExpander": Utils.animationSpeedExpander,
+                "animationSpeedFaster": Utils.animationSpeedFaster,
+                "appearanceSpeed": Utils.appearanceSpeed,
+                "animationSpeedMiddle": Utils.animationSpeedMiddle,
+                "progressBarAnimationSpeed": Utils.progressBarAnimationSpeed
+            }
+        }
+        var enabled = ConfigManager.getSettings().animationEnabled !== false
+        for (var key in compact._animDefaults) {
+            Utils[key] = enabled ? compact._animDefaults[key] : 0
+        }
+    }
+
+    // ------------------------------------------------------------------
     // 界面
     // ------------------------------------------------------------------
     Item {
@@ -355,6 +378,7 @@ Window {
 
                 ToolButton {
                     icon.name: "ic_fluent_more_vertical_20_regular"
+                    objectName: "compactMoreButton"
                     ToolTip.text: qsTr("更多")
                     onClicked: {
                         // position 必须是 None，否则 RinUI 的 Menu 会按锚点重算
@@ -400,6 +424,80 @@ Window {
                 id: toastTimer
                 interval: 2600
                 onTriggered: toast.opacity = 0
+            }
+        }
+
+        // 提权前确认层：小窗不接受键盘焦点，用自绘卡片而不是 Dialog；
+        // 遮罩拦住底下的点击，点遮罩等于取消。
+        Rectangle {
+            id: adminConfirmScrim
+
+            objectName: "adminConfirmScrim"
+            anchors.fill: parent
+            z: 950
+            color: Qt.rgba(0, 0, 0, 0.35)
+            opacity: 0
+            visible: opacity > 0
+            Behavior on opacity {
+                NumberAnimation { duration: 140 }
+            }
+
+            MouseArea {
+                anchors.fill: parent
+                onClicked: compact.cancelAdminRun()
+            }
+
+            Frame {
+                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.verticalCenter: parent.verticalCenter
+                width: Math.min(parent.width - 48, 320)
+                implicitHeight: confirmColumn.implicitHeight + 24
+                hoverable: false
+
+                ColumnLayout {
+                    id: confirmColumn
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    spacing: 8
+
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Theme.currentTheme.colors.textColor
+                        font.pixelSize: 13
+                        text: qsTr("以管理员身份运行：")
+                    }
+                    Text {
+                        id: adminConfirmName
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Theme.currentTheme.colors.textColor
+                        font.pixelSize: 13
+                        font.bold: true
+                        text: ""
+                    }
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Theme.currentTheme.colors.textSecondaryColor
+                        font.pixelSize: 11
+                        text: qsTr("会弹出 UAC 授权窗口。")
+                    }
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("取消")
+                            onClicked: compact.cancelAdminRun()
+                        }
+                        Button {
+                            text: qsTr("运行")
+                            highlighted: true
+                            onClicked: compact.confirmAdminRun()
+                        }
+                    }
+                }
             }
         }
     }
@@ -492,6 +590,7 @@ Window {
     Component.onCompleted: {
         snapToCorner()
         reload()
+        applyAnimationSetting()
     }
 
     Connections {
@@ -500,6 +599,11 @@ Window {
         // 只有小窗关心的那一块变了才重取，设置改动不会带着这里一起重算。
         function onLauncherChanged() {
             compact.reload()
+        }
+
+        function onSettingsChanged() {
+            // 动画总开关变化即时生效。
+            compact.applyAnimationSetting()
         }
 
         function onShowToast(message, _severity) {
@@ -536,7 +640,35 @@ Window {
             runTool(slot.key)
             return
         }
+        // 管理员动作：设置里开着「提权前确认」就先问一句（右键显式提权不拦）。
+        if (slot.admin === true
+                && ConfigManager.getSettings().confirmAdminActions !== false) {
+            compact.askAdminRun(slot)
+            return
+        }
         ConfigManager.runLauncherSlot(slot)
+    }
+
+    // ── 提权前确认层 ──
+    property var _pendingAdminSlot: null
+
+    function askAdminRun(slot) {
+        _pendingAdminSlot = slot
+        adminConfirmName.text = slot && slot.name ? slot.name : qsTr("这个动作")
+        adminConfirmScrim.opacity = 1
+    }
+
+    function cancelAdminRun() {
+        _pendingAdminSlot = null
+        adminConfirmScrim.opacity = 0
+    }
+
+    function confirmAdminRun() {
+        var slot = _pendingAdminSlot
+        cancelAdminRun()
+        if (slot) {
+            ConfigManager.runLauncherSlot(slot)
+        }
     }
 
     function runSlotAsAdmin(slot) {
@@ -545,6 +677,7 @@ Window {
         }
         // 把解析出来的完整动作字段带过去（类型 / 目标 / 参数 / 工作目录 / 按键
         // 序列），缺了会执行出不一样的结果。
+        // 右键点名要的提权：带 _explicit_admin 标记，不受「提权前确认 / 自动提权」拦截。
         var payload = {
             "id": slot.ref || "",
             "name": slot.name,
@@ -553,7 +686,8 @@ Window {
             "arguments": slot.arguments || "",
             "working_dir": slot.working_dir || "",
             "keyboard_steps": slot.keyboard_steps || [],
-            "run_as": "admin"
+            "run_as": "admin",
+            "_explicit_admin": true
         }
         ConfigManager.executeAction(payload)
     }

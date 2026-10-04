@@ -23,6 +23,14 @@ FluentWindow {
     // 托盘菜单和设置页都通过这个属性切页：setProperty("requestedPage", "settings")。
     property string requestedPage: ""
 
+    // 当前在设置页？（标题栏「…」菜单据此多出五个分区跳转。）
+    // 注意排除 LauncherSettingsPage：它名字里也带 SettingsPage。
+    readonly property bool onSettingsPage: {
+        var page = String(currentPage)
+        return page.indexOf("SettingsPage.qml") >= 0
+            && page.indexOf("LauncherSettingsPage.qml") < 0
+    }
+
     // 关闭按钮不直接退出，交给 Python 判断该隐藏（有托盘）还是真退出。
     signal closeRequested()
 
@@ -103,6 +111,42 @@ FluentWindow {
         objectName: "moreMenu"
         position: Position.None
 
+        // 在设置页时，菜单头顶先摆五个分区跳转 —— 设置页自己那个「…」按钮
+        // 已经删掉，两套菜单合并成这一套。
+        MenuItem {
+            text: qsTr("常规")
+            icon.name: "ic_fluent_home_20_regular"
+            visible: launcherWindow.onSettingsPage
+            onTriggered: ConfigManager.requestSettingsSection("generalGroup")
+        }
+        MenuItem {
+            text: qsTr("外观")
+            icon.name: "ic_fluent_color_20_regular"
+            visible: launcherWindow.onSettingsPage
+            onTriggered: ConfigManager.requestSettingsSection("appearanceGroup")
+        }
+        MenuItem {
+            text: qsTr("启动台")
+            icon.name: "ic_fluent_apps_20_regular"
+            visible: launcherWindow.onSettingsPage
+            onTriggered: ConfigManager.requestSettingsSection("launcherGroup")
+        }
+        MenuItem {
+            text: qsTr("热键")
+            icon.name: "ic_fluent_keyboard_20_regular"
+            visible: launcherWindow.onSettingsPage
+            onTriggered: ConfigManager.requestSettingsSection("hotkeyGroup")
+        }
+        MenuItem {
+            text: qsTr("高级")
+            icon.name: "ic_fluent_toolbox_20_regular"
+            visible: launcherWindow.onSettingsPage
+            onTriggered: ConfigManager.requestSettingsSection("advancedGroup")
+        }
+        MenuSeparator {
+            visible: launcherWindow.onSettingsPage
+        }
+
         MenuItem {
             text: qsTr("快捷操作…")
             icon.name: "ic_fluent_flash_20_regular"
@@ -129,9 +173,39 @@ FluentWindow {
         moreMenu.popup(Qt.point(Math.max(0, local.x - moreMenu.width), local.y))
     }
 
+    // ------------------------------------------------------------------
+    // 动画总开关：设置里关掉后把 RinUI 的全局动画时长清成 0。
+    // ------------------------------------------------------------------
+    property var _animDefaults: null
+
+    function applyAnimationSetting() {
+        if (launcherWindow._animDefaults === null) {
+            // 第一次把 RinUI 的默认值抄下来，之后在默认值和 0 之间来回切。
+            launcherWindow._animDefaults = {
+                "animationSpeed": Utils.animationSpeed,
+                "animationSpeedExpander": Utils.animationSpeedExpander,
+                "animationSpeedFaster": Utils.animationSpeedFaster,
+                "appearanceSpeed": Utils.appearanceSpeed,
+                "animationSpeedMiddle": Utils.animationSpeedMiddle,
+                "progressBarAnimationSpeed": Utils.progressBarAnimationSpeed
+            }
+        }
+        var enabled = ConfigManager.getSettings().animationEnabled !== false
+        for (var key in launcherWindow._animDefaults) {
+            Utils[key] = enabled ? launcherWindow._animDefaults[key] : 0
+        }
+    }
+
+    Component.onCompleted: launcherWindow.applyAnimationSetting()
+
     // 后端所有提示都走同一条链路，UI 不必自己维护信息条。
     Connections {
         target: ConfigManager
+
+        function onSettingsChanged() {
+            // 动画总开关变化即时生效。
+            launcherWindow.applyAnimationSetting()
+        }
 
         function onShowToast(message, severity) {
             launcherWindow.floatLayer.createInfoBar({

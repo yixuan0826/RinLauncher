@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rin-launcher"
-version = "1.0.0"
+dynamic = ["version"]
 description = "类似希沃桌面助手的启动台应用 - 基于 Python + RinUI (QML)"
 readme = "README.md"
-license = { text = "GPL-3.0-or-later" }
+license = { text = "MIT" }
 requires-python = ">=3.10"
 dependencies = [
     "PySide6>=6.6.0",
@@ -28,6 +28,17 @@ rin-launcher = "rin_launcher.main:main"
 [tool.setuptools.packages.find]
 include = ["rin_launcher*"]
 
+# 版本号只有一处来源：rin_launcher/__init__.py 的 __version__（main.py 与
+# config_manager 也引它，构建元数据这里动态读回来）。
+[tool.setuptools.dynamic]
+version = { attr = "rin_launcher.__version__" }
+
 [tool.ruff]
 line-length = 100
 target-version = "py310"
+
+# 显式钉规则集：不跟随某个 ruff 版本的默认值漂移（新版本默认集扩过好几轮）。
+# E4/E7/E9/F = 经典默认；W = 空白类告警；I = import 排序。
+# 有意不启用 BLE/S：这个项目里「GUI 壳层吞掉一切异常并记日志」是有意为之。
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F", "W", "I"]

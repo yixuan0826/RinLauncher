@@ -8,11 +8,8 @@ import "../dialogs"
 
 // 设置。
 //
-// 结构上做了一次整理：
-//   * 顶部一排锚点，点一下直接跳到对应分组，不用一路滚；
-//   * 材质从「亚克力开关」换成 RinUI 的材质下拉（默认增强云母），
-//     小窗的亚克力是独立的一项（它是桌面挂件，不跟完整窗口共用材质）；
-//   * 「关于」搬到独立页面，这里只留配置。
+// 分组跳转（常规 / 外观 / 启动台 / 热键 / 高级）在标题栏的「…」菜单里，
+// 页面内不再单独放一个「…」菜单（两套菜单挨在一起太乱）。
 // 所有改动都是即时生效的：控件先写进 pending，再由 350ms 的定时器合并写盘，
 // 拖动滑杆或在输入框里连续打字都不会把配置文件刷爆。
 Item {
@@ -21,41 +18,8 @@ Item {
     property var model: ({})
     property var pending: ({})
 
-    // 锚点：（标题，图标，分组 id）
-    readonly property var sections: [
-        {"title": qsTr("常规"), "icon": "ic_fluent_home_20_regular", "target": "generalGroup"},
-        {"title": qsTr("外观"), "icon": "lawnicons:generic_gallery", "target": "appearanceGroup"},
-        {"title": qsTr("启动台"), "icon": "ic_fluent_apps_20_regular", "target": "launcherGroup"},
-        {"title": qsTr("热键"), "icon": "ic_fluent_keyboard_20_regular", "target": "hotkeyGroup"},
-        {"title": qsTr("高级"), "icon": "ic_fluent_toolbox_20_regular", "target": "advancedGroup"}
-    ]
-
     ConfirmDialog {
         id: confirmDialog
-    }
-
-    // 右上角「…」菜单：分组跳转 + 打开配置目录，头部只留一个入口。
-    Menu {
-        id: sectionsMenu
-
-        objectName: "sectionsMenu"
-        position: Position.None
-
-        Repeater {
-            model: settingsPage.sections
-
-            delegate: MenuItem {
-                text: modelData.title
-                icon.name: modelData.icon
-                onTriggered: settingsPage.scrollTo(modelData.target)
-            }
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("打开配置目录")
-            icon.name: "ic_fluent_folder_open_20_regular"
-            onTriggered: ConfigManager.openConfigFolder()
-        }
     }
 
     Timer {
@@ -76,35 +40,15 @@ Item {
             Layout.rightMargin: 16
             spacing: 8
 
-            ColumnLayout {
+            Text {
                 Layout.alignment: Qt.AlignVCenter
-                spacing: 0
-                Text {
-                    font.bold: true
-                    font.pixelSize: Theme.currentTheme.typography.bodySize + 4
-                    color: Theme.currentTheme.colors.textColor
-                    text: qsTr("设置")
-                }
-                Text {
-                    typography: Typography.Caption
-                    color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("改完立即生效")
-                }
+                font.bold: true
+                font.pixelSize: Theme.currentTheme.typography.bodySize + 4
+                color: Theme.currentTheme.colors.textColor
+                text: qsTr("设置")
             }
 
             Item { Layout.fillWidth: true }
-
-            // 分组跳转收进右上角的「…」菜单，头部只留这一个入口。
-            ToolButton {
-                id: sectionsButton
-                objectName: "sectionsButton"
-                Layout.alignment: Qt.AlignVCenter
-                icon.name: "ic_fluent_more_horizontal_20_regular"
-                ToolTip.text: qsTr("更多")
-                ToolTip.visible: hovered
-                ToolTip.delay: 500
-                onClicked: settingsPage.popupSectionsMenu(sectionsButton)
-            }
         }
 
         Flickable {
@@ -129,19 +73,22 @@ Item {
                     iconKey: "ic_fluent_home_20_regular"
 
                     FormRow {
-                        label: qsTr("开机自动启动")
-                        description: qsTr("登录时自动启动（写注册表）")
-                        Switch {
-                            id: autoStartSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("autoStart", checked)
+                        label: qsTr("启动方式")
+                        description: qsTr("管理员自启动由任务计划实现")
+                        ComboBox {
+                            id: startupCombo
+                            objectName: "startupCombo"
+                            Layout.preferredWidth: 180
+                            model: [qsTr("关闭"), qsTr("登录时启动"), qsTr("管理员自启动")]
+                            onActivated: function (index) {
+                                settingsPage.applyStartup(index)
+                            }
                         }
                     }
 
                     FormRow {
                         label: qsTr("启动时最小化")
-                        description: qsTr("启动后不弹小窗，只留托盘")
+                        description: qsTr("启动后只留托盘")
                         Switch {
                             id: startMinimizedSwitch
                             checkedText: qsTr("开")
@@ -152,7 +99,7 @@ Item {
 
                     FormRow {
                         label: qsTr("系统托盘图标")
-                        description: qsTr("关掉后只能用热键唤出小窗")
+                        description: qsTr("关闭后仅热键可用")
                         Switch {
                             id: traySwitch
                             checkedText: qsTr("开")
@@ -200,7 +147,6 @@ Item {
 
                     FormRow {
                         label: qsTr("窗口材质")
-                        description: qsTr("默认增强云母，不支持时自动回退")
                         ComboBox {
                             id: materialCombo
                             Layout.preferredWidth: 180
@@ -214,7 +160,6 @@ Item {
 
                     FormRow {
                         label: qsTr("小窗亚克力")
-                        description: qsTr("小窗单独用亚克力，比云母更透")
                         Switch {
                             id: acrylicSwitch
                             checkedText: qsTr("开")
@@ -225,7 +170,6 @@ Item {
 
                     FormRow {
                         label: qsTr("动画效果")
-                        description: qsTr("关闭后过渡动画立即完成")
                         Switch {
                             id: animationSwitch
                             checkedText: qsTr("开")
@@ -241,17 +185,8 @@ Item {
                     title: qsTr("启动台")
                     iconKey: "ic_fluent_apps_20_regular"
 
-                    Text {
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        typography: Typography.Caption
-                        color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("面板内容在「启动台」页里配，这里只管行为。")
-                    }
-
                     FormRow {
                         label: qsTr("打开面板")
-                        description: qsTr("去调整面板格子")
                         Button {
                             text: qsTr("启动台设置")
                             icon.name: "ic_fluent_apps_20_regular"
@@ -261,7 +196,7 @@ Item {
 
                     FormRow {
                         label: qsTr("重新检测")
-                        description: qsTr("插拔磁盘后手动刷新容量")
+                        description: qsTr("插拔磁盘后手动刷新")
                         Button {
                             text: qsTr("刷新磁盘")
                             icon.name: "ic_fluent_arrow_sync_20_regular"
@@ -299,7 +234,7 @@ Item {
                         wrapMode: Text.Wrap
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("必须带一个修饰键（Ctrl / Alt / Shift / Win）；留空关闭热键。")
+                        text: qsTr("需含修饰键（Ctrl / Alt / Shift / Win）；留空即关闭。")
                     }
                 }
 
@@ -311,7 +246,7 @@ Item {
 
                     FormRow {
                         label: qsTr("自动提权")
-                        description: qsTr("管理员格直接弹 UAC")
+                        description: qsTr("关闭后管理员动作会被拦下")
                         Switch {
                             id: elevateSwitch
                             checkedText: qsTr("开")
@@ -322,7 +257,6 @@ Item {
 
                     FormRow {
                         label: qsTr("提权前确认")
-                        description: qsTr("提权前先确认一次")
                         Switch {
                             id: confirmAdminSwitch
                             checkedText: qsTr("开")
@@ -333,7 +267,7 @@ Item {
 
                     FormRow {
                         label: qsTr("日志级别")
-                        description: qsTr("重启后生效（配置目录 launcher.log）")
+                        description: qsTr("重启后生效")
                         ComboBox {
                             id: logCombo
                             Layout.preferredWidth: 180
@@ -348,7 +282,6 @@ Item {
 
                     FormRow {
                         label: qsTr("配置")
-                        description: qsTr("打开配置目录 / 文件，或整份导入导出")
                         RowLayout {
                             spacing: 8
                             Button {
@@ -376,7 +309,6 @@ Item {
 
                     FormRow {
                         label: qsTr("图标库")
-                        description: qsTr("导入的图标和从程序提取的图标")
                         RowLayout {
                             spacing: 8
                             Button {
@@ -389,7 +321,7 @@ Item {
 
                     FormRow {
                         label: qsTr("以管理员重启")
-                        description: qsTr("以管理员身份重启（托盘可能消失）")
+                        description: qsTr("托盘图标会随之消失")
                         Button {
                             text: qsTr("立即重启")
                             icon.name: "ic_fluent_shield_20_regular"
@@ -429,7 +361,10 @@ Item {
         }
     }
 
-    Component.onCompleted: reloadSettings()
+    Component.onCompleted: {
+        reloadSettings()
+        reloadStartup()
+    }
 
     // 离开本页时把还没落盘的改动冲掉。
     Component.onDestruction: {
@@ -445,6 +380,24 @@ Item {
                 settingsPage.reloadSettings()
             }
         }
+
+        function onSettingsSectionRequested(name) {
+            // 标题栏「…」菜单点了一个设置分区：滚到对应分组。
+            settingsPage.scrollTo(name)
+        }
+
+        function onStartupStateChanged() {
+            if (!settingsPage.visible) {
+                return
+            }
+            var info = ConfigManager.getStartupState()
+            if (settingsPage.startupPendingAttempts > 0 && info.state === info.mode) {
+                // 提权后的状态就位：收工，顺便把下拉同步到真实值。
+                settingsPage.startupPendingAttempts = 0
+                startupPollTimer.stop()
+            }
+            settingsPage.reloadStartup()
+        }
     }
 
     function openPage(page) {
@@ -452,6 +405,7 @@ Item {
         ConfigManager.requestPage(page)
     }
 
+    // 分组滚动定位：标题栏「…」菜单经 ConfigManager.settingsSectionRequested 调这里。
     function scrollTo(targetId) {
         // 分组对象没法用字符串索引，这里显式映射一次，省掉 eval 之类的花招。
         var map = {
@@ -467,18 +421,62 @@ Item {
         }
     }
 
-    // 「…」菜单贴在按钮左下方弹出（与主窗口标题栏的「…」同一套定位）。
-    function popupSectionsMenu(anchor) {
-        // 页面根是普通 Item，`settingsPage.window` 在 Qt 6 下拿不到东西；
-        // 把按钮角点映射到页面坐标系后直接 popup（弹出层的 parent 就是本页）。
-        var point = anchor.mapToItem(settingsPage, anchor.width, anchor.height + 4)
-        sectionsMenu.popup(Qt.point(Math.max(0, point.x - sectionsMenu.width), point.y))
+    // ── 启动方式（三态）────────────────────────────────
+    readonly property var startupModes: ["off", "normal", "admin"]
+    property int startupPendingAttempts: 0
+
+    function applyStartup(index) {
+        var result = ConfigManager.setStartupMode(startupModes[index])
+        if (!result) {
+            reloadStartup()
+            return
+        }
+        if (result.pending) {
+            // 提权进程还没回来（用户可能正对着 UAC 思考）：定时回查系统里的真实状态。
+            startupPendingAttempts = 15
+            startupPollTimer.restart()
+        } else {
+            reloadStartup()
+        }
+    }
+
+    function reloadStartup() {
+        var info = ConfigManager.getStartupState()
+        startupCombo.currentIndex = Math.max(0, startupModes.indexOf(info.state))
+    }
+
+    // 轮询只负责「叫人去刷」：真正的读取发生在后台线程，刷完经
+    // startupStateChanged 回来再更新界面 —— 全程不阻塞 UI。
+    Timer {
+        id: startupPollTimer
+        interval: 2000
+        repeat: true
+        onTriggered: {
+            settingsPage.startupPendingAttempts -= 1
+            if (settingsPage.startupPendingAttempts <= 0) {
+                startupPollTimer.stop()
+                startupFinalTimer.restart()
+            }
+            ConfigManager.refreshStartupState()
+        }
+    }
+
+    // 轮询次数用尽后的兜底复检：等最后一次异步刷新回来再判定成败。
+    Timer {
+        id: startupFinalTimer
+        interval: 1500
+        onTriggered: {
+            var info = ConfigManager.getStartupState()
+            if (info.state !== info.mode) {
+                ConfigManager.notify(qsTr("启动方式没有生效（授权可能被取消了）"), "warning")
+            }
+            settingsPage.reloadStartup()
+        }
     }
 
     function reloadSettings() {
         model = ConfigManager.getSettings()
 
-        autoStartSwitch.checked = model.autoStart === true
         startMinimizedSwitch.checked = model.startMinimized === true
         traySwitch.checked = model.showTray !== false
 

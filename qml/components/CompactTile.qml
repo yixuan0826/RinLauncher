@@ -35,6 +35,12 @@ Item {
     height: mini ? 58 : width
     opacity: empty ? 0.3 : disabled ? 0.45 : 1
 
+    // 按下去时整格缩一点，「按到了」有个即时反馈；时长跟着动画总开关走。
+    scale: pointer.pressed && !tile.empty ? 0.93 : 1
+    Behavior on scale {
+        NumberAnimation { duration: Utils.animationSpeedFaster; easing.type: Easing.OutCubic }
+    }
+
     Rectangle {
         anchors.fill: parent
         radius: 10
@@ -47,7 +53,7 @@ Item {
             : Theme.currentTheme.colors.primaryColor
 
         Behavior on color {
-            ColorAnimation { duration: 120; easing.type: Easing.OutCubic }
+            ColorAnimation { duration: Utils.animationSpeedFaster; easing.type: Easing.OutCubic }
         }
     }
 

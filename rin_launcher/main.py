@@ -3,6 +3,9 @@
 Run with ``python -m rin_launcher.main`` (or ``python rin_launcher/main.py``).
 """
 
+# 这个文件刻意「先做运行期准备（sys.path、流兜底）再导入」，整份文件豁免 E402。
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 import logging
@@ -34,17 +37,23 @@ for _stream in (sys.stdout, sys.stderr):
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import RinUI  # noqa: F401  (imported first: it configures HiDPI before Qt starts)
-from PySide6.QtWidgets import QApplication  # noqa: E402
-from RinUI import RinUIWindow  # noqa: E402
-from RinUI.core import BackdropEffect, is_windows  # noqa: E402
+from PySide6.QtWidgets import QApplication
 
-from rin_launcher import effects  # noqa: E402
-from rin_launcher.action_executor import ActionExecutor  # noqa: E402
-from rin_launcher.config_manager import ConfigManager  # noqa: E402
-from rin_launcher.hotkey import GlobalHotkey  # noqa: E402
-from rin_launcher.key_recorder import KeyRecorder  # noqa: E402
-from rin_launcher.tray import TrayIcon  # noqa: E402
+# RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
+import RinUI  # noqa: F401
+from rin_launcher import __version__, effects
+from rin_launcher.action_executor import ActionExecutor
+from rin_launcher.config_manager import ConfigManager
+from rin_launcher.hotkey import GlobalHotkey
+from rin_launcher.key_recorder import KeyRecorder
+from rin_launcher.single_instance import (
+    SingleInstanceServer,
+    acquire_single_instance,
+    notify_running_instance,
+)
+from rin_launcher.tray import TrayIcon
+from RinUI import RinUIWindow
+from RinUI.core import BackdropEffect, is_windows
 
 logger = logging.getLogger(__name__)
 
@@ -90,6 +99,8 @@ class Launcher:
         self.hotkey = GlobalHotkey()
         # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
         self.key_recorder = KeyRecorder()
+        # 单实例消息服务端（见 start_single_instance_server）。
+        self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
         # 已经上过的小窗材质参数，避免每次设置改动都重上一次。
         self._acrylic_state: tuple[bool, bool] | None = None
@@ -155,6 +166,8 @@ class Launcher:
         root = window.root_window
         if hasattr(root, "closeRequested"):
             root.closeRequested.connect(self.on_close_requested)
+        # 双引擎的 ThemeManager 每次新建窗口后都要重钉一遍（后建的会顶掉先建的）。
+        self._pin_theme_managers()
         return True
 
     def create_compact_window(self) -> bool:
@@ -177,17 +190,41 @@ class Launcher:
         root.hideRequested.connect(self.hide_compact)
         root.quitRequested.connect(self.quit)
 
-        # ThemeManager 挂在共享的 rootContext 上，后建的窗口会把它顶掉。小窗不是
-        # RinUI 窗口，主题与背景效果都归主窗口管，所以在这里把它钉回主窗口那一份。
-        if self.window is not None:
-            self.window.engine.rootContext().setContextProperty(
-                "ThemeManager", self.window.theme_manager)
+        # ThemeManager 挂在共享的 rootContext 上，后建的窗口会把它顶掉：
+        # 每个引擎都重钉回自己窗口那一份（懒建主窗后这里尤其重要）。
+        self._pin_theme_managers()
 
         # 桌面挂件：沉底、不抢焦点 + 亚克力。材质要在窗口有原生句柄之后再上。
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
         self.apply_compact_acrylic()
         return True
+
+    def ensure_main_window(self) -> bool:
+        """完整窗口按需创建：启动时只出小窗，第一次要打开时才构建。"""
+        if self.window is not None:
+            return True
+        if not self.create_main_window():
+            self.tray.show_message("Rin Launcher", "完整窗口加载失败，可以看看日志")
+            return False
+        return True
+
+    def start_single_instance_server(self) -> None:
+        """守着单实例的本地套接字：第二个进程请求「亮出小窗」时照办。"""
+        self._single_server = SingleInstanceServer(self.app)
+        self._single_server.showRequested.connect(self.show_compact)
+
+    def _pin_theme_managers(self) -> None:
+        """把每个引擎的 ThemeManager 都钉回自己窗口那一份。
+
+        RinUI 的 ThemeManager 挂在各引擎的 rootContext 上，后建的窗口会把先建
+        引擎里的绑定顶掉；谁后建都可能让另一个窗口主题错乱，所以每次新建窗口
+        之后统一重钉一遍。
+        """
+        for window in (self.window, self.compact):
+            if window is not None and window.root_window is not None:
+                window.engine.rootContext().setContextProperty(
+                    "ThemeManager", window.theme_manager)
 
     # ------------------------------------------------------------------
     # OS integration
@@ -285,9 +322,11 @@ class Launcher:
 
     def show_main_page(self, page: str) -> None:
         """打开完整窗口并切到指定页（小窗的「打开完整窗口」也走这里）。"""
-        if self.window is None or self.window.root_window is None:
+        if not self.ensure_main_window():
             return
         root = self.window.root_window
+        if root is None:
+            return
         root.show()
         root.raise_()
         root.requestActivate()
@@ -329,20 +368,34 @@ class Launcher:
 
 
 def main() -> int:
+    # 隐藏的辅助入口：三态启动方式里的任务计划重活在提权进程里干完就退，
+    # 完全不进 Qt、不抢单实例锁（见 rin_launcher/autostart.py）。
+    for arg in sys.argv[1:]:
+        if arg.startswith("--set-startup-mode="):
+            from rin_launcher.autostart import apply_startup_mode
+
+            mode = arg.split("=", 1)[1].strip()
+            return 0 if apply_startup_mode(mode) else 1
+
     app = QApplication(sys.argv)
     app.setApplicationName("Rin Launcher")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationVersion(__version__)
     app.setOrganizationName("RinLauncher")
     app.setQuitOnLastWindowClosed(False)  # the tray keeps the app alive
+
+    # 单实例：已经有实例在跑就把「亮出小窗」交给它，本进程直接退出。
+    guard = acquire_single_instance()
+    if guard is None:
+        notify_running_instance()
+        return 0
 
     launcher = Launcher(app)
     _setup_logging(launcher.config_manager)
 
-    if not launcher.create_main_window():
-        return 1
+    # 启动只出小窗；完整窗口第一次要打开时才建（懒建，启动更快）。
     if not launcher.create_compact_window():
         return 1
-
+    launcher.start_single_instance_server()
     launcher.hotkey.activated.connect(launcher.toggle_compact)
     return launcher.run()
 

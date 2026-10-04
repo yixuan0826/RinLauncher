@@ -13,10 +13,10 @@
 
 产物有两种形态：
 
-* 默认 **onefile** —— 单个 ``dist/RinLauncher.exe``，体积最小、拷贝方便；代价是
-  每次启动先把自己解压到临时目录。
-* **onedir** —— ``set RIN_ONEDIR=1`` 后再构建，产物是 ``dist/RinLauncher/``
-  目录：不用解压，启动快得多，适合固定目录安装。
+* 默认 **onedir** —— ``dist/RinLauncher/`` 目录（入口是 RinLauncher.exe）：
+  不用解压、启动快，是正式发布的形态；``data/`` 数据目录就落在 exe 同级。
+* **onefile** —— ``set RIN_ONEFILE=1`` 后再构建，产物是单个
+  ``dist/RinLauncher.exe``，拷贝方便但每次启动先解压，只作应急用。
 """
 
 import os
@@ -122,7 +122,9 @@ a.datas = _drop_qt_datas(a.datas)
 
 pyz = PYZ(a.pure)
 
-ONEDIR = os.environ.get("RIN_ONEDIR") == "1"
+# 正式发布形态是 onedir：目录形式启动不用先解压，冷启动快得多。
+# 万一需要单文件（比如临时拷给别的机器），设 RIN_ONEFILE=1 再构建。
+ONEDIR = os.environ.get("RIN_ONEFILE") != "1"
 
 if ONEDIR:
     # 目录形态：不打包成一个文件，启动时不用解压。

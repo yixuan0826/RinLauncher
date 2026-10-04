@@ -23,16 +23,18 @@ from typing import Any
 import yaml
 from PySide6.QtCore import QFileInfo, QObject, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
+
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
 from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
-from rin_launcher.elevation import restart_elevated, set_run_on_startup
+from rin_launcher import __version__ as APP_VERSION
+from rin_launcher import autostart
+from rin_launcher.elevation import is_admin, restart_elevated
 
 logger = logging.getLogger(__name__)
 
-APP_VERSION = "1.1.0"
 APP_REPO = "https://github.com/yixuan0826/RinLauncher"
 
 DEFAULT_CONFIG_DIR = Path.home() / "AppData" / "Roaming" / "RinLauncher"
@@ -98,7 +100,6 @@ ACTION_TYPES: tuple = ("file", "cmd", "url", "keyboard")
 # 旧版「键鼠模拟」已降级为「按键模拟」：读到旧类型名就迁成 keyboard，
 # 旧字段 keymouse_steps 中的鼠标步骤直接跳过（执行端不再认识它）。
 LEGACY_ACTION_TYPES: dict[str, str] = {"keymouse": "keyboard"}
-KEYBOARD_STEP_TYPES: tuple = ("key", "wait")
 # 这些后缀是「图片」，走导入；其余（exe/dll/lnk…）走系统图标提取。
 IMAGE_ICON_SUFFIXES: tuple = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
 
@@ -224,11 +225,62 @@ def _list_drives() -> list[dict[str, Any]]:
     return drives
 
 
+def _dir_writable(path: Path) -> bool:
+    """试着往目录里写一个探针文件，判断能不能落盘（Program Files 下会给 False）。"""
+    probe = path / ".write-test"
+    try:
+        probe.write_text("", encoding="utf-8")
+        probe.unlink()
+        return True
+    except OSError:
+        return False
+
+
+def _migrate_legacy_data(data_dir: Path) -> None:
+    """把老位置（%APPDATA%）的配置和图标拷进新的 data/ 目录；只在首次落地时做一次。"""
+    if (data_dir / "config.yaml").exists():
+        return
+    old_config = DEFAULT_CONFIG_DIR / "config.yaml"
+    if not old_config.is_file():
+        return
+    try:
+        shutil.copy2(old_config, data_dir / "config.yaml")
+        old_icons = DEFAULT_CONFIG_DIR / ICON_STORE_NAME
+        if old_icons.is_dir():
+            shutil.copytree(old_icons, data_dir / ICON_STORE_NAME, dirs_exist_ok=True)
+    except OSError:
+        logger.exception("迁移旧数据到 %s 失败，将使用全新数据目录", data_dir)
+        return
+    logger.info("已把旧数据从 %s 迁移到 %s", DEFAULT_CONFIG_DIR, data_dir)
+
+
+def resolve_config_dir() -> Path:
+    """决定这次运行用哪个数据目录。
+
+    * 打包的 exe：exe 同级的 ``data/``（拷走文件夹数据就跟着走）；目录建不出来
+      或不可写（例如被放进 Program Files）时退回 ``%APPDATA%\\RinLauncher``。
+    * 源码运行：仍是 ``%APPDATA%\\RinLauncher``，开发习惯不变。
+    """
+    if not getattr(sys, "frozen", False):
+        return DEFAULT_CONFIG_DIR
+    data_dir = Path(sys.executable).resolve().parent / "data"
+    try:
+        data_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        logger.warning("数据目录 %s 建不出来，回退到 %s", data_dir, DEFAULT_CONFIG_DIR)
+        return DEFAULT_CONFIG_DIR
+    if not _dir_writable(data_dir):
+        logger.warning("数据目录 %s 不可写，回退到 %s", data_dir, DEFAULT_CONFIG_DIR)
+        return DEFAULT_CONFIG_DIR
+    _migrate_legacy_data(data_dir)
+    return data_dir
+
+
 DEFAULT_SETTINGS: dict[str, Any] = {
     "theme": "system",
     "showTray": True,
     "startMinimized": False,
-    "autoStart": False,
+    "startupMode": "off",
     "globalHotkey": "Ctrl+Space",
     # 完整窗口材质。RinUI 的取值：tabbed(增强云母) | mica(云母) | acrylic(亚克力) | none
     "material": "tabbed",
@@ -241,30 +293,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "logLevel": "INFO",
 }
 
-# (name, type, target, category, icon).  ``order`` is derived per category.
-# Icons are either a RinUI Fluent name or "lawnicons:<bundled svg stem>".
-DEFAULT_ACTIONS: tuple = (
-    ("记事本", "file", "notepad.exe", "常用",
-     "lawnicons:generic_notes"),
-    ("计算器", "file", "calc.exe", "常用",
-     "lawnicons:generic_calculator_plus_minus_multi_equal"),
-    ("画图", "file", "mspaint.exe", "常用",
-     "lawnicons:generic_background_eraser"),
-    ("文件资源管理器", "file", "explorer.exe", "系统工具",
-     "lawnicons:generic_files"),
-    ("任务管理器", "file", "taskmgr.exe", "系统工具",
-     "lawnicons:generic_grid_3x3"),
-    ("控制面板", "file", "control.exe", "系统工具",
-     "lawnicons:generic_settings"),
-    ("命令提示符", "cmd", "cmd.exe", "开发工具",
-     "lawnicons:generic_shell"),
-    ("PowerShell", "cmd", "powershell.exe", "开发工具",
-     "lawnicons:generic_braces"),
-    ("打开配置目录", "file", "{configdir}", "开发工具",
-     "ic_fluent_folder_open_20_regular"),
-    ("RinUI 官网", "url", "https://ui.rinlit.cn", "媒体娱乐",
-     "lawnicons:generic_browser"),
-)
+# 预置条目已移除：库一开始是空的，里面放什么完全交给用户自己维护。
+# （默认只留分区骨架，见 DEFAULT_CATEGORIES。）
 
 # (name, icon, order)
 DEFAULT_CATEGORIES: tuple = (
@@ -407,11 +437,10 @@ def _derive_action_name(action: dict[str, Any]) -> str:
     return Path(target).name or target
 
 
-def _default_slots(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """默认槽位：面板放前 4 个条目 + 6 个内置功能（正好 10 格），存储区放
+def _default_slots() -> list[dict[str, Any]]:
+    """默认槽位：面板放 6 个内置功能（库默认是空的，没有条目可引），存储区放
     一个 U 盘和一个本机磁盘。"""
-    slots = [_new_slot(SLOT_ACTION, ROW_PANEL, ref=action["id"]) for action in actions[:4]]
-    slots += [_new_slot(SLOT_TOOL, ROW_PANEL, key=key) for key in DEFAULT_TOOL_KEYS]
+    slots = [_new_slot(SLOT_TOOL, ROW_PANEL, key=key) for key in DEFAULT_TOOL_KEYS]
     slots.append(_new_slot(SLOT_USB, ROW_STORAGE, label="U 盘"))
 
     # 挑一个非系统盘当默认的「磁盘」项；找不到就用主目录。
@@ -425,16 +454,11 @@ def _default_slots(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 
 def _default_config() -> dict[str, Any]:
-    """Build a fresh default config; ids are regenerated on every call."""
+    """Build a fresh default config; ids are regenerated on every call.
+
+    动作库不预置条目 —— 里面放什么完全由用户决定。
+    """
     actions: list[dict[str, Any]] = []
-    order: dict[str, int] = {}
-    for name, kind, target, category, icon in DEFAULT_ACTIONS:
-        index = order.get(category, 0)
-        order[category] = index + 1
-        actions.append({
-            "id": _new_id(), "name": name, "type": kind, "target": target,
-            "category": category, "icon": icon, "enabled": True, "order": index,
-        })
 
     categories = [
         {"id": _new_id(), "name": name, "icon": icon, "order": rank, "expanded": True}
@@ -445,7 +469,7 @@ def _default_config() -> dict[str, Any]:
         "actions": actions,
         "categories": categories,
         "launcher": {
-            "slots": _default_slots(actions),
+            "slots": _default_slots(),
             "storagePath": "",
         },
         "settings": dict(DEFAULT_SETTINGS),
@@ -484,12 +508,18 @@ class ConfigManager(QObject):
     materialChanged = Signal(str)
     # 页面 / 窗口级的请求：QML 侧的页面够不到窗口对象，统一从这里转给 main.py。
     pageRequested = Signal(str)
+    # 设置页分组跳转（标题栏「…」菜单里选一个分区）。
+    settingsSectionRequested = Signal(str)
+    # 任务计划状态的后台刷新完成（启动方式下拉据此回填真实值）。
+    startupStateChanged = Signal()
     # 小窗要直接打开某一格的编辑器（row, index；index=-1 表示新增）。
     slotEditRequested = Signal(int, int)
 
     def __init__(self, config_dir: Path | None = None, parent: QObject | None = None):
         super().__init__(parent)
-        self.config_dir = Path(config_dir) if config_dir else DEFAULT_CONFIG_DIR
+        # 打包后数据目录是 exe 同级的 data/（不可写则回退 %APPDATA%），
+        # 源码运行保持 %APPDATA%；首次切换到 data/ 时会把老数据迁过去。
+        self.config_dir = Path(config_dir) if config_dir else resolve_config_dir()
         self.config_file = self.config_dir / "config.yaml"
         self.backup_dir = self.config_dir / "backups"
         self.icon_dir = self.config_dir / ICON_STORE_NAME
@@ -507,6 +537,8 @@ class ConfigManager(QObject):
         # 小窗发起的「编辑这一格」请求（页面建好前先记着，见 requestSlotEditor）。
         self._pending_slot_edit: tuple[int, int] | None = None
         self._config = self._load()
+        # 启动就把任务计划状态预热到后台（设置页打开时零等待）。
+        self._start_startup_prefetch()
 
     @property
     def config(self) -> dict[str, Any]:
@@ -541,7 +573,14 @@ class ConfigManager(QObject):
         for entry in data["actions"] if isinstance(data["actions"], list) else []:
             _migrate_action_entry(entry)
         # settings keys added by newer builds get their default value
-        settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
+        raw_settings = dict(data.get("settings") or {})
+        settings = {**DEFAULT_SETTINGS, **raw_settings}
+        # 旧版「开机自动启动」布尔值迁进三态启动方式（关闭 / 登录时启动 / 管理员自启动）。
+        settings.pop("autoStart", None)
+        if "startupMode" not in raw_settings and raw_settings.get("autoStart"):
+            settings["startupMode"] = "normal"
+        if settings.get("startupMode") not in ("off", "normal", "admin"):
+            settings["startupMode"] = "off"
         # 小窗改成固定置底、固定主屏右下角之后，这两个老键不再有消费方。
         for obsolete in ("alwaysOnTop", "compactPos"):
             settings.pop(obsolete, None)
@@ -590,7 +629,7 @@ class ConfigManager(QObject):
             return slots
 
         if not raw:
-            return _default_slots(actions)
+            return _default_slots()
 
         # ── 旧格式迁移 ──
         migrated: list[dict[str, Any]] = []
@@ -604,7 +643,7 @@ class ConfigManager(QObject):
         # 老配置里那个「U 盘」按钮变成独立的 usb 槽位。
         migrated.append(_new_slot(SLOT_USB, ROW_STORAGE, label="U 盘"))
         if not migrated:
-            return _default_slots(actions)
+            return _default_slots()
         return migrated
 
     def _normalize_slot(self, item: Any, index: int,
@@ -1083,7 +1122,7 @@ class ConfigManager(QObject):
     @Slot(str, result=bool)
     def deleteCustomIcon(self, key: str) -> bool:
         """删掉图标库里的一张图；配置里还在引用它的地方会退回默认图标。"""
-        name = key[5:] if key.startswith("file:") else key
+        name = key.removeprefix("file:")
         target = Path(name)
         # 只允许删图标库里的东西，免得被误导着删掉别处的文件。
         if target.parent.resolve() != self.icon_dir.resolve() or not target.is_file():
@@ -1172,6 +1211,10 @@ class ConfigManager(QObject):
     def deleteCategory(self, category_id: str) -> bool:
         victim = next((c for c in self._config["categories"] if c["id"] == category_id), None)
         if victim is None:
+            return False
+        if victim["name"] == FALLBACK_CATEGORY:
+            # 「默认」是所有落单条目的归宿，删掉它条目就散了。
+            self.showToast.emit("「默认」分区不能删除", "warning")
             return False
 
         self._config["categories"] = [c for c in self._config["categories"] if c["id"] != category_id]
@@ -1406,9 +1449,9 @@ class ConfigManager(QObject):
         settings = dict(settings)
         previous = self._config["settings"]
 
-        # The run-at-login registry entry only needs touching when it changes.
-        if "autoStart" in settings and settings["autoStart"] != previous.get("autoStart"):
-            set_run_on_startup(bool(settings["autoStart"]))
+        # 启动方式不走这里：三态切换要碰注册表 / 任务计划，走 setStartupMode()。
+        settings.pop("autoStart", None)
+        settings.pop("startupMode", None)
 
         previous.update(settings)
         saved = self.save(changed="settings")
@@ -1421,6 +1464,48 @@ class ConfigManager(QObject):
             if "material" in settings:
                 self.materialChanged.emit(str(previous["material"]))
         return saved
+
+    # ── 启动方式（关闭 / 登录时启动 / 管理员自启动）─────────────────
+    @Slot(str, result="QVariantMap")
+    def setStartupMode(self, mode: str) -> dict[str, Any]:
+        """切换三态启动方式；需要管理员的重活交给提权后的辅助进程。
+
+        创建 / 删除「最高权限」的计划任务需要管理员：先记下期望值、把活派给
+        ``--set-startup-mode`` 辅助分支（会弹一次 UAC），界面过几秒回查真实
+        状态自愈（``getStartupState``）。
+        """
+        mode = mode if mode in ("off", "normal", "admin") else "off"
+        self._config["settings"]["startupMode"] = mode
+        self.save(changed="settings")
+        # 切启动方式是要下判断的路径：拿新鲜的任务状态，别信道缓存。
+        needs_admin = mode == "admin" or autostart.task_exists(force=True)
+        if needs_admin and not is_admin():
+            autostart.spawn_apply_elevated(mode)
+            return {"mode": mode, "state": autostart.startup_state(), "pending": True}
+        if not autostart.apply_startup_mode(mode):
+            self.showToast.emit("启动方式调整失败，可以看看日志", "error")
+        return {"mode": mode, "state": autostart.startup_state(), "pending": False}
+
+    @Slot(result="QVariantMap")
+    def getStartupState(self) -> dict[str, Any]:
+        """配置里期望的启动方式 + 系统里的真实状态（读缓存，绝不阻塞界面）。"""
+        return {
+            "mode": str(self._config["settings"].get("startupMode", "off")),
+            "state": autostart.startup_state(),
+        }
+
+    def _start_startup_prefetch(self) -> None:
+        """启动时后台预热任务计划状态：设置页打开时就不用起子进程了。"""
+        if sys.platform != "win32":
+            return
+        autostart.refresh_task_exists_async(
+            lambda _value: self.startupStateChanged.emit())
+
+    @Slot()
+    def refreshStartupState(self) -> None:
+        """异步刷新任务计划状态；刷完经 ``startupStateChanged`` 通知界面。"""
+        autostart.refresh_task_exists_async(
+            lambda _value: self.startupStateChanged.emit())
 
     @Slot(str, bool, result=bool)
     def toggleAction(self, action_id: str, enabled: bool) -> bool:
@@ -1477,6 +1562,11 @@ class ConfigManager(QObject):
     def requestPage(self, page: str) -> None:
         """QML 页面请求切到某一页（由 main.py 落到完整窗口上）。"""
         self.pageRequested.emit(str(page))
+
+    @Slot(str)
+    def requestSettingsSection(self, name: str) -> None:
+        """标题栏「…」菜单里点设置分区：滚到设置页对应的分组。"""
+        self.settingsSectionRequested.emit(str(name))
 
     @Slot(int, int)
     def requestSlotEditor(self, row: int, index: int) -> None:
