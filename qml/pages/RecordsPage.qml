@@ -355,7 +355,7 @@ Item {
             "file": qsTr("文件"),
             "cmd": qsTr("命令"),
             "url": qsTr("网址"),
-            "keymouse": qsTr("键鼠")
+            "keyboard": qsTr("按键")
         }
         var parts = [kinds[entry.type] || entry.type, entry.target || qsTr("(未设置)")]
         if (entry.hotkey) {

@@ -147,6 +147,10 @@ ComboBox {
 
         function handleItemSelected(index) {
             root.currentIndex = index
+            // 本组件用的是自定义 ContextMenu（普通 Popup），不走 Qt 菜单的激活
+            // 通道，原生的 activated 永远不会发；这里手动补一发，外部写的
+            // onActivated 才能拿到「用户选中了哪一项」。（本仓库的本地兼容补丁）
+            root.activated(index)
             return true
         }
         onItemSelected: (index) => handleItemSelected(index)

@@ -70,11 +70,6 @@ Item {
             Item { Layout.fillWidth: true }
 
             Button {
-                text: qsTr("预览小窗")
-                icon.name: "ic_fluent_window_20_regular"
-                onClicked: ConfigManager.previewCompact()
-            }
-            Button {
                 text: qsTr("重载配置")
                 icon.name: "ic_fluent_arrow_sync_20_regular"
                 onClicked: ConfigManager.reloadConfig()

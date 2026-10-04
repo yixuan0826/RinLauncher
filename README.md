@@ -20,15 +20,15 @@
 | --- | --- |
 | 🪟 **常驻小窗** | 亚克力材质的无焦点桌面挂件：固定主显示器右下角、沉在普通窗口之下；双行面板 + 存储区 |
 | 🚀 **启动台设置** | 完整窗口的「启动台」页直接编辑小窗：面板最多 10 格，加一格 / 换内容 / 改名字 / 换图标 / 前后挪 / 删掉，改完立即刷新 |
-| 🧩 **槽位自由定义** | 每一格都自带完整定义：文件 / 命令行 / 网址 / 键鼠模拟当场填完；也可以从「快捷操作」库拷一份内容进来，两边各管各的 |
+| 🧩 **槽位自由定义** | 每一格都自带完整定义：文件 / 命令行 / 网址 / 按键模拟当场填完；也可以从「快捷操作」库拷一份内容进来，两边各管各的 |
 | 💾 **U 盘与磁盘分开** | 「可移动磁盘（自动检测）」和「指定的文件/文件夹/磁盘」是两种独立槽位，各自一格，互不影响 |
 | 🖱 **右键菜单** | 小窗每一格右键：打开 · 提权打开 · 编辑这一格 · 再加一格 |
 | 🗂 **快捷操作库** | 只读的模板库：分区浏览、搜索过滤、一键复制到面板；内容的编辑统一在启动台进行 |
 | 🎨 **图标选择器** | 四个来源分页（内置 / 随包 / 我的 / 从文件获取），选中态一目了然；支持 exe·dll·lnk 提取与 ico·svg·png 导入 |
-| ⚙️ **完整设置页** | 顶部锚点跳转 常规 / 外观 / 启动台 / 热键 / 高级，改完立即生效；「关于」是独立一页 |
+| ⚙️ **完整设置页** | 右上角「…」菜单跳转 常规 / 外观 / 启动台 / 热键 / 高级，改完立即生效；「关于」是独立一页 |
 | 📌 **系统托盘** | 显示、隐藏、跳转页面、打开配置目录、重载配置、退出 |
 | ⌨️ **全局热键** | 默认 `Ctrl+Space`，在设置页点一下直接录制组合键 |
-| 🎯 **四种动作** | 文件/程序、命令行、网址、键鼠模拟 |
+| 🎯 **四种动作** | 文件/程序、命令行、网址、按键模拟（全局录制 / 手动编辑，支持组合键） |
 | 🔐 **管理员提权** | 条目级 `run_as: admin`，触发 UAC |
 | 🎨 **主题** | 浅色 / 深色 / 跟随系统、强调色、窗口材质（增强云母 / 云母 / 不透明） |
 
@@ -72,7 +72,7 @@
 - **启动台** — 小窗的列表编辑器：上面一块「面板」（最多 10 格，满了会拦住并提示），
   每个格子都能上移 / 下移 / 编辑 / 删除；下面一块「存储与磁盘」填固定的存储目录
   （可手填、可「浏览…」、可直接打开）和磁盘入口。每格独立编辑：动作类型 / 目标 / 参数 /
-  工作目录 / 提权 / 键鼠序列当场写完，也可以「从快捷操作」拷一份库里的内容。表单长了可以
+  工作目录 / 提权 / 按键序列当场写完，也可以「从快捷操作」拷一份库里的内容。表单长了可以
   滚动，改完立即写盘，小窗跟着刷新。
 - **快捷操作** — 只读模板库：左边分区清单（点一下过滤，不提供增删改），右边条目卡片 +
   过滤框，行尾一个**复制到启动台**。库和启动台是**复制关系**：拷过去之后两边各管各的，
@@ -178,12 +178,12 @@ actions:
   - id: "9f3c1a7b"
     name: "命令提示符"
     icon: "lawnicons:generic_shell"   # 也可以用 ic_fluent_* 字体图标
-    type: "cmd"                       # file | cmd | url | keymouse
+    type: "cmd"                       # file | cmd | url | keyboard
     target: "cmd.exe"
     arguments: ""
     working_dir: ""
     run_as: "user"                    # user | admin（admin 会触发 UAC）
-    keymouse_steps: []                # 仅 keymouse 使用
+    keyboard_steps: []                # 仅 keyboard 使用
     category: "开发工具"               # 按「名字」引用分区
     enabled: true
     hotkey: ""                        # 展示在卡片上的提示，不参与全局热键
@@ -241,7 +241,7 @@ settings:
 | `row` | 落在哪一块：`0` = 面板（最多 10 格，超出上限的部分不会被显示）/ `1` = 存储区 |
 | `label` | 覆盖显示名，空串 = 用目标自己的名字 |
 | `icon` | 覆盖图标，空串 = 用目标自己的图标（保存时会替 exe / lnk 自动抽一张） |
-| `action` | 仅 `action`：这一格自己的动作定义，字段与「动作类型」一节一致（`type` / `target` / `arguments` / `working_dir` / `run_as` / `keymouse_steps`） |
+| `action` | 仅 `action`：这一格自己的动作定义，字段与「动作类型」一节一致（`type` / `target` / `arguments` / `working_dir` / `run_as` / `keyboard_steps`） |
 | `ref` | 仅 `action`：早期版本引用库中操作的兼容字段；现在的编辑器不再写入，打开旧格子时会当成拷贝换算成内联 `action` |
 | `key` | 仅 `tool`：内置功能的 key |
 | `path` | 仅 `path`：要打开的路径（支持 `~` 与环境变量） |
@@ -300,32 +300,35 @@ settings:
 | `file` | `target`、`arguments`、`working_dir`、`run_as` | `target` 可以是绝对路径、相对路径，或 PATH 里的可执行文件名（如 `notepad.exe`） |
 | `cmd` | `target` + `arguments` | 两者拼成一条命令交给 shell 执行 |
 | `url` | `target` | 缺少协议时自动补 `https://` |
-| `keymouse` | `keymouse_steps` | 按顺序回放按键 / 鼠标 / 等待 |
+| `keyboard` | `keyboard_steps` | 按顺序回放按键 / 等待（录制 / 手动编辑，支持组合键，鼠标已移除） |
 
-## 键鼠序列
+## 按键序列
 
-`keymouse_steps` 是一个列表，元素有三种：
+`keyboard_steps` 是一个列表，语义参考 [SystemTools](https://github.com/Programmer-MrWang/SystemTools)
+的「模拟键盘」：编辑器里点「开始录制键盘输入」直接录，也可以手动逐条填。元素有两种：
 
 ```yaml
 - type: "key"                     # 按键
-  key: "ctrl+c"                   # 支持单字符、ctrl/alt/shift/win、f1-f12、方向键等
-  action: "click"                 # press | release | click
-  duration: 0.1                   # 该步之后的停顿（秒）
+  key: "ctrl+c"                   # 名称：单键或组合键（+ 相连）；支持单字符、ctrl/alt/shift/win、
+                                  # f1-f24、方向键、enter/esc/tab 等
+  vk: 67                          # 虚拟键码（录制产生；执行时优先；缺省时按名称解析）
+  action: "click"                 # click（单击）| press（按住）| release（释放）
+  duration: 0.1                   # 这一步执行前的等待（秒）
 
-- type: "mouse"                   # 鼠标
-  action: "click"                 # click | move | scroll
-  button: "left"                  # left | right | middle
-  x: 960                          # 屏幕绝对坐标；click/move 用，留空表示保持原位
-  y: 540
-  dx: 0                           # scroll 用
-  dy: -3
-  duration: 0.1
-
-- type: "wait"                    # 纯等待
+- type: "wait"                    # 纯等待（旧版编辑器产生，仍会执行）
   duration: 0.5                   # 秒
 ```
 
-编辑器里 `duration` 以**毫秒**填，写进 YAML 时换算成秒。
+编辑器布局照 SystemTools 重做：上面是**录制按钮 + 步骤列表**，下面是「操作 / 键码 /
+名称 / 延迟」编辑行和「应用修改 / 新增 / 删除」。录制时全局抓真实按键，并做了一层整理：
+快速点按合并成「单击」；按住期间敲别的键拆成「按住 …… 释放」（组合键录下来即可
+原样回放），同键连发不会灌进列表。
+
+执行语义与 SystemTools 一致：每步先等 `duration` 秒再动作；`click` 发送按下 + 抬起
+（组合键按 `+` 顺序逐个按下、再逆序释放），`press` / `release` 用来搭配长按；序列跑完
+还按着的键会被兜底释放。有 `vk` 用 `vk` 回放（键码优先），没有才解析名称。旧版「键鼠
+模拟」的 `keymouse` / `keymouse_steps` 会在读入时自动迁移，其中的鼠标步骤不再支持，
+迁移时会被跳过。
 
 ## 变量替换
 
@@ -449,12 +452,19 @@ Win11 22H2+ 用 `DWMWA_SYSTEMBACKDROP_TYPE`（亚克力 = `DWMSBT_TRANSIENTWINDO
 所以 `CompactWindow.qml` 里的文字用 `font.pixelSize` / `color` 这些 Qt 原生属性，不写
 RinUI 特有的 `typography`。
 
-**槽位表单的下拉为什么监听 `activated` 而不是 `currentIndexChanged`**
+**槽位表单的下拉为什么监听 `activated`**
 RinUI 的 `ComboBox` 内部已经绑了 `onCurrentIndexChanged`，外部再写一个同名处理器会把它顶掉；
 更重要的是，程序回填 `currentIndex`（打开编辑器时把配置里的值同步回下拉）也会触发
 `currentIndexChanged`，那样「读配置」会被当成「用户改配置」再写回一次。所以
-`SlotEditorDialog` 与设置页里的下拉统一写 `function onActivated(index)`：只有用户真的从
-列表里选了才动状态。
+`SlotEditorDialog` 与设置页里的下拉统一监听 `onActivated`：只有用户真的从
+列表里选了才动状态。**必须写成属性式** `onActivated: function (index) { ... }` ——
+写成 `function onActivated(index) { ... }` 的「函数声明式」不会被自动连接成信号处理器，
+信号发了也收不到（这个坑踩过：所有下拉都表现为「选了不生效」）。
+
+> 本地补丁：RinUI 的 `ComboBox` 用的是一块自定义的 `ContextMenu`（普通 `Popup`），不走
+> Qt 菜单的激活通道，原生的 `activated` 根本不会发 —— 所有写 `onActivated` 的下拉
+> 都收不到「选中」事件。已在 `RinUI/components/BasicInput/ComboBox.qml` 的
+> `handleItemSelected` 里手动补发 `activated`（同步 RinUI 上游时留意保留这个补丁）。
 
 **弹窗为什么不用 RinUI 的 `Dialog`（也不用 Qt 的 `Popup`）**
 主窗是自绘窗口，`Popup` 的尺寸与定位会绕到 `QQC2.Overlay.overlay` 上，而这时候它是

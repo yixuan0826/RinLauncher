@@ -543,7 +543,7 @@ Window {
         if (!slot || slot.kind !== "action") {
             return
         }
-        // 把解析出来的完整动作字段带过去（类型 / 目标 / 参数 / 工作目录 / 键鼠
+        // 把解析出来的完整动作字段带过去（类型 / 目标 / 参数 / 工作目录 / 按键
         // 序列），缺了会执行出不一样的结果。
         var payload = {
             "id": slot.ref || "",
@@ -552,7 +552,7 @@ Window {
             "target": slot.target,
             "arguments": slot.arguments || "",
             "working_dir": slot.working_dir || "",
-            "keymouse_steps": slot.keymouse_steps || [],
+            "keyboard_steps": slot.keyboard_steps || [],
             "run_as": "admin"
         }
         ConfigManager.executeAction(payload)

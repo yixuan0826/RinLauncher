@@ -53,7 +53,7 @@ PANEL_CAPACITY = 10  # 面板最多固定几格
 # 磁盘」，读入时按 ROW_ 常量迁到新模型（见 _normalize）。
 CONFIG_VERSION = 3
 
-SLOT_ACTION = "action"   # 一格完整的动作（程序 / 命令 / 网址 / 键鼠）
+SLOT_ACTION = "action"   # 一格完整的动作（程序 / 命令 / 网址 / 按键）
 SLOT_TOOL = "tool"       # 内置功能
 SLOT_PATH = "path"       # 打开任意文件 / 文件夹 / 磁盘
 SLOT_USB = "usb"         # 自动检测的可移动磁盘
@@ -94,8 +94,11 @@ SLOT_KIND_ICONS: dict[str, str] = {
 
 # 槽位不再引用「快捷操作」里的条目：动作直接写在槽位里（内联），「快捷操作」
 # 页只是可复用的库，两边靠复制而不是引用关联。
-ACTION_TYPES: tuple = ("file", "cmd", "url", "keymouse")
-KEYMOUSE_STEP_TYPES: tuple = ("key", "mouse", "wait")
+ACTION_TYPES: tuple = ("file", "cmd", "url", "keyboard")
+# 旧版「键鼠模拟」已降级为「按键模拟」：读到旧类型名就迁成 keyboard，
+# 旧字段 keymouse_steps 中的鼠标步骤直接跳过（执行端不再认识它）。
+LEGACY_ACTION_TYPES: dict[str, str] = {"keymouse": "keyboard"}
+KEYBOARD_STEP_TYPES: tuple = ("key", "wait")
 # 这些后缀是「图片」，走导入；其余（exe/dll/lnk…）走系统图标提取。
 IMAGE_ICON_SUFFIXES: tuple = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
 
@@ -299,11 +302,83 @@ def _new_slot(kind: str, row: int, **extra: Any) -> dict[str, Any]:
     return slot
 
 
+def _step_duration(raw: Any) -> float:
+    """把步骤里的延迟修成 >= 0 的秒数；写坏了就当 0。"""
+    try:
+        return max(0.0, float(raw))
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _step_vk(raw: Any) -> int:
+    """把步骤里的虚拟键码修成 0-255 的整数；没有或写坏了就当 0（改用名称）。"""
+    try:
+        vk = int(raw)
+    except (TypeError, ValueError):
+        return 0
+    return vk if 0 < vk < 256 else 0
+
+
+def _sanitize_steps(raw: Any) -> list[dict[str, Any]]:
+    """清洗按键序列：只留「按键 / 等待」两种步骤。
+
+    「按键模拟」参考 SystemTools 的「模拟键盘」：一条按键步骤 = 名称（可写组合键，
+    如 ``Ctrl+C``）+ 虚拟键码（可选，执行时优先）+ 动作（单击 / 按住 / 释放）+
+    延迟（这一步执行前的等待，秒）。旧版键鼠模拟里的 mouse 步骤不再支持，
+    读到时直接跳过。
+    """
+    steps: list[dict[str, Any]] = []
+    if not isinstance(raw, list):
+        return steps
+    for step in raw:
+        if not isinstance(step, dict):
+            continue
+        kind = str(step.get("type") or "")
+        if kind == "key":
+            command = str(step.get("action") or "click")
+            if command not in ("press", "release", "click"):
+                command = "click"
+            entry: dict[str, Any] = {
+                "type": "key",
+                "key": str(step.get("key") or ""),
+                "action": command,
+                "duration": _step_duration(step.get("duration")),
+            }
+            vk = _step_vk(step.get("vk"))
+            if vk:
+                entry["vk"] = vk
+            steps.append(entry)
+        elif kind == "wait":
+            steps.append({"type": "wait", "duration": _step_duration(step.get("duration"))})
+    return steps
+
+
+def _action_steps(action: dict[str, Any]) -> list[dict[str, Any]]:
+    """取一份动作的按键序列；兼容旧字段名 keymouse_steps 并顺手清洗。"""
+    raw = action.get("keyboard_steps")
+    if raw is None:
+        raw = action.get("keymouse_steps")
+    return _sanitize_steps(raw)
+
+
+def _migrate_action_entry(entry: Any) -> None:
+    """就地把库里的老动作迁到新命名：keymouse → keyboard，步骤字段改名并清洗。"""
+    if not isinstance(entry, dict):
+        return
+    kind = str(entry.get("type") or "")
+    if kind in LEGACY_ACTION_TYPES:
+        kind = entry["type"] = LEGACY_ACTION_TYPES[kind]
+    if kind == "keyboard" and ("keyboard_steps" in entry or "keymouse_steps" in entry):
+        entry["keyboard_steps"] = _action_steps(entry)
+        entry.pop("keymouse_steps", None)
+
+
 def _sanitize_inline_action(raw: Any) -> dict[str, Any] | None:
     """把外部写进来的内联动作修回可用状态；不合法（或为空）返回 None。"""
     if not isinstance(raw, dict):
         return None
     kind = str(raw.get("type") or "").strip()
+    kind = LEGACY_ACTION_TYPES.get(kind, kind)
     if kind not in ACTION_TYPES:
         return None
     action: dict[str, Any] = {
@@ -312,24 +387,18 @@ def _sanitize_inline_action(raw: Any) -> dict[str, Any] | None:
         "arguments": str(raw.get("arguments") or ""),
         "working_dir": str(raw.get("working_dir") or ""),
         "run_as": "admin" if raw.get("run_as") == "admin" else "user",
-        "keymouse_steps": [],
+        "keyboard_steps": [],
     }
-    if kind == "keymouse":
-        steps = raw.get("keymouse_steps")
-        if isinstance(steps, list):
-            action["keymouse_steps"] = [
-                dict(step) for step in steps
-                if isinstance(step, dict)
-                and str(step.get("type") or "") in KEYMOUSE_STEP_TYPES
-            ]
+    if kind == "keyboard":
+        action["keyboard_steps"] = _action_steps(raw)
     return action
 
 
 def _derive_action_name(action: dict[str, Any]) -> str:
     """内联动作没有名字，按类型从目标里取一个一看就懂的显示名。"""
     kind = action.get("type")
-    if kind == "keymouse":
-        return "键鼠动作"
+    if kind == "keyboard":
+        return "按键动作"
     target = str(action.get("target") or "").strip().strip('"')
     if not target:
         return "未配置动作"
@@ -417,7 +486,6 @@ class ConfigManager(QObject):
     pageRequested = Signal(str)
     # 小窗要直接打开某一格的编辑器（row, index；index=-1 表示新增）。
     slotEditRequested = Signal(int, int)
-    previewCompactRequested = Signal()
 
     def __init__(self, config_dir: Path | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -469,6 +537,9 @@ class ConfigManager(QObject):
             version = 1
         data.setdefault("actions", [])
         data.setdefault("categories", [])
+        # 库里的动作也迁一次命名（keymouse → keyboard / 步骤字段改名）。
+        for entry in data["actions"] if isinstance(data["actions"], list) else []:
+            _migrate_action_entry(entry)
         # settings keys added by newer builds get their default value
         settings = {**DEFAULT_SETTINGS, **(data.get("settings") or {})}
         # 小窗改成固定置底、固定主屏右下角之后，这两个老键不再有消费方。
@@ -674,7 +745,7 @@ class ConfigManager(QObject):
                     target=inline.get("target", ""),
                     arguments=inline.get("arguments", ""),
                     working_dir=inline.get("working_dir", ""),
-                    keymouse_steps=inline.get("keymouse_steps") or [],
+                    keyboard_steps=inline.get("keyboard_steps") or [],
                     runAs=inline.get("run_as", "user"),
                     admin=inline.get("run_as") == "admin",
                     inlineAction=True,
@@ -693,7 +764,7 @@ class ConfigManager(QObject):
                     target=entry.get("target", ""),
                     arguments=entry.get("arguments", ""),
                     working_dir=entry.get("working_dir", ""),
-                    keymouse_steps=entry.get("keymouse_steps") or [],
+                    keyboard_steps=_action_steps(entry),
                     runAs=entry.get("run_as", "user"),
                     admin=entry.get("run_as") == "admin",
                 )
@@ -1261,7 +1332,7 @@ class ConfigManager(QObject):
                 "arguments": entry.get("arguments", ""),
                 "working_dir": entry.get("working_dir", ""),
                 "run_as": entry.get("run_as", "user"),
-                "keymouse_steps": entry.get("keymouse_steps") or [],
+                "keyboard_steps": _action_steps(entry),
             },
         })
         if built is None:
@@ -1428,11 +1499,6 @@ class ConfigManager(QObject):
         self._pending_slot_edit = None
         return {"row": row, "index": index}
 
-    @Slot()
-    def previewCompact(self) -> None:
-        """请求把常驻小窗显示出来（小窗归 main.py 管）。"""
-        self.previewCompactRequested.emit()
-
     @Slot(result=bool)
     def resetToDefaults(self) -> bool:
         return self.save(_default_config(), changed="all")
@@ -1481,7 +1547,7 @@ class ConfigManager(QObject):
             inline = slot.get("action")
             if isinstance(inline, dict) and inline and not slot.get("ref"):
                 # 槽位自带完整动作，直接执行，不去查库。
-                if inline.get("type") != "keymouse" \
+                if inline.get("type") != "keyboard" \
                         and not str(inline.get("target") or "").strip():
                     self.showToast.emit("这一格还没有配置目标", "warning")
                     return False

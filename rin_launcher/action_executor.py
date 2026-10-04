@@ -1,4 +1,4 @@
-"""Executes launcher actions: file, cmd, url and keymouse sequences."""
+"""Executes launcher actions: file, cmd, url and keyboard sequences."""
 
 from __future__ import annotations
 
@@ -52,7 +52,7 @@ _SPECIAL_KEYS = {
     "left": "left", "right": "right", "numlock": "num_lock", "capslock": "caps_lock",
     "scrolllock": "scroll_lock", "printscreen": "print_screen", "pause": "pause",
     "menu": "menu",
-    **{f"f{index}": f"f{index}" for index in range(1, 13)},
+    **{f"f{index}": f"f{index}" for index in range(1, 25)},
 }
 
 
@@ -77,7 +77,9 @@ class ActionExecutor:
             "file": self._run_file,
             "cmd": self._run_cmd,
             "url": self._run_url,
-            "keymouse": self._run_keymouse,
+            "keyboard": self._run_keyboard,
+            # 旧配置里可能还留着 keymouse；按键模拟接手，鼠标步骤会被忽略。
+            "keymouse": self._run_keyboard,
         }
 
     def execute(self, action: dict[str, Any]) -> bool:
@@ -156,23 +158,40 @@ class ActionExecutor:
             logger.exception("Failed to open %s", url)
             return False
 
-    def _run_keymouse(self, action: dict[str, Any]) -> bool:
+    def _run_keyboard(self, action: dict[str, Any]) -> bool:
+        """按键模拟：按顺序回放按键 / 等待，语义照 SystemTools 的「模拟键盘」。
+
+        每个步骤先等 ``duration`` 秒再执行（延迟前置，对应 SystemTools 的
+        interval）；序列结束时兜底释放还按着的键 —— 否则「按住」忘了配
+        「释放」会把系统按键一直卡住。
+        """
         try:
-            from pynput import keyboard, mouse
+            from pynput import keyboard
         except ImportError:
-            logger.error("pynput is not installed, cannot run keymouse actions")
+            logger.error("pynput is not installed, cannot run keyboard actions")
             return False
 
-        keys = keyboard.Controller()
-        pointer = mouse.Controller()
-        for step in action.get("keymouse_steps") or []:
-            step_type = step.get("type")
-            if step_type == "key":
-                self._send_key(keys, step)
-            elif step_type == "mouse":
-                self._send_mouse(pointer, step)
-            elif step_type == "wait":
-                time.sleep(step.get("duration", 0))
+        steps = action.get("keyboard_steps")
+        if steps is None:
+            steps = action.get("keymouse_steps")  # 旧字段兜底
+        controller = keyboard.Controller()
+        pressed: list[Any] = []
+        for step in steps or []:
+            try:
+                duration = max(0.0, float(step.get("duration") or 0))
+            except (TypeError, ValueError):
+                duration = 0.0
+            if duration:
+                time.sleep(duration)
+            if step.get("type") == "key":
+                self._send_key(controller, step, pressed)
+            # wait 步骤：等待就是它本身，上面的 sleep 已经完成它的职责。
+        while pressed:
+            key = pressed.pop()
+            try:
+                controller.release(key)
+            except Exception:
+                logger.warning("Failed to release key %r after the sequence", key)
         return True
 
     # ------------------------------------------------------------------
@@ -205,38 +224,71 @@ class ActionExecutor:
     # ------------------------------------------------------------------
     # Input simulation
     # ------------------------------------------------------------------
-    @staticmethod
-    def _send_key(controller, step: dict[str, Any]) -> None:
-        key = _resolve_key(step.get("key", ""))
-        if key is None:
+    # 组合键里每个事件之间留一点空隙，系统才会把它当成一次组合；
+    # SystemTools 的模拟键盘用的是 20ms，这里沿用。
+    _KEY_EVENT_GAP = 0.02
+
+    @classmethod
+    def _send_key(cls, controller, step: dict[str, Any], pressed: list[Any]) -> None:
+        """发送一步按键；「按住」的键登记进 ``pressed``，供序列结束后的兜底释放。"""
+        keys = cls._keys_for_step(step)
+        if not keys:
+            logger.warning("Unknown key in keyboard step %r, skipping", step)
             return
-        command = step.get("action", "press")
-        if command in ("press", "click"):
-            controller.press(key)
-        if command in ("release", "click"):
-            controller.release(key)
-        ActionExecutor._pause(step)
 
-    @staticmethod
-    def _send_mouse(controller, step: dict[str, Any]) -> None:
-        from pynput import mouse
-
-        x, y = step.get("x"), step.get("y")
         command = step.get("action", "click")
-
-        if command == "move":
-            if x is not None and y is not None:
-                controller.position = (x, y)
-        elif command == "click":
-            if x is not None and y is not None:
-                controller.position = (x, y)
-            controller.click(getattr(mouse.Button, step.get("button", "left"), mouse.Button.left))
-        elif command == "scroll":
-            controller.scroll(step.get("dx", 0), step.get("dy", 0))
-        ActionExecutor._pause(step)
+        if command == "press":
+            # 按住：全部按下并保持，等后面的步骤来释放。
+            for key in keys:
+                controller.press(key)
+                pressed.append(key)
+        elif command == "release":
+            for key in reversed(keys):
+                controller.release(key)
+                cls._forget_pressed(pressed, key)
+        else:
+            # 点击：按顺序按下、再逆序释放（组合键只会在停顿期间同时成立）。
+            # 空隙只插在事件之间：单键点击不留空隙，最后一个抬起后面也不再等。
+            gap = cls._KEY_EVENT_GAP if len(keys) > 1 else 0
+            for key in keys:
+                controller.press(key)
+                if gap:
+                    time.sleep(gap)
+            last = len(keys) - 1
+            for index, key in enumerate(reversed(keys)):
+                controller.release(key)
+                if gap and index < last:
+                    time.sleep(gap)
 
     @staticmethod
-    def _pause(step: dict[str, Any]) -> None:
-        duration = step.get("duration", 0)
-        if duration:
-            time.sleep(duration)
+    def _keys_for_step(step: dict[str, Any]) -> list[Any]:
+        """一步按键 → pynput 能按下的键对象；认不出来返回空表。
+
+        虚拟键码（``vk``）优先：编辑器录制出来的步骤都带着它，按码原样回放；
+        没有键码时用 ``key`` 名称解析 —— 单键，或 ``Ctrl+Shift+Esc`` 组合。
+        """
+        from pynput import keyboard
+
+        try:
+            vk = int(step.get("vk") or 0)
+        except (TypeError, ValueError):
+            vk = 0
+        if 0 < vk < 256:
+            try:
+                return [keyboard.KeyCode.from_vk(vk)]
+            except Exception:
+                logger.warning("Cannot use virtual key code %s, falling back to name", vk)
+        names = [part.strip() for part in str(step.get("key") or "").split("+") if part.strip()]
+        keys = [_resolve_key(name) for name in names]
+        if not keys or any(key is None for key in keys):
+            return []
+        return keys
+
+    @staticmethod
+    def _forget_pressed(pressed: list[Any], key: Any) -> None:
+        """把已释放的键从「仍按住」清单里摘掉（先精确相等，再比虚拟键码）。"""
+        vk = getattr(key, "vk", None)
+        for index, held in enumerate(pressed):
+            if held == key or (vk is not None and getattr(held, "vk", None) == vk):
+                del pressed[index]
+                return

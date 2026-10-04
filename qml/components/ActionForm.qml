@@ -3,10 +3,12 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 2.15
 import RinUI
 
-// 动作参数表单：类型 / 目标 / 参数 / 工作目录 / 管理员，以及键鼠序列编辑器。
+// 动作参数表单：类型 / 目标 / 参数 / 工作目录 / 管理员，以及按键序列编辑器。
 //
 // 启动台格子编辑器（动作类）用这一份 —— 之前「快捷操作」和槽位两边各写一套
 // 字段与校验，改一处漏一处；库那边改只读后只剩这一处消费方。
+// 「按键模拟」参考 SystemTools 的「模拟键盘」：编辑器支持全局录制 + 步骤列表 +
+// 底部编辑行（操作 / 键码 / 名称 / 延迟），实现见 KeyboardStepsEditor。
 // 外部用 load() 灌入初始值、read() 取回一个动作对象。
 ColumnLayout {
     id: form
@@ -14,7 +16,7 @@ ColumnLayout {
     property string actionType: "file"
     property var steps: []
 
-    readonly property var typeKeys: ["file", "cmd", "url", "keymouse"]
+    readonly property var typeKeys: ["file", "cmd", "url", "keyboard"]
 
     Layout.fillWidth: true
     spacing: 10
@@ -25,7 +27,15 @@ ColumnLayout {
     function load(data) {
         data = data || {}
         actionType = String(data.type || "file")
-        steps = JSON.parse(JSON.stringify(data.keymouse_steps || []))
+        if (actionType === "keymouse") {
+            actionType = "keyboard"   // 旧配置兼容
+        }
+        var source = data.keyboard_steps || data.keymouse_steps || []
+        // 深拷贝再编辑，取消编辑不会动到配置里的原数组；鼠标步骤直接跳过。
+        steps = JSON.parse(JSON.stringify(source)).filter(function (step) {
+            return step && (step.type === "key" || step.type === "wait")
+        })
+        keyboardEditor.resetSelection()
         typeCombo.currentIndex = Math.max(0, typeKeys.indexOf(actionType))
         targetField.text = data.target || ""
         argsField.text = data.arguments || ""
@@ -40,15 +50,30 @@ ColumnLayout {
             "arguments": argsField.text.trim(),
             "working_dir": workdirField.text.trim(),
             "run_as": adminSwitch.checked ? "admin" : "user",
-            "keymouse_steps": actionType === "keymouse" ? steps : []
+            "keyboard_steps": actionType === "keyboard" ? steps : []
         }
     }
 
     // 保存前的校验；没问题时返回空串。
     function validate() {
-        if (actionType === "keymouse") {
-            // 一步都没有的键鼠动作点了也不会发生任何事，不如现在就拦住。
-            return steps.length > 0 ? "" : qsTr("键鼠动作还一步都没有，先在下面添加一条步骤")
+        if (actionType === "keyboard") {
+            if (steps.length === 0) {
+                // 一步都没有的按键动作点了也不会发生任何事，不如现在就拦住。
+                return qsTr("按键动作还一步都没有，先录制或新增一条步骤")
+            }
+            for (var i = 0; i < steps.length; ++i) {
+                var step = steps[i]
+                if (step.type === "wait") {
+                    continue
+                }
+                var hasName = String(step.key || "").trim().length > 0
+                var vk = parseInt(step.vk)
+                var hasCode = !isNaN(vk) && vk >= 1 && vk <= 255
+                if (!hasName && !hasCode) {
+                    return qsTr("第 %1 步既没有名称也没有键码").arg(i + 1)
+                }
+            }
+            return ""
         }
         if (targetField.text.trim().length === 0) {
             return qsTr("请先填写动作目标")
@@ -61,28 +86,10 @@ ColumnLayout {
             qsTr("选择文件或程序，例如 notepad.exe"),
             qsTr("命令行，例如 ping"),
             qsTr("网址，例如 https://example.com"),
-            qsTr("在下面的「键鼠序列」里配置")
+            qsTr("在下面的「按键序列」里配置")
         ]
         var index = typeKeys.indexOf(actionType)
         return index >= 0 ? hints[index] : hints[0]
-    }
-
-    function addStep(kind) {
-        var next = steps.slice()
-        if (kind === "key") {
-            next.push({ "type": "key", "key": "", "action": "press", "duration": 0 })
-        } else if (kind === "mouse") {
-            next.push({ "type": "mouse", "action": "click", "button": "left", "duration": 0 })
-        } else {
-            next.push({ "type": "wait", "duration": 0.5 })
-        }
-        steps = next
-    }
-
-    function removeStep(index) {
-        var next = steps.slice()
-        next.splice(index, 1)
-        steps = next
     }
 
     // ------------------------------------------------------------------
@@ -92,11 +99,12 @@ ColumnLayout {
         label: qsTr("类型")
         ComboBox {
             id: typeCombo
+            objectName: "actionTypeCombo"
             Layout.preferredWidth: 200
-            model: [qsTr("文件 / 程序"), qsTr("命令行"), qsTr("网址"), qsTr("键鼠模拟")]
+            model: [qsTr("文件 / 程序"), qsTr("命令行"), qsTr("网址"), qsTr("按键模拟")]
             // 只在用户真的选了才动状态：程序回填 currentIndex 会触发
             // currentIndexChanged，用 activated 才能把「读配置」和「改配置」分开。
-            function onActivated(index) {
+            onActivated: function (index) {
                 form.actionType = form.typeKeys[index] || "file"
             }
         }
@@ -108,7 +116,7 @@ ColumnLayout {
             id: targetField
             Layout.fillWidth: true
             placeholderText: form.targetHint()
-            enabled: form.actionType !== "keymouse"
+            enabled: form.actionType !== "keyboard"
         }
         ToolButton {
             icon.name: "ic_fluent_folder_open_20_regular"
@@ -152,55 +160,26 @@ ColumnLayout {
         }
     }
 
-    // ── 键鼠序列（仅键鼠模拟需要）──
-    RowLayout {
-        Layout.fillWidth: true
-        Layout.topMargin: 2
-        visible: form.actionType === "keymouse"
-        spacing: 8
-
-        Button {
-            text: qsTr("添加按键")
-            icon.name: "ic_fluent_keyboard_20_regular"
-            onClicked: form.addStep("key")
-        }
-        Button {
-            text: qsTr("添加鼠标")
-            icon.name: "ic_fluent_cursor_20_regular"
-            onClicked: form.addStep("mouse")
-        }
-        Button {
-            text: qsTr("添加等待")
-            icon.name: "ic_fluent_timer_20_regular"
-            onClicked: form.addStep("wait")
-        }
-        Item { Layout.fillWidth: true }
-        Text {
-            Layout.alignment: Qt.AlignVCenter
-            typography: Typography.Caption
-            color: Theme.currentTheme.colors.textSecondaryColor
-            text: qsTr("共 %1 步").arg(form.steps.length)
-        }
-    }
-
-    Repeater {
-        model: form.steps
-
-        delegate: KeymouseStepDelegate {
-            Layout.fillWidth: true
-            visible: form.actionType === "keymouse"
-            stepData: modelData
-            onDeleteRequested: form.removeStep(index)
-        }
-    }
-
+    // ── 按键序列（仅按键模拟需要）──
     Text {
         Layout.fillWidth: true
-        visible: form.actionType === "keymouse" && form.steps.length === 0
+        visible: form.actionType === "keyboard"
         wrapMode: Text.Wrap
         typography: Typography.Caption
         color: Theme.currentTheme.colors.textSecondaryColor
-        text: qsTr("还没有任何步骤，先用上面的按钮添加一条。")
+        text: qsTr("「延迟」指这一步执行前先等多久；「按住 + 释放」能搭配出长按或组合键；"
+                   + "填了键码按键码发送，否则按名称解析（组合键如 Ctrl+C 只能填在名称里）。")
+    }
+
+    KeyboardStepsEditor {
+        id: keyboardEditor
+        objectName: "keyboardStepsEditor"
+        Layout.fillWidth: true
+        visible: form.actionType === "keyboard"
+        steps: form.steps
+        onStepsEdited: function (nextSteps) {
+            form.steps = nextSteps
+        }
     }
 
     Text {

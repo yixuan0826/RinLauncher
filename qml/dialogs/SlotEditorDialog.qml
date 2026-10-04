@@ -9,9 +9,9 @@ import "../components"
 //
 // 槽位有四种，表单里只显示与当前类型相关的那几行 —— 与其把所有字段都摆出来再
 // 灰掉，不如按类型换表单，少一层判断也少一处看走眼的机会。整个表单可滚动：
-// 键鼠序列这种越加越长的字段不会再把 footer 挤出卡片。
+// 按键序列这种越加越长的字段不会再把 footer 挤出卡片。
 // 动作类槽位是「自带完整定义」的：类型 / 目标 / 参数 / 工作目录 / 管理员 /
-// 键鼠序列全写在这一格里，和快捷操作库不保持关联；库里的内容可以用「从快捷
+// 按键序列全写在这一格里，和快捷操作库不保持关联；库里的内容可以用「从快捷
 // 操作填入」拷进来，拷完两边各管各的。
 AppDialog {
     id: editor
@@ -60,7 +60,7 @@ AppDialog {
         Layout.fillHeight: true
         spacing: 10
 
-        // 表单放进 Flickable：字段多（尤其是键鼠序列）时内容会比卡片高，
+        // 表单放进 Flickable：字段多（尤其是按键序列）时内容会比卡片高，
         // 没有滚动的话底部几行和 footer 会被挤出卡片外面。
         Flickable {
             id: formScroller
@@ -132,10 +132,10 @@ AppDialog {
             ComboBox {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 300
-                model: [qsTr("动作（程序 / 命令 / 网址 / 键鼠）"), qsTr("内置功能"),
+                model: [qsTr("动作（程序 / 命令 / 网址 / 按键）"), qsTr("内置功能"),
                         qsTr("打开路径（文件 / 文件夹 / 磁盘）"), qsTr("可移动磁盘（自动检测）")]
                 currentIndex: editor.kindIndex
-                function onActivated(index) {
+                onActivated: function (index) {
                     editor.kind = editor.indexOfKind(index)
                 }
             }
@@ -151,7 +151,7 @@ AppDialog {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 320
                 model: editor.libraryModel
-                function onActivated(index) {
+                onActivated: function (index) {
                     editor.fillFromLibrary(index)
                 }
             }
@@ -160,6 +160,7 @@ AppDialog {
         // ── 动作字段：这一格自带完整定义，不依赖快捷操作库 ──
         ActionForm {
             id: inlineAction
+            objectName: "slotActionForm"
             visible: editor.kind === "action"
         }
 
@@ -173,7 +174,7 @@ AppDialog {
                 Layout.maximumWidth: 320
                 model: editor.toolNames
                 currentIndex: Math.max(0, editor.toolKeys.indexOf(editor.toolKey))
-                function onActivated(index) {
+                onActivated: function (index) {
                     editor.toolKey = editor.toolKeys[index] || ""
                 }
             }
@@ -220,7 +221,7 @@ AppDialog {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 320
                 model: editor.driveLabels
-                function onActivated(index) {
+                onActivated: function (index) {
                     editor.path = editor.drives[index].path
                 }
             }
@@ -354,8 +355,8 @@ AppDialog {
     // 内联动作没有名字：按类型从目标里取一个一眼能懂的显示名（与后端一致）。
     function deriveActionName() {
         var data = inlineAction.read()
-        if (data.type === "keymouse") {
-            return qsTr("键鼠动作")
+        if (data.type === "keyboard") {
+            return qsTr("按键动作")
         }
         if (data.target.length === 0) {
             return qsTr("未配置动作")

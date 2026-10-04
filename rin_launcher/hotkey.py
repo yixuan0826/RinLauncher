@@ -1,6 +1,6 @@
 """Global hotkey support.
 
-Uses ``pynput``'s listener (already a dependency for keymouse actions) rather
+Uses ``pynput``'s listener (already a dependency for keyboard actions) rather
 than Windows' ``RegisterHotKey`` so the same code path works everywhere.  The
 listener runs on its own thread, so activation is re-emitted as a Qt signal and
 Qt queues it back onto the GUI thread.

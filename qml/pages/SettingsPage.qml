@@ -26,12 +26,36 @@ Item {
         {"title": qsTr("常规"), "icon": "ic_fluent_home_20_regular", "target": "generalGroup"},
         {"title": qsTr("外观"), "icon": "lawnicons:generic_gallery", "target": "appearanceGroup"},
         {"title": qsTr("启动台"), "icon": "ic_fluent_apps_20_regular", "target": "launcherGroup"},
-        {"title": qsTr("热键"), "icon": "lawnicons:generic_keyboard", "target": "hotkeyGroup"},
+        {"title": qsTr("热键"), "icon": "ic_fluent_keyboard_20_regular", "target": "hotkeyGroup"},
         {"title": qsTr("高级"), "icon": "ic_fluent_toolbox_20_regular", "target": "advancedGroup"}
     ]
 
     ConfirmDialog {
         id: confirmDialog
+    }
+
+    // 右上角「…」菜单：分组跳转 + 打开配置目录，头部只留一个入口。
+    Menu {
+        id: sectionsMenu
+
+        objectName: "sectionsMenu"
+        position: Position.None
+
+        Repeater {
+            model: settingsPage.sections
+
+            delegate: MenuItem {
+                text: modelData.title
+                icon.name: modelData.icon
+                onTriggered: settingsPage.scrollTo(modelData.target)
+            }
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("打开配置目录")
+            icon.name: "ic_fluent_folder_open_20_regular"
+            onTriggered: ConfigManager.openConfigFolder()
+        }
     }
 
     Timer {
@@ -70,24 +94,16 @@ Item {
 
             Item { Layout.fillWidth: true }
 
-            // 锚点：点一下滚到那一组。
-            Repeater {
-                model: settingsPage.sections
-
-                delegate: ToolButton {
-                    Layout.alignment: Qt.AlignVCenter
-                    text: modelData.title
-                    icon.name: modelData.icon
-                    flat: true
-                    onClicked: settingsPage.scrollTo(modelData.target)
-                }
-            }
-
+            // 分组跳转收进右上角的「…」菜单，头部只留这一个入口。
             ToolButton {
+                id: sectionsButton
+                objectName: "sectionsButton"
                 Layout.alignment: Qt.AlignVCenter
-                icon.name: "ic_fluent_folder_open_20_regular"
-                ToolTip.text: qsTr("打开配置目录")
-                onClicked: ConfigManager.openConfigFolder()
+                icon.name: "ic_fluent_more_horizontal_20_regular"
+                ToolTip.text: qsTr("更多")
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
+                onClicked: settingsPage.popupSectionsMenu(sectionsButton)
             }
         }
 
@@ -158,7 +174,7 @@ Item {
                             id: themeCombo
                             Layout.preferredWidth: 180
                             model: [qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")]
-                            function onActivated(index) {
+                            onActivated: function (index) {
                                 settingsPage.apply("theme",
                                                    ["system", "light", "dark"][index])
                             }
@@ -189,7 +205,7 @@ Item {
                             id: materialCombo
                             Layout.preferredWidth: 180
                             model: [qsTr("增强云母"), qsTr("云母"), qsTr("不透明")]
-                            function onActivated(index) {
+                            onActivated: function (index) {
                                 settingsPage.apply("material",
                                                    ["tabbed", "mica", "none"][index])
                             }
@@ -322,7 +338,7 @@ Item {
                             id: logCombo
                             Layout.preferredWidth: 180
                             model: ["DEBUG", "INFO", "WARNING", "ERROR"]
-                            function onActivated(index) {
+                            onActivated: function (index) {
                                 settingsPage.apply(
                                     "logLevel",
                                     ["DEBUG", "INFO", "WARNING", "ERROR"][index])
@@ -449,6 +465,14 @@ Item {
         if (group) {
             scroller.contentY = Math.max(0, group.y - 8)
         }
+    }
+
+    // 「…」菜单贴在按钮左下方弹出（与主窗口标题栏的「…」同一套定位）。
+    function popupSectionsMenu(anchor) {
+        // 页面根是普通 Item，`settingsPage.window` 在 Qt 6 下拿不到东西；
+        // 把按钮角点映射到页面坐标系后直接 popup（弹出层的 parent 就是本页）。
+        var point = anchor.mapToItem(settingsPage, anchor.width, anchor.height + 4)
+        sectionsMenu.popup(Qt.point(Math.max(0, point.x - sectionsMenu.width), point.y))
     }
 
     function reloadSettings() {

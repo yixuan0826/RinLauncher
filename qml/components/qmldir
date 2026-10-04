@@ -6,7 +6,7 @@ CompactTile 1.0 CompactTile.qml
 FormRow 1.0 FormRow.qml
 HotkeyField 1.0 HotkeyField.qml
 IconGrid 1.0 IconGrid.qml
-KeymouseStepDelegate 1.0 KeymouseStepDelegate.qml
+KeyboardStepsEditor 1.0 KeyboardStepsEditor.qml
 MiniIconButton 1.0 MiniIconButton.qml
 SettingsGroup 1.0 SettingsGroup.qml
 SlotListEditor 1.0 SlotListEditor.qml

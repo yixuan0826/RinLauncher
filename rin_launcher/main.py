@@ -43,6 +43,7 @@ from rin_launcher import effects  # noqa: E402
 from rin_launcher.action_executor import ActionExecutor  # noqa: E402
 from rin_launcher.config_manager import ConfigManager  # noqa: E402
 from rin_launcher.hotkey import GlobalHotkey  # noqa: E402
+from rin_launcher.key_recorder import KeyRecorder  # noqa: E402
 from rin_launcher.tray import TrayIcon  # noqa: E402
 
 logger = logging.getLogger(__name__)
@@ -87,6 +88,8 @@ class Launcher:
         self.compact: RinUIWindow | None = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
+        # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
+        self.key_recorder = KeyRecorder()
         self._tray_wired = False
         # 已经上过的小窗材质参数，避免每次设置改动都重上一次。
         self._acrylic_state: tuple[bool, bool] | None = None
@@ -105,7 +108,6 @@ class Launcher:
         self.config_manager.settingsChanged.connect(self.apply_compact_acrylic)
         # QML 里的页面够不到窗口对象，页面级请求统一从后端转上来。
         self.config_manager.pageRequested.connect(self.show_main_page)
-        self.config_manager.previewCompactRequested.connect(self.show_compact)
         self.config_manager.showToast.connect(
             lambda message, _severity: self.tray.show_message("Rin Launcher", message))
 
@@ -136,6 +138,7 @@ class Launcher:
         # Inject the backend before loading, so the first binding already sees it.
         window = RinUIWindow()
         window.engine.rootContext().setContextProperty("ConfigManager", self.config_manager)
+        window.engine.rootContext().setContextProperty("KeyRecorder", self.key_recorder)
         window.load(QML_ENTRY)
 
         if window.root_window is None:
