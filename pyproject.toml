@@ -20,7 +20,7 @@ dependencies = [
 
 [project.optional-dependencies]
 build = ["pyinstaller>=6.1.0"]
-dev = ["pytest>=7.4.0", "pytest-qt>=4.2.0", "ruff>=0.1.0"]
+dev = ["pytest>=7.4.0", "ruff>=0.1.0"]
 
 [project.gui-scripts]
 rin-launcher = "rin_launcher.main:main"
