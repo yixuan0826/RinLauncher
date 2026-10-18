@@ -12,9 +12,10 @@ import "components"
 
 // 常驻桌面右下角的启动台小窗。
 //
-// 两块内容（都在完整窗口的「启动台」页里配）：
+// 三块内容（前两块都在完整窗口的「启动台」页里配）：
 //   面板：最多 10 格的双行格子板（≤ 5 格一排，更多时平分两排）
 //   存储区：存储卡片 + 磁盘入口
+//   系统控制：系统音量 + Wi-Fi 开关 + 移动热点开关
 // 窗口是「沉底」的桌面挂件：无边框、不抢焦点、不进任务栏，也不盖在别的窗口
 // 之上 —— 它贴在主显示器右下角，被普通窗口盖住，像桌面上的一块部件。
 // 高度固定为桌面可用高度的一半（见 rin_launcher/effects.py）。
@@ -144,6 +145,29 @@ Window {
                     }
 
                     Item { Layout.fillWidth: true }
+
+                    ToolButton {
+                        id: editButton
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        icon.name: "ic_fluent_edit_20_regular"
+                        ToolTip.text: qsTr("编辑启动台")
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 500
+                        onClicked: compact.openMain("launcher")
+                    }
+
+                    ToolButton {
+                        id: moreButton
+                        objectName: "compactMoreButton"
+                        Layout.preferredWidth: 30
+                        Layout.preferredHeight: 30
+                        icon.name: "ic_fluent_more_vertical_20_regular"
+                        ToolTip.text: qsTr("更多")
+                        ToolTip.visible: hovered
+                        ToolTip.delay: 500
+                        onClicked: compact.popupMoreMenu()
+                    }
                 }
             }
 
@@ -345,48 +369,11 @@ Window {
                 }
             }
 
-            // ── 底部操作条 ──
-            RowLayout {
+            // ── 底部：系统控制（音量 / Wi-Fi / 热点） ──
+            SystemControlBar {
+                objectName: "systemControlBar"
                 Layout.fillWidth: true
-                Layout.preferredHeight: 34
-                spacing: 6
-
-                Button {
-                    Layout.fillWidth: true
-                    text: qsTr("打开完整窗口")
-                    icon.name: "ic_fluent_window_20_regular"
-                    onClicked: compact.openMain("launcher")
-                }
-
-                ToolButton {
-                    icon.name: "ic_fluent_apps_20_regular"
-                    ToolTip.text: qsTr("启动台设置")
-                    onClicked: compact.openMain("launcher")
-                }
-
-                ToolButton {
-                    icon.name: "ic_fluent_flash_20_regular"
-                    ToolTip.text: qsTr("快捷操作")
-                    onClicked: compact.openMain("records")
-                }
-
-                ToolButton {
-                    icon.name: "ic_fluent_settings_20_regular"
-                    ToolTip.text: qsTr("设置")
-                    onClicked: compact.openMain("settings")
-                }
-
-                ToolButton {
-                    icon.name: "ic_fluent_more_vertical_20_regular"
-                    objectName: "compactMoreButton"
-                    ToolTip.text: qsTr("更多")
-                    onClicked: {
-                        // position 必须是 None，否则 RinUI 的 Menu 会按锚点重算
-                        // posX/posY，覆盖掉 popup() 指定的坐标。
-                        var scene = parent.mapToItem(null, 0, 0)
-                        moreMenu.popup(Qt.point(scene.x, scene.y + parent.height + 4))
-                    }
-                }
+                Layout.preferredHeight: 66
             }
         }
 
@@ -396,7 +383,8 @@ Window {
 
             anchors.horizontalCenter: card.horizontalCenter
             anchors.bottom: card.bottom
-            anchors.bottomMargin: 52
+            // 给底部的系统控制条留出位置，toast 不盖在音量条上。
+            anchors.bottomMargin: 128
             z: 900
             width: Math.min(toastText.implicitWidth + 24, card.width - 32)
             height: 32
@@ -551,28 +539,6 @@ Window {
         position: Position.None
 
         MenuItem {
-            text: qsTr("启动台设置…")
-            icon.name: "ic_fluent_apps_20_regular"
-            onTriggered: compact.openMain("launcher")
-        }
-        MenuItem {
-            text: qsTr("快捷操作…")
-            icon.name: "ic_fluent_flash_20_regular"
-            onTriggered: compact.openMain("records")
-        }
-        MenuItem {
-            text: qsTr("设置…")
-            icon.name: "ic_fluent_settings_20_regular"
-            onTriggered: compact.openMain("settings")
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("刷新磁盘信息")
-            icon.name: "ic_fluent_arrow_sync_20_regular"
-            onTriggered: ConfigManager.refreshStorageInfo()
-        }
-        MenuSeparator {}
-        MenuItem {
             text: qsTr("隐藏小窗")
             icon.name: "ic_fluent_eye_off_20_regular"
             onTriggered: compact.hideRequested()
@@ -679,7 +645,6 @@ Window {
         // 序列），缺了会执行出不一样的结果。
         // 右键点名要的提权：带 _explicit_admin 标记，不受「提权前确认 / 自动提权」拦截。
         var payload = {
-            "id": slot.ref || "",
             "name": slot.name,
             "type": slot.type,
             "target": slot.target,
@@ -696,9 +661,6 @@ Window {
         switch (key) {
         case "launcherPage":
             compact.openMain("launcher")
-            break
-        case "records":
-            compact.openMain("records")
             break
         case "settings":
             compact.openMain("settings")
@@ -731,6 +693,15 @@ Window {
     // 小窗是独立的 QML 根，够不到完整窗口，跨窗口的请求统一走信号交给 Python。
     function openMain(page) {
         compact.openMainRequested(page)
+    }
+
+    function popupMoreMenu() {
+        // 菜单右缘贴按钮右缘，向下弹；position 必须是 None，否则 RinUI 的
+        // Menu 会按锚点重算 posX/posY，覆盖掉 popup() 指定的坐标。
+        var scene = moreButton.mapToItem(null, moreButton.width, moreButton.height + 4)
+        var local = compact.contentItem.mapFromItem(null, scene.x, scene.y)
+        var menuWidth = moreMenu.width > 0 ? moreMenu.width : moreMenu.implicitWidth
+        moreMenu.popup(Qt.point(Math.max(0, local.x - menuWidth), local.y))
     }
 
     // 右键菜单的编辑入口：切到启动台页并当场打开这一格的编辑器。

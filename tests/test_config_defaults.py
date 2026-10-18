@@ -28,18 +28,17 @@ def test_pyproject_reads_version_dynamically():
     assert attr == "rin_launcher.__version__"
 
 
-def test_default_config_has_no_preset_actions():
+def test_default_config_has_no_quick_action_library():
     import rin_launcher.config_manager as cm
 
     config = cm._default_config()
-    # 库从空开始：放什么条目完全由用户决定。
-    assert config["actions"] == []
+    # 「快捷操作」已经整体下线：默认配置里不再有动作库和分区。
+    assert "actions" not in config
+    assert "categories" not in config
 
     slots = config["launcher"]["slots"]
-    # 面板 6 个内置功能 + 存储区（U 盘 + 磁盘）。
-    assert len(slots) == 8
-    assert all(slot["kind"] == "tool" for slot in slots[:6])
-    assert [slot["kind"] for slot in slots[6:]] == ["usb", "path"]
-    # 分区骨架仍然保留，第一个是「常用」。
-    assert config["categories"][0]["name"] == "常用"
+    # 面板 5 个内置功能 + 存储区（U 盘 + 磁盘）。
+    assert len(slots) == 7
+    assert all(slot["kind"] == "tool" for slot in slots[:5])
+    assert [slot["kind"] for slot in slots[5:]] == ["usb", "path"]
     assert config["settings"]["startupMode"] == "off"

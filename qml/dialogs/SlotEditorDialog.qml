@@ -10,9 +10,8 @@ import "../components"
 // 槽位有四种，表单里只显示与当前类型相关的那几行 —— 与其把所有字段都摆出来再
 // 灰掉，不如按类型换表单，少一层判断也少一处看走眼的机会。整个表单可滚动：
 // 按键序列这种越加越长的字段不会再把 footer 挤出卡片。
-// 动作类槽位是「自带完整定义」的：类型 / 目标 / 参数 / 工作目录 / 管理员 /
-// 按键序列全写在这一格里，和快捷操作库不保持关联；库里的内容可以用「从快捷
-// 操作填入」拷进来，拷完两边各管各的。
+// 动作类槽位自带完整定义：类型 / 目标 / 参数 / 工作目录 / 管理员 / 按键序列
+// 全写在这一格里，不依赖任何外部条目库。
 AppDialog {
     id: editor
 
@@ -22,22 +21,15 @@ AppDialog {
 
     // ── 表单状态 ──
     property string kind: "action"
-    property string ref: ""        // 老配置里的库引用，打开时会被拷进表单
     property string toolKey: ""
     property string path: ""
     property string label: ""
     property string iconKey: ""
 
     // 下拉的模型与后端取值
-    property var libraryNames: []
-    property var libraryActions: []
     property var toolNames: []
     property var toolKeys: []
     property var drives: []
-
-    readonly property var libraryModel: libraryNames.length > 0
-        ? [qsTr("（从库里挑一条填入）")].concat(libraryNames)
-        : [qsTr("（快捷操作库还是空的）")]
 
     signal saved()
 
@@ -75,7 +67,7 @@ AppDialog {
             ColumnLayout {
                 id: formColumn
                 width: formScroller.width
-                spacing: 10
+                spacing: 12
 
         // ── 预览 ──
         Frame {
@@ -119,45 +111,103 @@ AppDialog {
             }
         }
 
-        FormRow {
-            label: qsTr("类型")
-            description: qsTr("决定这一格点了之后干什么")
-            // 跟着选择走的指示图标：一眼能看出当前是哪类格子。
-            AppIcon {
-                Layout.alignment: Qt.AlignVCenter
-                iconKey: editor.kindIcon
-                iconSize: 20
-                tint: Theme.currentTheme.colors.primaryColor
-            }
-            ComboBox {
+        // ── 类型：四张可选卡片，比下拉框更直观 ──
+        ColumnLayout {
+            Layout.fillWidth: true
+            spacing: 1
+
+            Text {
                 Layout.fillWidth: true
-                Layout.maximumWidth: 300
-                model: [qsTr("动作（程序 / 命令 / 网址 / 按键）"), qsTr("内置功能"),
-                        qsTr("打开路径（文件 / 文件夹 / 磁盘）"), qsTr("可移动磁盘（自动检测）")]
-                currentIndex: editor.kindIndex
-                onActivated: function (index) {
-                    editor.kind = editor.indexOfKind(index)
+                font.bold: true
+                font.pixelSize: Theme.currentTheme.typography.bodySize + 1
+                color: Theme.currentTheme.colors.textColor
+                text: qsTr("这一格用来做什么？")
+            }
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                typography: Typography.Caption
+                color: Theme.currentTheme.colors.textSecondaryColor
+                text: editor.kindHint
+            }
+        }
+
+        RowLayout {
+            Layout.fillWidth: true
+            spacing: 8
+
+            Repeater {
+                model: editor.kindOptions
+
+                delegate: Frame {
+                    id: kindTile
+
+                    readonly property bool selected: editor.kind === modelData.kind
+
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 58
+                    radius: 8
+                    color: selected
+                        ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                                  Theme.currentTheme.colors.primaryColor.g,
+                                  Theme.currentTheme.colors.primaryColor.b, 0.16)
+                        : (kindMouse.containsMouse
+                            ? Theme.currentTheme.colors.controlSecondaryColor
+                            : Theme.currentTheme.colors.cardColor)
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 10
+                        anchors.rightMargin: 8
+                        spacing: 8
+
+                        AppIcon {
+                            Layout.alignment: Qt.AlignVCenter
+                            iconKey: modelData.icon
+                            iconSize: 18
+                            tint: kindTile.selected
+                                ? Theme.currentTheme.colors.primaryColor
+                                : Theme.currentTheme.colors.textColor
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            wrapMode: Text.WordWrap
+                            maximumLineCount: 2
+                            elide: Text.ElideRight
+                            font.pixelSize: Theme.currentTheme.typography.bodySize - 1
+                            font.bold: kindTile.selected
+                            color: kindTile.selected
+                                ? Theme.currentTheme.colors.primaryColor
+                                : Theme.currentTheme.colors.textColor
+                            text: modelData.title
+                        }
+                    }
+
+                    MouseArea {
+                        id: kindMouse
+                        anchors.fill: parent
+                        hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
+                        onClicked: editor.kind = modelData.kind
+                    }
+
+                    ToolTip.text: modelData.hint
+                    ToolTip.visible: kindMouse.containsMouse
+                    ToolTip.delay: 500
                 }
             }
         }
 
-        // ── 从快捷操作填入：拷贝一份内容，拷完两边各管各的 ──
-        FormRow {
-            visible: editor.kind === "action"
-            label: qsTr("快捷操作")
-            description: qsTr("从库里拷一条填进来（不保持关联）")
-            ComboBox {
-                id: libraryCombo
-                Layout.fillWidth: true
-                Layout.maximumWidth: 320
-                model: editor.libraryModel
-                onActivated: function (index) {
-                    editor.fillFromLibrary(index)
-                }
-            }
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.preferredHeight: 1
+            color: Theme.currentTheme.colors.cardBorderColor
         }
 
-        // ── 动作字段：这一格自带完整定义，不依赖快捷操作库 ──
+        // ── 动作字段：这一格自带完整定义 ──
         ActionForm {
             id: inlineAction
             objectName: "slotActionForm"
@@ -298,6 +348,13 @@ AppDialog {
     footer: RowLayout {
         spacing: 8
 
+        Text {
+            Layout.alignment: Qt.AlignVCenter
+            typography: Typography.Caption
+            color: Theme.currentTheme.colors.textSecondaryColor
+            text: qsTr("保存后立即生效")
+        }
+
         Item { Layout.fillWidth: true }
 
         Button {
@@ -315,25 +372,40 @@ AppDialog {
     // ------------------------------------------------------------------
     // 取值
     // ------------------------------------------------------------------
-    readonly property var kindOrder: ["action", "tool", "path", "usb"]
-    readonly property int kindIndex: Math.max(0, kindOrder.indexOf(kind))
-    // 类型指示图标：动作 = 运行、功能 = 扳手、路径 = 文件夹、磁盘 = U 盘。
-    readonly property string kindIcon: ({
-        "action": "ic_fluent_play_20_regular",
-        "tool": "ic_fluent_wrench_20_regular",
-        "path": "ic_fluent_folder_open_20_regular",
-        "usb": "ic_fluent_usb_plug_20_regular"
-    })[kind] || "ic_fluent_play_20_regular"
+    readonly property var kindOptions: [
+        {"kind": "action", "title": qsTr("动作"), "icon": "ic_fluent_play_20_regular",
+         "hint": qsTr("运行程序、命令或网址，也可以回放按键")},
+        {"kind": "tool", "title": qsTr("内置功能"), "icon": "ic_fluent_wrench_20_regular",
+         "hint": qsTr("小窗自带的功能，例如设置、重载、隐藏")},
+        {"kind": "path", "title": qsTr("打开路径"), "icon": "ic_fluent_folder_open_20_regular",
+         "hint": qsTr("打开一个文件、文件夹或磁盘")},
+        {"kind": "usb", "title": qsTr("可移动磁盘"), "icon": "ic_fluent_usb_plug_20_regular",
+         "hint": qsTr("插上 U 盘 / 移动硬盘后自动识别")}
+    ]
+
+    readonly property string kindTitle: {
+        for (var i = 0; i < kindOptions.length; ++i) {
+            if (kindOptions[i].kind === kind) {
+                return kindOptions[i].title
+            }
+        }
+        return ""
+    }
+
+    readonly property string kindHint: {
+        for (var i = 0; i < kindOptions.length; ++i) {
+            if (kindOptions[i].kind === kind) {
+                return kindOptions[i].hint
+            }
+        }
+        return ""
+    }
 
     readonly property var driveLabels: drives.map(function (item) {
         return item.total.length > 0
             ? "%1（%2，剩余 %3）".arg(item.label).arg(item.kindLabel).arg(item.free)
             : "%1（%2）".arg(item.label).arg(item.kindLabel)
     })
-
-    function indexOfKind(index) {
-        return kindOrder[index] || "action"
-    }
 
     readonly property string previewName: {
         if (label.length > 0) {
@@ -370,15 +442,15 @@ AppDialog {
 
     readonly property string previewDetail: {
         if (kind === "action") {
-            return qsTr("动作 · 由这一格自己定义")
+            return qsTr("%1 · 由这一格自己定义").arg(kindTitle)
         }
         if (kind === "tool") {
-            return qsTr("内置功能")
+            return qsTr("%1 · 小窗自带").arg(kindTitle)
         }
         if (kind === "usb") {
-            return qsTr("自动识别第一个可移动磁盘")
+            return qsTr("%1 · 插上后自动识别").arg(kindTitle)
         }
-        return qsTr("打开路径 · %1").arg(path.length > 0 ? path : qsTr("未设置"))
+        return qsTr("%1 · %2").arg(kindTitle).arg(path.length > 0 ? path : qsTr("未设置路径"))
     }
 
     readonly property string previewIcon: {
@@ -403,59 +475,20 @@ AppDialog {
         slot = existing || {}
 
         kind = slot.kind || "action"
-        ref = slot.ref || ""
         toolKey = slot.key || ""
         path = slot.path || ""
         label = slot.label || ""
         iconKey = slot.icon || ""
 
-        // 候选每次都重取：快捷操作库可能刚改过。
-        libraryActions = ConfigManager.getActions()
-        libraryNames = libraryActions.map(function (item) { return item.name })
-
-        // 老槽位引用的是库里的快捷操作：把内容拷进表单，保存后这格就归自己管。
-        // 引用早就失效时留空表单，由校验拦下来，而不是默默替个别的动作。
-        var preset = slot.action
-        if (!preset && ref.length > 0) {
-            preset = editor.findLibraryAction(ref)
-        }
-        inlineAction.load(preset || {})
+        // 动作就是这一格自己的定义。
+        inlineAction.load(slot.action || {})
 
         var tools = ConfigManager.getToolCatalog()
         toolNames = tools.map(function (item) { return item.title })
         toolKeys = tools.map(function (item) { return item.key })
 
         drives = ConfigManager.getDrives()
-        libraryCombo.currentIndex = 0
         open()
-    }
-
-    function findLibraryAction(id) {
-        for (var i = 0; i < libraryActions.length; ++i) {
-            if (libraryActions[i].id === id) {
-                return libraryActions[i]
-            }
-        }
-        return null
-    }
-
-    // 从库里拷一份填进表单；不动已有内容，只补空着的显示名 / 图标。
-    function fillFromLibrary(index) {
-        if (index <= 0) {
-            return
-        }
-        var item = libraryActions[index - 1]
-        if (!item) {
-            return
-        }
-        inlineAction.load(item)
-        if (label.length === 0) {
-            label = item.name || ""
-        }
-        if (iconKey.length === 0) {
-            iconKey = item.icon || ""
-        }
-        libraryCombo.currentIndex = 0
     }
 
     function commit() {
@@ -483,12 +516,11 @@ AppDialog {
             return
         }
 
-        // 动作一律写成内联：ref 传空串，新写入的槽位不再引用快捷操作库。
+        // 动作一律写成内联：这一格自己带着完整定义。
         var payload = {
             "kind": kind,
             "label": label.trim(),
             "icon": iconKey,
-            "ref": "",
             "key": kind === "tool" ? toolKey : "",
             "path": kind === "path" ? path.trim() : "",
             "action": kind === "action" ? inlineAction.read() : null

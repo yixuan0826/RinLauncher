@@ -6,8 +6,8 @@ import RinUI
 // 一行的槽位列表编辑器。
 //
 // 交互照 ClassIsland 那套「可增删排序的分组列表」来：每一项占一行，右侧一排
-// 上移 / 下移 / 编辑 / 删除，底下（这里是工具条上）一个「添加」。比拖拽好实现、
-// 好验收，键盘和触控板也都点得动。
+// 上移 / 下移 / 编辑 / 删除，顶部一个醒目的「添加一格」。比拖拽好实现、好验收，
+// 键盘和触控板也都点得动。
 ColumnLayout {
     id: list
 
@@ -27,46 +27,104 @@ ColumnLayout {
     readonly property bool full: capacity > 0 && slots.length >= capacity
 
     Layout.fillWidth: true
-    spacing: 6
+    spacing: 10
 
+    // ── 工具条：数量 / 容量进度 / 添加 ──
     RowLayout {
         Layout.fillWidth: true
-        spacing: 8
+        spacing: 10
 
         Text {
             Layout.alignment: Qt.AlignVCenter
-            typography: Typography.Caption
+            font.pixelSize: Theme.currentTheme.typography.bodySize + 1
+            font.bold: true
             color: list.full
                 ? Theme.currentTheme.colors.systemCautionColor
-                : Theme.currentTheme.colors.textSecondaryColor
-            text: {
-                var base = list.capacity > 0
-                    ? qsTr("共 %1 / %2 %3").arg(list.slots.length).arg(list.capacity).arg(list.unit)
-                    : qsTr("共 %1 %2").arg(list.slots.length).arg(list.unit)
-                // 禁用状态的按钮收不到 hover，提示只能写在文字里。
-                return list.full ? base + qsTr("（已满）") : base
+                : Theme.currentTheme.colors.textColor
+            text: list.capacity > 0
+                ? qsTr("%1 / %2 %3").arg(list.slots.length).arg(list.capacity).arg(list.unit)
+                : qsTr("%1 %2").arg(list.slots.length).arg(list.unit)
+        }
+
+        Rectangle {
+            Layout.alignment: Qt.AlignVCenter
+            Layout.preferredWidth: 84
+            Layout.preferredHeight: 4
+            radius: 2
+            visible: list.capacity > 0
+            color: Theme.currentTheme.colors.controlSecondaryColor
+
+            Rectangle {
+                height: parent.height
+                radius: parent.radius
+                width: parent.width
+                    * Math.min(1, list.slots.length / Math.max(1, list.capacity))
+                color: list.full
+                    ? Theme.currentTheme.colors.systemCautionColor
+                    : Theme.currentTheme.colors.primaryColor
             }
+        }
+
+        Text {
+            Layout.alignment: Qt.AlignVCenter
+            visible: list.full
+            typography: Typography.Caption
+            color: Theme.currentTheme.colors.systemCautionColor
+            text: qsTr("已满")
         }
 
         Item { Layout.fillWidth: true }
 
         Button {
-            text: qsTr("添加")
+            text: list.slots.length === 0 ? qsTr("添加第一格") : qsTr("添加一格")
             icon.name: "ic_fluent_add_20_regular"
+            highlighted: true
             enabled: !list.full
             onClicked: list.addRequested()
         }
     }
 
-    Text {
+    // ── 空状态：一句话 + 一个明确入口 ──
+    Frame {
         Layout.fillWidth: true
         visible: list.slots.length === 0
-        wrapMode: Text.Wrap
-        typography: Typography.Caption
-        color: Theme.currentTheme.colors.textSecondaryColor
-        text: list.emptyHint
+        implicitHeight: 124
+        radius: 8
+        color: "transparent"
+        border.width: 1
+        border.color: Theme.currentTheme.colors.cardBorderColor
+
+        ColumnLayout {
+            anchors.centerIn: parent
+            width: Math.min(parent.width - 32, 360)
+            spacing: 6
+
+            AppIcon {
+                Layout.alignment: Qt.AlignHCenter
+                iconKey: "ic_fluent_add_circle_20_regular"
+                iconSize: 26
+                tint: Theme.currentTheme.colors.primaryColor
+            }
+
+            Text {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                wrapMode: Text.Wrap
+                typography: Typography.Caption
+                color: Theme.currentTheme.colors.textSecondaryColor
+                text: list.emptyHint
+            }
+
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                text: qsTr("添加一格")
+                icon.name: "ic_fluent_add_20_regular"
+                onClicked: list.addRequested()
+            }
+        }
     }
 
+    // ── 列表 ──
     Repeater {
         model: list.slots
 
@@ -74,7 +132,18 @@ ColumnLayout {
             id: slotRow
 
             Layout.fillWidth: true
-            implicitHeight: 56
+            implicitHeight: 66
+            hoverable: true
+            radius: 8
+
+            MouseArea {
+                id: rowMouse
+                anchors.fill: parent
+                anchors.rightMargin: 150   // 让出右边那四个按钮
+                hoverEnabled: true
+                cursorShape: Qt.PointingHandCursor
+                onClicked: list.editRequested(index)
+            }
 
             RowLayout {
                 anchors.fill: parent
@@ -84,33 +153,68 @@ ColumnLayout {
 
                 Text {
                     Layout.alignment: Qt.AlignVCenter
-                    Layout.preferredWidth: 20
+                    Layout.preferredWidth: 18
                     horizontalAlignment: Text.AlignRight
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
                     text: (index + 1)
                 }
 
-                AppIcon {
+                // 图标底板：让一排图标在视觉上有统一的重心。
+                Rectangle {
                     Layout.alignment: Qt.AlignVCenter
-                    iconKey: modelData.icon || ""
-                    iconSize: 24
-                    tint: Theme.currentTheme.colors.primaryColor
+                    Layout.preferredWidth: 38
+                    Layout.preferredHeight: 38
+                    radius: 8
+                    color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                                   Theme.currentTheme.colors.primaryColor.g,
+                                   Theme.currentTheme.colors.primaryColor.b,
+                                   0.12)
+
+                    AppIcon {
+                        anchors.centerIn: parent
+                        iconKey: modelData.icon || ""
+                        iconSize: 22
+                        tint: Theme.currentTheme.colors.primaryColor
+                    }
                 }
 
                 ColumnLayout {
                     Layout.fillWidth: true
                     Layout.minimumWidth: 80
-                    spacing: 0
+                    spacing: 2
 
-                    Text {
+                    RowLayout {
                         Layout.fillWidth: true
-                        // RinUI 的 Text 默认 WordWrap，不关掉的话窄列里会一个字一行。
-                        wrapMode: Text.NoWrap
-                        elide: Text.ElideRight
-                        color: Theme.currentTheme.colors.textColor
-                        text: modelData.name || qsTr("未命名")
+                        spacing: 8
+
+                        Text {
+                            Layout.fillWidth: true
+                            wrapMode: Text.NoWrap
+                            elide: Text.ElideRight
+                            font.bold: true
+                            color: Theme.currentTheme.colors.textColor
+                            text: modelData.name || qsTr("未命名")
+                        }
+
+                        // 类型胶囊：不用读副标题也能一眼看出这是哪种格子。
+                        Rectangle {
+                            Layout.alignment: Qt.AlignVCenter
+                            implicitWidth: kindLabelText.implicitWidth + 12
+                            implicitHeight: 18
+                            radius: 9
+                            color: Theme.currentTheme.colors.controlSecondaryColor
+
+                            Text {
+                                id: kindLabelText
+                                anchors.centerIn: parent
+                                font.pixelSize: 10
+                                color: Theme.currentTheme.colors.textSecondaryColor
+                                text: modelData.kindLabel || qsTr("格子")
+                            }
+                        }
                     }
+
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.NoWrap
@@ -146,29 +250,29 @@ ColumnLayout {
                 }
             }
 
-            MouseArea {
-                anchors.fill: parent
-                anchors.rightMargin: 124   // 让出右边那四个按钮
-                onClicked: list.editRequested(index)
-            }
+            ToolTip.text: qsTr("点击这一行可以直接编辑")
+            ToolTip.visible: rowMouse.containsMouse
+            ToolTip.delay: 700
         }
     }
 
-    // 副标题：类型 + 目标，一眼看出这一格会打开什么。
+    // 副标题：目标 / 状态，一眼看出这一格会打开什么。
     function describe(slot) {
-        var kind = (slot && slot.kindLabel) || ""
         if (!slot) {
-            return kind
+            return ""
         }
         if (slot.kind === "usb") {
-            return kind + " · " + (slot.available ? slot.path : qsTr("当前没有检测到"))
+            return slot.available ? slot.path : qsTr("当前没有检测到")
         }
         if (slot.kind === "path") {
-            return kind + " · " + (slot.exists ? slot.path : qsTr("%1（路径不存在）").arg(slot.path))
+            return slot.exists ? slot.path : qsTr("%1（路径不存在）").arg(slot.path)
         }
         if (slot.kind === "action") {
-            return kind + " · " + (slot.target || qsTr("未设置目标"))
+            return slot.target || qsTr("未设置目标")
         }
-        return kind
+        if (slot.kind === "tool") {
+            return qsTr("小窗内置功能")
+        }
+        return ""
     }
 }

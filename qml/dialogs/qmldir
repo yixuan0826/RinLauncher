@@ -1,6 +1,4 @@
 AppDialog 1.0 AppDialog.qml
-CategoryEditorDialog 1.0 CategoryEditorDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 IconPickerDialog 1.0 IconPickerDialog.qml
-RecordEntryDialog 1.0 RecordEntryDialog.qml
 SlotEditorDialog 1.0 SlotEditorDialog.qml

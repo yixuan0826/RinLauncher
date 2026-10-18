@@ -34,11 +34,9 @@ FluentWindow {
     // 关闭按钮不直接退出，交给 Python 判断该隐藏（有托盘）还是真退出。
     signal closeRequested()
 
-    // 页面表。左侧导航只放三个常用页；「快捷操作」这种低频入口收进了标题栏
-    // 右上角的「…」菜单（openPage 照样能按名字切过去）。
+    // 页面表。左侧导航只放三个常用页，openPage 照样能按名字切过去。
     readonly property var pageUrls: ({
         "launcher": Qt.resolvedUrl("pages/LauncherSettingsPage.qml"),
-        "records": Qt.resolvedUrl("pages/RecordsPage.qml"),
         "settings": Qt.resolvedUrl("pages/SettingsPage.qml"),
         "about": Qt.resolvedUrl("pages/AboutPage.qml")
     })
@@ -147,12 +145,6 @@ FluentWindow {
             visible: launcherWindow.onSettingsPage
         }
 
-        MenuItem {
-            text: qsTr("快捷操作…")
-            icon.name: "ic_fluent_flash_20_regular"
-            onTriggered: launcherWindow.openPage("records")
-        }
-        MenuSeparator {}
         MenuItem {
             text: qsTr("重载配置")
             icon.name: "ic_fluent_arrow_sync_20_regular"

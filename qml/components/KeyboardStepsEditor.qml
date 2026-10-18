@@ -24,7 +24,8 @@ ColumnLayout {
 
     readonly property var actionValues: ["click", "press", "release"]
     readonly property var actionLabels: [qsTr("单击"), qsTr("按住"), qsTr("释放")]
-    readonly property bool available: typeof KeyRecorder !== "undefined" && KeyRecorder.available
+    readonly property bool available: typeof KeyRecorder !== "undefined"
+        && KeyRecorder !== null && KeyRecorder.available
 
     // 修改后的完整数组由这里交给持有者保存。
     signal stepsEdited(var nextSteps)
@@ -54,7 +55,7 @@ ColumnLayout {
     }
 
     Connections {
-        target: typeof KeyRecorder !== "undefined" ? KeyRecorder : null
+        target: typeof KeyRecorder !== "undefined" && KeyRecorder !== null ? KeyRecorder : null
 
         function onStepsChanged(list) {
             // 录制结果整表替换。
@@ -77,13 +78,13 @@ ColumnLayout {
     // 录制
     // ------------------------------------------------------------------
     function startRecording() {
-        if (typeof KeyRecorder !== "undefined") {
+        if (typeof KeyRecorder !== "undefined" && KeyRecorder !== null) {
             KeyRecorder.start()
         }
     }
 
     function stopRecording() {
-        if (typeof KeyRecorder !== "undefined") {
+        if (typeof KeyRecorder !== "undefined" && KeyRecorder !== null) {
             KeyRecorder.stop()
         }
     }

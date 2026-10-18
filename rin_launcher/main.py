@@ -51,6 +51,7 @@ from rin_launcher.single_instance import (
     acquire_single_instance,
     notify_running_instance,
 )
+from rin_launcher.system_controls import SystemControls
 from rin_launcher.tray import TrayIcon
 from RinUI import RinUIWindow
 from RinUI.core import BackdropEffect, is_windows
@@ -92,11 +93,13 @@ class Launcher:
         self.config_manager = ConfigManager()
         self.config_manager.action_executor = ActionExecutor(self.config_manager)
 
-        # 两个 QML 根：常驻桌面右下角的小窗（启动台本体）和完整窗口（启动台设置 / 快捷操作 / 设置）。
+        # 两个 QML 根：常驻桌面右下角的小窗（启动台本体）和完整窗口（启动台设置 / 设置 / 关于）。
         self.window: RinUIWindow | None = None
         self.compact: RinUIWindow | None = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
+        # 系统控制（音量 / Wi-Fi / 移动热点），小窗底部那排卡片用。
+        self.system_controls = SystemControls()
         # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
         self.key_recorder = KeyRecorder()
         # 单实例消息服务端（见 start_single_instance_server）。
@@ -121,6 +124,8 @@ class Launcher:
         self.config_manager.pageRequested.connect(self.show_main_page)
         self.config_manager.showToast.connect(
             lambda message, _severity: self.tray.show_message("Rin Launcher", message))
+        # 系统控制的失败提示走和小窗同一条 toast 链路。
+        self.system_controls.notify.connect(self.config_manager.notify)
 
         self.apply_hotkey(str(settings.get("globalHotkey", "")))
         self.apply_tray(bool(settings.get("showTray", True)))
@@ -150,6 +155,7 @@ class Launcher:
         window = RinUIWindow()
         window.engine.rootContext().setContextProperty("ConfigManager", self.config_manager)
         window.engine.rootContext().setContextProperty("KeyRecorder", self.key_recorder)
+        window.engine.rootContext().setContextProperty("SystemControls", self.system_controls)
         window.load(QML_ENTRY)
 
         if window.root_window is None:
@@ -177,6 +183,7 @@ class Launcher:
 
         window = RinUIWindow()
         window.engine.rootContext().setContextProperty("ConfigManager", self.config_manager)
+        window.engine.rootContext().setContextProperty("SystemControls", self.system_controls)
         window.load(COMPACT_ENTRY)
 
         if window.root_window is None:
@@ -321,7 +328,7 @@ class Launcher:
             self.show_compact()
 
     def show_main_page(self, page: str) -> None:
-        """打开完整窗口并切到指定页（小窗的「打开完整窗口」也走这里）。"""
+        """打开完整窗口并切到指定页（小窗的编辑按钮也走这里）。"""
         if not self.ensure_main_window():
             return
         root = self.window.root_window
@@ -337,7 +344,7 @@ class Launcher:
             self.window.root_window.hide()
 
     def handle_tray_page(self, page: str) -> None:
-        """托盘菜单里的「启动台」现在指常驻小窗，快捷操作 / 设置才开完整窗口。"""
+        """托盘菜单里的「启动台」指常驻小窗，设置 / 关于才开完整窗口。"""
         if page == "launcher":
             self.show_compact()
         else:
@@ -353,6 +360,7 @@ class Launcher:
     def quit(self) -> None:
         self.hotkey.unregister()
         self.tray.stop()
+        self.system_controls.stop()
         self.config_manager.stopWatching()
         self.app.quit()
 

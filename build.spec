@@ -108,7 +108,17 @@ a = Analysis(
     ],
     # PyInstaller's PySide6 hook already pulls in the Qt modules, so only the
     # plain-Python dependencies have to be listed here.
-    hiddenimports=["yaml", "pynput", "watchdog", "ctypes.wintypes"],
+    hiddenimports=[
+        "yaml", "pynput", "watchdog", "ctypes.wintypes",
+        # 小窗系统控制：音量（pycaw）与 WinRT 投影。
+        "pycaw", "comtypes", "comtypes.client",
+        "winrt",
+        "winrt.windows.devices.radios",
+        "winrt.windows.foundation",
+        "winrt.windows.foundation.collections",
+        "winrt.windows.networking.connectivity",
+        "winrt.windows.networking.networkoperators",
+    ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],

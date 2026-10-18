@@ -10,4 +10,5 @@ KeyboardStepsEditor 1.0 KeyboardStepsEditor.qml
 MiniIconButton 1.0 MiniIconButton.qml
 SettingsGroup 1.0 SettingsGroup.qml
 SlotListEditor 1.0 SlotListEditor.qml
+SystemControlBar 1.0 SystemControlBar.qml
 ZoneHeader 1.0 ZoneHeader.qml

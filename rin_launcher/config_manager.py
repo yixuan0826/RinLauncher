@@ -4,9 +4,9 @@ Owns ``config.yaml`` and exposes it to QML through camelCase ``@Slot`` methods
 (QML resolves the Python attribute name, so the QML-facing API *is* camelCase —
 there is no separate snake_case layer).
 
-改动只发对应的信号（``launcherChanged`` / ``recordsChanged`` /
-``settingsChanged``），不再一律发 ``configChanged``：小窗、快捷操作页、设置页
-各自只关心一块数据，少一次全量刷新就少一次重复解析与重排。
+改动只发对应的信号（``launcherChanged`` / ``settingsChanged``），不再一律发
+``configChanged``：小窗、设置页各自只关心一块数据，少一次全量刷新就少一次
+重复解析与重排。
 """
 
 from __future__ import annotations
@@ -38,7 +38,6 @@ logger = logging.getLogger(__name__)
 APP_REPO = "https://github.com/yixuan0826/RinLauncher"
 
 DEFAULT_CONFIG_DIR = Path.home() / "AppData" / "Roaming" / "RinLauncher"
-FALLBACK_CATEGORY = "默认"
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BUNDLED_ICON_DIR = ASSETS_DIR / "icons" / "lawnicons"
 APP_ICON_FILE = ASSETS_DIR / "icon.png"
@@ -65,7 +64,6 @@ SLOT_KINDS: tuple = (SLOT_ACTION, SLOT_TOOL, SLOT_PATH, SLOT_USB)
 # 内置功能。(key, 标题, Fluent 图标名)
 TOOL_CATALOG: tuple = (
     ("launcherPage", "启动台设置", "ic_fluent_apps_20_regular"),
-    ("records", "快捷操作", "ic_fluent_flash_20_regular"),
     ("settings", "设置", "ic_fluent_settings_20_regular"),
     ("configFolder", "配置目录", "ic_fluent_folder_open_20_regular"),
     ("configFile", "配置文件", "ic_fluent_document_text_20_regular"),
@@ -74,9 +72,9 @@ TOOL_CATALOG: tuple = (
     ("hide", "隐藏小窗", "ic_fluent_eye_off_20_regular"),
     ("quit", "退出程序", "ic_fluent_power_20_regular"),
 )
-# 默认第二行：挑 6 个日常用得上的。
-DEFAULT_TOOL_KEYS: tuple = ("launcherPage", "records", "settings",
-                            "configFolder", "reload", "hide")
+# 默认面板：挑几个日常用得上的。
+DEFAULT_TOOL_KEYS: tuple = ("launcherPage", "settings", "configFolder",
+                            "reload", "hide")
 TOOL_ICONS: dict[str, str] = {key: icon for key, _title, icon in TOOL_CATALOG}
 TOOL_TITLES: dict[str, str] = {key: title for key, title, _icon in TOOL_CATALOG}
 
@@ -94,8 +92,7 @@ SLOT_KIND_ICONS: dict[str, str] = {
     SLOT_USB: "ic_fluent_usb_plug_20_regular",
 }
 
-# 槽位不再引用「快捷操作」里的条目：动作直接写在槽位里（内联），「快捷操作」
-# 页只是可复用的库，两边靠复制而不是引用关联。
+# 槽位不再引用任何外部条目：动作直接写在槽位里（内联）。
 ACTION_TYPES: tuple = ("file", "cmd", "url", "keyboard")
 # 旧版「键鼠模拟」已降级为「按键模拟」：读到旧类型名就迁成 keyboard，
 # 旧字段 keymouse_steps 中的鼠标步骤直接跳过（执行端不再认识它）。
@@ -293,18 +290,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "logLevel": "INFO",
 }
 
-# 预置条目已移除：库一开始是空的，里面放什么完全交给用户自己维护。
-# （默认只留分区骨架，见 DEFAULT_CATEGORIES。）
-
-# (name, icon, order)
-DEFAULT_CATEGORIES: tuple = (
-    ("常用", "lawnicons:generic_heart", 0),
-    ("系统工具", "lawnicons:generic_settings", 1),
-    ("开发工具", "lawnicons:generic_braces", 2),
-    ("媒体娱乐", "lawnicons:generic_player", 3),
-    (FALLBACK_CATEGORY, "lawnicons:generic_files", 99),
-)
-
 
 def _new_id() -> str:
     return uuid.uuid4().hex[:8]
@@ -391,18 +376,6 @@ def _action_steps(action: dict[str, Any]) -> list[dict[str, Any]]:
     return _sanitize_steps(raw)
 
 
-def _migrate_action_entry(entry: Any) -> None:
-    """就地把库里的老动作迁到新命名：keymouse → keyboard，步骤字段改名并清洗。"""
-    if not isinstance(entry, dict):
-        return
-    kind = str(entry.get("type") or "")
-    if kind in LEGACY_ACTION_TYPES:
-        kind = entry["type"] = LEGACY_ACTION_TYPES[kind]
-    if kind == "keyboard" and ("keyboard_steps" in entry or "keymouse_steps" in entry):
-        entry["keyboard_steps"] = _action_steps(entry)
-        entry.pop("keymouse_steps", None)
-
-
 def _sanitize_inline_action(raw: Any) -> dict[str, Any] | None:
     """把外部写进来的内联动作修回可用状态；不合法（或为空）返回 None。"""
     if not isinstance(raw, dict):
@@ -438,8 +411,7 @@ def _derive_action_name(action: dict[str, Any]) -> str:
 
 
 def _default_slots() -> list[dict[str, Any]]:
-    """默认槽位：面板放 6 个内置功能（库默认是空的，没有条目可引），存储区放
-    一个 U 盘和一个本机磁盘。"""
+    """默认槽位：面板放 5 个内置功能，存储区放一个 U 盘和一个本机磁盘。"""
     slots = [_new_slot(SLOT_TOOL, ROW_PANEL, key=key) for key in DEFAULT_TOOL_KEYS]
     slots.append(_new_slot(SLOT_USB, ROW_STORAGE, label="U 盘"))
 
@@ -454,20 +426,9 @@ def _default_slots() -> list[dict[str, Any]]:
 
 
 def _default_config() -> dict[str, Any]:
-    """Build a fresh default config; ids are regenerated on every call.
-
-    动作库不预置条目 —— 里面放什么完全由用户决定。
-    """
-    actions: list[dict[str, Any]] = []
-
-    categories = [
-        {"id": _new_id(), "name": name, "icon": icon, "order": rank, "expanded": True}
-        for name, icon, rank in DEFAULT_CATEGORIES
-    ]
+    """Build a fresh default config."""
     return {
         "version": CONFIG_VERSION,
-        "actions": actions,
-        "categories": categories,
         "launcher": {
             "slots": _default_slots(),
             "storagePath": "",
@@ -500,7 +461,6 @@ class ConfigManager(QObject):
     configChanged = Signal()
     # 分块信号：各页面只订阅自己关心的那一块，避免无谓重算。
     launcherChanged = Signal()
-    recordsChanged = Signal()
     settingsChanged = Signal()
     # The window / tray / hotkey owner listens to these and applies the change.
     hotkeyChanged = Signal(str)
@@ -554,7 +514,15 @@ class ConfigManager(QObject):
             return config
         try:
             with open(self.config_file, encoding="utf-8") as handle:
-                return self._normalize(yaml.safe_load(handle) or {})
+                raw = yaml.safe_load(handle) or {}
+            # _normalize 会就地把旧键 pop 掉，所以先记下「读到过旧库」。
+            had_legacy_library = "actions" in raw or "categories" in raw
+            config = self._normalize(raw)
+            # 旧版「快捷操作」库 / 分区不从磁盘上留着：读到就立刻写回一份干净的配置，
+            # 不用等用户下次改设置。
+            if had_legacy_library:
+                self.save(config, changed="all")
+            return config
         except Exception:
             logger.exception("Failed to read %s, falling back to defaults", self.config_file)
             return _default_config()
@@ -567,11 +535,11 @@ class ConfigManager(QObject):
             version = int(data.get("version") or 1)
         except (TypeError, ValueError):
             version = 1
-        data.setdefault("actions", [])
-        data.setdefault("categories", [])
-        # 库里的动作也迁一次命名（keymouse → keyboard / 步骤字段改名）。
-        for entry in data["actions"] if isinstance(data["actions"], list) else []:
-            _migrate_action_entry(entry)
+        # 「快捷操作」已整体下线：旧配置里的动作库 / 分区不再读入，
+        # 下一次写盘就会从 config.yaml 里消失。引用了动作库的旧槽位
+        # 在 _normalize_slot 里因为拿不到内联动作而被丢弃。
+        data.pop("actions", None)
+        data.pop("categories", None)
         # settings keys added by newer builds get their default value
         raw_settings = dict(data.get("settings") or {})
         settings = {**DEFAULT_SETTINGS, **raw_settings}
@@ -595,13 +563,13 @@ class ConfigManager(QObject):
                             legacy_rows: bool = False) -> dict[str, Any]:
         """把 launcher 段补成合法槽位列表，并兼容旧版（固定 apps/tools）格式。"""
         raw = data.get("launcher") or {}
-        slots = self._migrate_slots(raw, data.get("actions", []), legacy_rows)
+        slots = self._migrate_slots(raw, legacy_rows)
         return {
             "slots": [slot for slot in slots if slot["kind"] in SLOT_KINDS],
             "storagePath": str(raw.get("storagePath") or ""),
         }
 
-    def _migrate_slots(self, raw: dict[str, Any], actions: list[dict[str, Any]],
+    def _migrate_slots(self, raw: dict[str, Any],
                        legacy_rows: bool = False) -> list[dict]:
         """产出槽位列表。
 
@@ -632,11 +600,9 @@ class ConfigManager(QObject):
             return _default_slots()
 
         # ── 旧格式迁移 ──
+        # 老配置的 apps 引用的是已经下线的快捷操作库，没法再还原成内联动作，
+        # 直接跳过；老「功能按钮」里还在 catalog 的照常保留。
         migrated: list[dict[str, Any]] = []
-        existing = {action["id"] for action in actions}
-        for action_id in raw.get("apps") or []:
-            if str(action_id) in existing:
-                migrated.append(_new_slot(SLOT_ACTION, ROW_PANEL, ref=str(action_id)))
         for key in raw.get("tools") or []:
             if key in TOOL_ICONS:
                 migrated.append(_new_slot(SLOT_TOOL, ROW_PANEL, key=str(key)))
@@ -666,12 +632,12 @@ class ConfigManager(QObject):
         slot["label"] = str(item.get("label") or "")
         slot["icon"] = str(item.get("icon") or "")
         if kind == SLOT_ACTION:
-            slot["ref"] = str(item.get("ref") or "")
-            # 内联动作（槽位自带完整定义）与 ref 二选一，有 ref 时以内联的为准会
-            # 让编辑器里的选择显得反复无常，所以解析时 ref 优先。
+            # 动作必须自带完整定义：引用动作库的老槽位（只有 ref）已经没法还原，
+            # 直接丢弃，避免小窗上留下一个点了没反应的格子。
             inline = _sanitize_inline_action(item.get("action"))
-            if inline is not None:
-                slot["action"] = inline
+            if inline is None:
+                return None
+            slot["action"] = inline
         elif kind == SLOT_TOOL:
             key = str(item.get("key") or "")
             if key not in TOOL_ICONS:   # 老配置里可能留着已经下线的 key
@@ -684,8 +650,8 @@ class ConfigManager(QObject):
     def save(self, config: dict[str, Any] | None = None, *, changed: str = "all") -> bool:
         """落盘。
 
-        ``changed`` 指哪一块变了：``launcher`` / ``records`` / ``settings`` /
-        ``all``，据此只发对应的信号。
+        ``changed`` 指哪一块变了：``launcher`` / ``settings`` / ``all``，
+        据此只发对应的信号。
         """
         if config is not None:
             self._config = config
@@ -703,12 +669,9 @@ class ConfigManager(QObject):
         if changed == "all":
             self.configChanged.emit()
             self.launcherChanged.emit()
-            self.recordsChanged.emit()
             self.settingsChanged.emit()
         elif changed == "launcher":
             self.launcherChanged.emit()
-        elif changed == "records":
-            self.recordsChanged.emit()
         elif changed == "settings":
             self.settingsChanged.emit()
         return True
@@ -740,33 +703,14 @@ class ConfigManager(QObject):
     # ------------------------------------------------------------------
     # Read API (called from QML)
     # ------------------------------------------------------------------
-    @Slot(result="QVariantList")
-    def getActions(self) -> list[dict]:
-        return self._config["actions"]
-
-    @Slot(result="QVariantList")
-    def getCategories(self) -> list[dict]:
-        return self._config["categories"]
-
-    @Slot(result="QStringList")
-    def getCategoriesModel(self) -> list[str]:
-        return [category["name"] for category in self._config["categories"]]
-
     @Slot(result="QVariantMap")
     def getSettings(self) -> dict[str, Any]:
         """A detached copy, so the settings dialog can edit it before saving."""
         return dict(self._config["settings"])
 
-    @Slot(str, result=int)
-    def getCategoryIndex(self, name: str) -> int:
-        for index, category in enumerate(self._config["categories"]):
-            if category["name"] == name:
-                return index
-        return 0
-
     # ── 启动台槽位 ────────────────────────────────────────────────────
     def _resolve_slot(self, slot: dict[str, Any]) -> dict[str, Any] | None:
-        """把槽位解析成界面直接能画的一条数据；引用失效的返回 None。"""
+        """把槽位解析成界面直接能画的一条数据；动作不完整时返回 None。"""
         kind = slot["kind"]
         resolved = dict(slot)
         override_icon = slot.get("icon") or ""
@@ -774,39 +718,20 @@ class ConfigManager(QObject):
 
         if kind == SLOT_ACTION:
             inline = slot.get("action")
-            if isinstance(inline, dict) and inline and not slot.get("ref"):
-                # 内联动作：槽位自己就是一份完整定义，不依赖快捷操作库。
-                resolved.update(
-                    name=override_label or _derive_action_name(inline),
-                    icon=override_icon or "",
-                    ref="",
-                    type=inline.get("type", ""),
-                    target=inline.get("target", ""),
-                    arguments=inline.get("arguments", ""),
-                    working_dir=inline.get("working_dir", ""),
-                    keyboard_steps=inline.get("keyboard_steps") or [],
-                    runAs=inline.get("run_as", "user"),
-                    admin=inline.get("run_as") == "admin",
-                    inlineAction=True,
-                )
-            else:
-                entry = next(
-                    (a for a in self._config["actions"] if a["id"] == slot.get("ref")), None)
-                if entry is None or entry.get("enabled", True) is False:
-                    return None
-                resolved.update(
-                    # 槽位自己的 label 优先，空着才用条目本名
-                    name=override_label or entry.get("name", ""),
-                    icon=override_icon or entry.get("icon", ""),
-                    ref=entry["id"],
-                    type=entry.get("type", ""),
-                    target=entry.get("target", ""),
-                    arguments=entry.get("arguments", ""),
-                    working_dir=entry.get("working_dir", ""),
-                    keyboard_steps=_action_steps(entry),
-                    runAs=entry.get("run_as", "user"),
-                    admin=entry.get("run_as") == "admin",
-                )
+            if not isinstance(inline, dict) or not inline:
+                return None
+            resolved.update(
+                name=override_label or _derive_action_name(inline),
+                icon=override_icon or "",
+                type=inline.get("type", ""),
+                target=inline.get("target", ""),
+                arguments=inline.get("arguments", ""),
+                working_dir=inline.get("working_dir", ""),
+                keyboard_steps=inline.get("keyboard_steps") or [],
+                runAs=inline.get("run_as", "user"),
+                admin=inline.get("run_as") == "admin",
+                inlineAction=True,
+            )
         elif kind == SLOT_TOOL:
             key = slot.get("key", "")
             resolved.update(
@@ -1138,131 +1063,6 @@ class ConfigManager(QObject):
     # ------------------------------------------------------------------
     # Write API (called from QML)
     # ------------------------------------------------------------------
-    @Slot("QVariantMap", result=bool)
-    def addAction(self, action: dict) -> bool:
-        action = dict(action)
-        if not action.get("id"):
-            action["id"] = _new_id()
-        self._config["actions"].append(action)
-        return self.save(changed="records")
-
-    @Slot("QVariantMap", result=bool)
-    def updateAction(self, action: dict) -> bool:
-        action = dict(action)
-        for index, existing in enumerate(self._config["actions"]):
-            if existing["id"] == action.get("id"):
-                self._config["actions"][index] = action
-                return self.save(changed="records")
-        logger.warning("No action with id %s to update", action.get("id"))
-        return False
-
-    @Slot(str, result=bool)
-    def deleteAction(self, action_id: str) -> bool:
-        return self.deleteActions([action_id])
-
-    def _drop_slots_referencing(self, ids: set[str]) -> bool:
-        """删掉引用了这些条目的槽位：引用失效后只剩个空壳，留着更让人迷惑。"""
-        slots = self._config["launcher"]["slots"]
-        kept = [
-            slot for slot in slots
-            if not (slot.get("kind") == SLOT_ACTION
-                    and str(slot.get("ref") or "") in ids)
-        ]
-        self._config["launcher"]["slots"] = kept
-        return len(kept) != len(slots)
-
-    @Slot("QVariantMap", result=bool)
-    def duplicateAction(self, action: dict) -> bool:
-        clone = dict(action)
-        clone.update(
-            id=_new_id(),
-            name=f"{action.get('name', '')} (副本)",
-            hotkey="",
-            order=action.get("order", 0) + 1,
-        )
-        return self.addAction(clone)
-
-    @Slot("QVariantMap", result=bool)
-    def addCategory(self, category: dict) -> bool:
-        category = dict(category)
-        if not category.get("id"):
-            category["id"] = _new_id()
-        self._config["categories"].append(category)
-        return self.save(changed="records")
-
-    @Slot("QVariantMap", result=bool)
-    def updateCategory(self, category: dict) -> bool:
-        category = dict(category)
-        for index, existing in enumerate(self._config["categories"]):
-            if existing["id"] != category.get("id"):
-                continue
-            # Entries reference a category by name, so a rename has to cascade.
-            old_name, new_name = existing["name"], category.get("name", existing["name"])
-            if old_name != new_name:
-                for action in self._config["actions"]:
-                    if action.get("category") == old_name:
-                        action["category"] = new_name
-            self._config["categories"][index] = category
-            return self.save(changed="records")
-        logger.warning("No category with id %s to update", category.get("id"))
-        return False
-
-    @Slot(str, result=bool)
-    def deleteCategory(self, category_id: str) -> bool:
-        victim = next((c for c in self._config["categories"] if c["id"] == category_id), None)
-        if victim is None:
-            return False
-        if victim["name"] == FALLBACK_CATEGORY:
-            # 「默认」是所有落单条目的归宿，删掉它条目就散了。
-            self.showToast.emit("「默认」分区不能删除", "warning")
-            return False
-
-        self._config["categories"] = [c for c in self._config["categories"] if c["id"] != category_id]
-        # Entries store the category *name*; falling back to the id here would
-        # strand them outside every category and hide them from the launcher.
-        for action in self._config["actions"]:
-            if action.get("category") == victim["name"]:
-                action["category"] = FALLBACK_CATEGORY
-        return self.save(changed="records")
-
-    @Slot(str, int, result=bool)
-    def moveAction(self, action_id: str, delta: int) -> bool:
-        """Move an entry up/down inside its own category."""
-        actions = self._config["actions"]
-        for action in actions:
-            if action["id"] != action_id:
-                continue
-            peers = sorted(
-                (other for other in actions
-                 if other.get("category") == action.get("category")),
-                key=lambda item: item.get("order", 0),
-            )
-            position = peers.index(action)
-            target = position + delta
-            if not 0 <= target < len(peers):
-                return False
-            peers.insert(target, peers.pop(position))
-            for order, peer in enumerate(peers):
-                peer["order"] = order
-            return self.save(changed="records")
-        return False
-
-    @Slot(str, int, result=bool)
-    def moveCategory(self, category_id: str, delta: int) -> bool:
-        """Move a category up/down in the sidebar order."""
-        categories = self._config["categories"]
-        for index, category in enumerate(categories):
-            if category["id"] != category_id:
-                continue
-            target = index + delta
-            if not 0 <= target < len(categories):
-                return False
-            categories.insert(target, categories.pop(index))
-            for order, item in enumerate(categories):
-                item["order"] = order
-            return self.save(changed="records")
-        return False
-
     # ── 槽位编辑 ──────────────────────────────────────────────────────
     def _slots(self) -> list[dict[str, Any]]:
         return self._config["launcher"]["slots"]
@@ -1279,14 +1079,9 @@ class ConfigManager(QObject):
         created["icon"] = str(payload.get("icon") or "")
         if kind == SLOT_ACTION:
             inline = _sanitize_inline_action(payload.get("action"))
-            if inline is not None:
-                created["action"] = inline
-            else:
-                # 只接受指向现存条目的显式引用（老配置迁移用），不做兜底。
-                ref = str(payload.get("ref") or "")
-                if not ref or not any(a["id"] == ref for a in self._config["actions"]):
-                    return None
-                created["ref"] = ref
+            if inline is None:
+                return None
+            created["action"] = inline
         elif kind == SLOT_TOOL:
             key = str(payload.get("key") or "")
             if key not in TOOL_ICONS:
@@ -1355,36 +1150,6 @@ class ConfigManager(QObject):
             return False
         self._slots().append(built)
         return self.save(changed="launcher")
-
-    @Slot(str, int, result=bool)
-    def addActionToLauncher(self, action_id: str, row: int) -> bool:
-        """把一条快捷操作拷成面板上的一格（拷贝，之后两边各管各的）。"""
-        entry = next((a for a in self._config["actions"] if a["id"] == action_id), None)
-        if entry is None:
-            return False
-        row = ROW_PANEL if int(row) <= ROW_PANEL else ROW_STORAGE
-        if row == ROW_PANEL and self._panel_full():
-            self.showToast.emit(f"面板最多放 {PANEL_CAPACITY} 格，先删一格再加。", "warning")
-            return False
-        built = self._build_slot(SLOT_ACTION, row, {
-            "label": str(entry.get("name") or ""),
-            "icon": str(entry.get("icon") or ""),
-            "action": {
-                "type": entry.get("type", "file"),
-                "target": entry.get("target", ""),
-                "arguments": entry.get("arguments", ""),
-                "working_dir": entry.get("working_dir", ""),
-                "run_as": entry.get("run_as", "user"),
-                "keyboard_steps": _action_steps(entry),
-            },
-        })
-        if built is None:
-            return False
-        self._slots().append(built)
-        if not self.save(changed="launcher"):
-            return False
-        self.showToast.emit(f"已复制到启动台：{entry.get('name', '')}", "success")
-        return True
 
     @Slot(int, int, "QVariantMap", result=bool)
     def updateLauncherSlot(self, row: int, index: int, slot: dict) -> bool:
@@ -1507,41 +1272,6 @@ class ConfigManager(QObject):
         autostart.refresh_task_exists_async(
             lambda _value: self.startupStateChanged.emit())
 
-    @Slot(str, bool, result=bool)
-    def toggleAction(self, action_id: str, enabled: bool) -> bool:
-        for action in self._config["actions"]:
-            if action["id"] == action_id:
-                if action.get("enabled", True) == enabled:
-                    return True  # 没有变化，不必重写配置（也避免 UI 反复触发写盘）
-                action["enabled"] = enabled
-                return self.save(changed="records")
-        return False
-
-    @Slot("QVariantList", bool, result=bool)
-    def setActionsEnabled(self, action_ids: list, enabled: bool) -> bool:
-        """批量启停：快捷操作页的多选操作走这里，只写一次盘。"""
-        wanted = {str(item) for item in action_ids}
-        changed = False
-        for action in self._config["actions"]:
-            if action["id"] in wanted and action.get("enabled", True) != enabled:
-                action["enabled"] = enabled
-                changed = True
-        return self.save(changed="records") if changed else True
-
-    @Slot("QVariantList", result=bool)
-    def deleteActions(self, action_ids: list) -> bool:
-        """批量删除，同样是写一次盘；引用它们的启动台格子会一起移除。"""
-        wanted = {str(item) for item in action_ids}
-        if not wanted:
-            return True
-        self._config["actions"] = [
-            a for a in self._config["actions"] if a["id"] not in wanted]
-        dropped = self._drop_slots_referencing(wanted)
-        saved = self.save(changed="records")
-        if dropped:
-            self.launcherChanged.emit()
-        return saved
-
     @Slot(result=bool)
     def reloadConfig(self) -> bool:
         """Re-read config.yaml from disk and tell the UI about it."""
@@ -1549,7 +1279,6 @@ class ConfigManager(QObject):
         self._storage_cache = None
         self.configChanged.emit()
         self.launcherChanged.emit()
-        self.recordsChanged.emit()
         self.settingsChanged.emit()
         return True
 
@@ -1635,22 +1364,16 @@ class ConfigManager(QObject):
         kind = str(slot.get("kind") or "")
         if kind == SLOT_ACTION:
             inline = slot.get("action")
-            if isinstance(inline, dict) and inline and not slot.get("ref"):
-                # 槽位自带完整动作，直接执行，不去查库。
-                if inline.get("type") != "keyboard" \
-                        and not str(inline.get("target") or "").strip():
-                    self.showToast.emit("这一格还没有配置目标", "warning")
-                    return False
-                payload = dict(inline)
-                payload["name"] = str(slot.get("name") or "")
-                self.executeAction(payload)
-                return True
-            ref = str(slot.get("ref") or "")
-            entry = next((a for a in self._config["actions"] if a["id"] == ref), None)
-            if entry is None:
-                self.showToast.emit("这个槽位引用的条目已经不存在了", "warning")
+            if not isinstance(inline, dict) or not inline:
+                self.showToast.emit("这一格还没有配置动作", "warning")
                 return False
-            self.executeAction(entry)
+            if inline.get("type") != "keyboard" \
+                    and not str(inline.get("target") or "").strip():
+                self.showToast.emit("这一格还没有配置目标", "warning")
+                return False
+            payload = dict(inline)
+            payload["name"] = str(slot.get("name") or "")
+            self.executeAction(payload)
             return True
         if kind == SLOT_USB:
             return self.openRemovableDrive()

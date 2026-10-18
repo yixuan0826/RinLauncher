@@ -16,6 +16,14 @@ dependencies = [
     "pynput>=1.7.6",
     "watchdog>=3.0.0",
     "pywin32; sys_platform == 'win32'",
+    # 小窗底部的系统控制（音量 / Wi-Fi / 移动热点）。
+    "pycaw>=20240215; sys_platform == 'win32'",
+    "comtypes>=1.4.0; sys_platform == 'win32'",
+    "winrt-Windows.Devices.Radios>=3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Foundation>=3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Foundation.Collections>=3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Networking.Connectivity>=3.2.1; sys_platform == 'win32'",
+    "winrt-Windows.Networking.NetworkOperators>=3.2.1; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]

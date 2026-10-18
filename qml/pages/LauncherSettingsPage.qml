@@ -8,8 +8,8 @@ import "../dialogs"
 
 // 启动台设置。
 //
-// 小窗现在只有两块：一块最多 10 格的「双行面板」和一块存储/磁盘区。面板上的
-// 每一格都是独立编辑的（动作自带完整定义），和快捷操作库只靠复制往来。
+// 小窗现在有三块：一块最多 10 格的「双行面板」、一块存储/磁盘区，以及底部的
+// 系统控制条（音量 / Wi-Fi / 热点）。面板上的每一格都是独立编辑的。
 Item {
     id: launcherSettings
 
@@ -32,7 +32,59 @@ Item {
 
     SlotEditorDialog {
         id: slotEditor
+        objectName: "slotEditorDialog"
         onSaved: launcherSettings.reload()
+    }
+
+    // 概述卡里的一个小统计块：图标 + 标题 + 数值 + 补充说明。
+    component StatBlock: RowLayout {
+        id: stat
+
+        property string iconKey: ""
+        property string label: ""
+        property string value: ""
+        property string hint: ""
+
+        Layout.fillWidth: true
+        spacing: 10
+
+        AppIcon {
+            Layout.alignment: Qt.AlignVCenter
+            iconKey: stat.iconKey
+            iconSize: 20
+            tint: Theme.currentTheme.colors.primaryColor
+        }
+
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.alignment: Qt.AlignVCenter
+            spacing: 0
+
+            Text {
+                typography: Typography.Caption
+                color: Theme.currentTheme.colors.textSecondaryColor
+                text: stat.label
+            }
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
+                font.pixelSize: Theme.currentTheme.typography.bodySize + 3
+                font.bold: true
+                color: Theme.currentTheme.colors.textColor
+                text: stat.value
+            }
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.NoWrap
+                elide: Text.ElideRight
+                typography: Typography.Caption
+                color: Theme.currentTheme.colors.textSecondaryColor
+                text: stat.hint
+            }
+        }
     }
 
     // ------------------------------------------------------------------
@@ -44,18 +96,36 @@ Item {
 
         RowLayout {
             Layout.fillWidth: true
-            Layout.preferredHeight: 68
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
-            spacing: 8
+            Layout.preferredHeight: 88
+            Layout.leftMargin: 24
+            Layout.rightMargin: 24
+            spacing: 14
+
+            Frame {
+                Layout.alignment: Qt.AlignVCenter
+                Layout.preferredWidth: 46
+                Layout.preferredHeight: 46
+                radius: 12
+                color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                               Theme.currentTheme.colors.primaryColor.g,
+                               Theme.currentTheme.colors.primaryColor.b,
+                               0.12)
+
+                AppIcon {
+                    anchors.centerIn: parent
+                    iconKey: "ic_fluent_apps_20_regular"
+                    iconSize: 24
+                    tint: Theme.currentTheme.colors.primaryColor
+                }
+            }
 
             ColumnLayout {
                 Layout.alignment: Qt.AlignVCenter
-                spacing: 0
+                spacing: 2
 
                 Text {
                     font.bold: true
-                    font.pixelSize: Theme.currentTheme.typography.bodySize + 4
+                    font.pixelSize: 22
                     color: Theme.currentTheme.colors.textColor
                     text: qsTr("启动台")
                 }
@@ -63,15 +133,17 @@ Item {
                 Text {
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("小窗的面板与存储区，改完立即生效")
+                    text: qsTr("管理桌面小窗上的应用格子、存储入口与右键菜单，改完立即生效。")
                 }
             }
 
             Item { Layout.fillWidth: true }
 
-            Button {
-                text: qsTr("重载配置")
+            ToolButton {
                 icon.name: "ic_fluent_arrow_sync_20_regular"
+                ToolTip.text: qsTr("从磁盘重新加载配置")
+                ToolTip.visible: hovered
+                ToolTip.delay: 500
                 onClicked: ConfigManager.reloadConfig()
             }
         }
@@ -82,25 +154,78 @@ Item {
             Layout.fillHeight: true
             clip: true
             contentWidth: width
-            contentHeight: contentColumn.implicitHeight + 28
+            contentHeight: contentColumn.implicitHeight + 48
             ScrollBar.vertical: ScrollBar {}
 
             ColumnLayout {
                 id: contentColumn
-                x: 16
-                width: scroller.width - 32
-                spacing: 16
+                x: Math.max(24, (scroller.width - width) / 2)
+                width: Math.min(scroller.width - 48, 920)
+                spacing: 18
+
+                // ── 概览 ──
+                Frame {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 86
+                    radius: 10
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 18
+                        anchors.rightMargin: 18
+                        spacing: 16
+
+                        StatBlock {
+                            iconKey: "ic_fluent_apps_20_regular"
+                            label: qsTr("应用面板")
+                            value: qsTr("%1 / %2 格")
+                                .arg(launcherSettings.panelSlots.length)
+                                .arg(launcherSettings.panelCapacity)
+                            hint: qsTr("超过 5 格时自动分成两排")
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 1
+                            Layout.preferredHeight: 40
+                            color: Theme.currentTheme.colors.cardBorderColor
+                        }
+
+                        StatBlock {
+                            iconKey: "ic_fluent_hard_drive_20_regular"
+                            label: qsTr("存储入口")
+                            value: qsTr("%1 个").arg(launcherSettings.storageSlots.length)
+                            hint: qsTr("U 盘与磁盘卡片")
+                        }
+
+                        Rectangle {
+                            Layout.preferredWidth: 1
+                            Layout.preferredHeight: 40
+                            color: Theme.currentTheme.colors.cardBorderColor
+                        }
+
+                        StatBlock {
+                            iconKey: "ic_fluent_folder_open_20_regular"
+                            label: qsTr("存储位置")
+                            value: launcherSettings.storage.label || qsTr("未设置")
+                            hint: launcherSettings.storage.available
+                                ? qsTr("剩余 %1").arg(launcherSettings.storage.free)
+                                : qsTr("容量未知")
+                        }
+                    }
+                }
 
                 // ── 面板 ──
                 SettingsGroup {
                     iconKey: "ic_fluent_dock_row_20_regular"
-                    title: qsTr("面板 · 最多 %1 格").arg(launcherSettings.panelCapacity)
+                    title: qsTr("应用面板")
 
                     Text {
                         Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("小窗上那块双行格子板；每格的动作、图标、名称都是独立定义。")
+                        text: qsTr("小窗上那块双行格子板，最多 %1 格。每格的动作、图标和名称都是独立的，点一下就能用。")
+                            .arg(launcherSettings.panelCapacity)
                     }
 
                     // 配置里手动塞了超过 10 格时说明一声：小窗只会显示前 10 格。
@@ -120,7 +245,7 @@ Item {
                         row: launcherSettings.rowPanel
                         slots: launcherSettings.panelSlots
                         capacity: launcherSettings.panelCapacity
-                        emptyHint: qsTr("面板还是空的，点「添加」放一格进来。")
+                        emptyHint: qsTr("面板还是空的，添加一格就能在小窗上看到它。")
                         unit: qsTr("格")
                         onAddRequested: slotEditor.openFor(launcherSettings.rowPanel, -1, null)
                         onEditRequested: launcherSettings.editSlot(launcherSettings.rowPanel, index)
@@ -137,9 +262,10 @@ Item {
 
                     Text {
                         Layout.fillWidth: true
+                        wrapMode: Text.Wrap
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("左边固定的是存储卡片；磁盘入口支持「可移动磁盘」自动检测，或钉死某个盘。")
+                        text: qsTr("存储卡片显示所选目录所在磁盘的剩余空间；下面可以再加 U 盘或指定磁盘入口。")
                     }
 
                     FormRow {
@@ -182,7 +308,7 @@ Item {
                         objectName: "storageSlotList"
                         row: launcherSettings.rowStorage
                         slots: launcherSettings.storageSlots
-                        emptyHint: qsTr("还没有磁盘入口，点「添加」放一个 U 盘或某个盘进去。")
+                        emptyHint: qsTr("还没有磁盘入口，添加一个 U 盘或磁盘卡片。")
                         unit: qsTr("个入口")
                         onAddRequested: slotEditor.openFor(launcherSettings.rowStorage, -1, null)
                         onEditRequested: launcherSettings.editSlot(launcherSettings.rowStorage, index)
@@ -191,7 +317,35 @@ Item {
                                              launcherSettings.rowStorage, index, delta)
                     }
                 }
-            }
+                // ── 系统控制说明 ──
+                Frame {
+                    Layout.fillWidth: true
+                    implicitHeight: 58
+                    radius: 10
+
+                    RowLayout {
+                        anchors.fill: parent
+                        anchors.leftMargin: 16
+                        anchors.rightMargin: 16
+                        spacing: 10
+
+                        AppIcon {
+                            Layout.alignment: Qt.AlignVCenter
+                            iconKey: "ic_fluent_speaker_2_20_regular"
+                            iconSize: 20
+                            tint: Theme.currentTheme.colors.primaryColor
+                        }
+
+                        Text {
+                            Layout.fillWidth: true
+                            Layout.alignment: Qt.AlignVCenter
+                            wrapMode: Text.Wrap
+                            typography: Typography.Caption
+                            color: Theme.currentTheme.colors.textSecondaryColor
+                            text: qsTr("小窗底部固定显示系统控制条：音量、Wi-Fi 和移动热点，不需要在这里添加。")
+                        }
+                    }
+                }            }
         }
     }
 

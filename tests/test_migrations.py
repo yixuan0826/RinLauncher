@@ -1,4 +1,4 @@
-"""配置迁移回归：autoStart → startupMode、keymouse → keyboard、坏值兜底。"""
+"""配置迁移回归：autoStart → startupMode、内联 keymouse → keyboard、下线功能清理。"""
 
 from __future__ import annotations
 
@@ -34,20 +34,50 @@ def test_bogus_startup_mode_falls_back_to_off(qapp, tmp_path):
     assert manager.config["settings"]["startupMode"] == "off"
 
 
-def test_keymouse_steps_migrate_to_keyboard(qapp, tmp_path):
+def test_inline_keymouse_steps_migrate_to_keyboard(qapp, tmp_path):
     manager = _load_with(tmp_path, """
 version: 3
-actions:
-  - id: abc123
-    name: 测试动作
-    type: keymouse
-    keymouse_steps:
-      - {type: key, key: "Ctrl+C", action: click, duration: 0.1}
-      - {type: mouse, x: 5, y: 6}
+launcher:
+  slots:
+    - kind: action
+      row: 0
+      action:
+        type: keymouse
+        keymouse_steps:
+          - {type: key, key: "Ctrl+C", action: click, duration: 0.1}
+          - {type: mouse, x: 5, y: 6}
 settings: {}
 """)
-    entry = manager.config["actions"][0]
+    entry = manager.config["launcher"]["slots"][0]["action"]
     assert entry["type"] == "keyboard"
     assert "keymouse_steps" not in entry
     assert entry["keyboard_steps"] == [
         {"type": "key", "key": "Ctrl+C", "action": "click", "duration": 0.1}]
+
+
+def test_removed_quick_action_library_is_dropped(qapp, tmp_path):
+    """旧配置里的动作库 / 分区 / ref 槽位都随功能一起下线。"""
+    manager = _load_with(tmp_path, """
+version: 2
+actions:
+  - id: abc123
+    name: 老动作
+    type: file
+    target: notepad.exe
+categories:
+  - {id: c1, name: 常用}
+launcher:
+  slots:
+    - {kind: action, row: 0, ref: abc123}
+    - {kind: tool, row: 0, key: launcherPage}
+settings: {}
+""")
+    assert "actions" not in manager.config
+    assert "categories" not in manager.config
+    kinds = [slot["kind"] for slot in manager.config["launcher"]["slots"]]
+    # ref 槽位没有内联动作，无法还原，直接丢弃；内置功能保留。
+    assert kinds == ["tool"]
+    # 规范化后的配置会立刻写回磁盘，旧键不应该继续留在文件里。
+    on_disk = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "actions:" not in on_disk
+    assert "categories:" not in on_disk

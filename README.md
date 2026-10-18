@@ -11,8 +11,7 @@
 就用」，**完整窗口**负责「把东西管起来」。目标平台 Windows 10/11。
 
 - 常驻小窗：无边框亚克力的桌面挂件，锚在主显示器右下角（不抢焦点、不进任务栏、沉底）
-- 双行面板（最多 10 格）+ 存储与磁盘区，每格自由定义：文件 / 命令行 / 网址 / 按键模拟
-- 「快捷操作」模板库：条目与分区完全由用户维护，一键复制到面板
+- 双行面板（最多 10 格）+ 存储与磁盘区 + 系统控制（音量 / Wi-Fi / 热点），每格自由定义：文件 / 命令行 / 网址 / 按键模拟
 - 配置、日志、图标都在 exe 同级的 `data/` 目录；首次启动自动生成（并自动迁移旧数据）
 
 ---
@@ -21,9 +20,9 @@
 
 | | |
 | --- | --- |
-| 🪟 **常驻小窗** | 亚克力无焦点桌面挂件：固定主显示器右下角、沉在普通窗口之下；双行面板 + 存储区 |
+| 🪟 **常驻小窗** | 亚克力无焦点桌面挂件：固定主显示器右下角、沉在普通窗口之下；双行面板 + 存储区 + 系统控制 |
 | 🧩 **槽位自由定义** | 每一格都自带完整定义：文件 / 命令行 / 网址 / 按键模拟当场填完，每格独立编辑 |
-| 🗂 **快捷操作库** | 用户自己维护的模板库：条目与分区可增删改，一键复制到面板，两边各管各的 |
+| 🎛 **系统控制** | 底部一排 Win11 风格卡片：音量滑条（图标可静音）、Wi-Fi 开关、移动热点开关 |
 | ⌨️ **按键模拟** | 参考 SystemTools：全局录制键盘输入或手动编辑，支持组合键与长按 |
 | 🎨 **图标选择器** | 内置 / 随包 / 我的 / 从文件获取四个来源；exe·dll·lnk 提取与 ico·svg·png 导入 |
 | ⚙️ **设置** | 启动方式（普通 / 管理员自启动）、主题材质、托盘、热键、动画开关、配置管理 |
@@ -35,15 +34,15 @@
 ## 界面导览
 
 **常驻小窗**：贴在主显示器右下角的亚克力挂件（点得动但不抢焦点、不盖在别的窗口上）。
-自上而下：标题条 → 双行面板（≤5 格单排，更多平分两排）→ 存储与磁盘区 → 底部条。
+自上而下：标题条（右上角：编辑启动台 / 更多）→ 双行面板（≤5 格单排，更多平分两排）→
+存储与磁盘区 → 系统控制条（音量 / Wi-Fi / 热点）。
 每格左键启动、右键出菜单；用 `Win+D` 或热键叫回来。
 
-**完整窗口**：侧边三页（「快捷操作」在标题栏右上角的「…」菜单里）。
+**完整窗口**：侧边三页。
 
 | 页面 | 作用 |
 | --- | --- |
 | 启动台 | 编辑小窗：面板最多 10 格，加 / 删 / 挪 / 改名 / 换图标；存储区配目录与磁盘入口 |
-| 快捷操作 | 动作模板库：条目与分区自主维护，行尾「复制到启动台」 |
 | 设置 | 常规 / 外观 / 启动台 / 热键 / 高级；全部即时生效 |
 | 关于 | 版本、仓库链接、运行环境、配置位置、许可证 |
 
@@ -125,23 +124,6 @@ $env:RIN_ONEFILE="1"; pyinstaller build.spec; Remove-Item Env:RIN_ONEFILE
 ```yaml
 version: 3
 
-actions:                              # 快捷操作库；默认是空的，条目完全由你维护
-  - id: "9f3c1a7b"
-    name: "命令提示符"
-    icon: "lawnicons:generic_shell"   # 也可以是 ic_fluent_* 或 file:<路径>
-    type: "cmd"                       # file | cmd | url | keyboard
-    target: "cmd.exe"
-    arguments: ""
-    working_dir: ""
-    run_as: "user"                    # user | admin（admin 会触发 UAC）
-    keyboard_steps: []                # 仅 keyboard 使用，见「按键序列」
-    category: "开发工具"               # 按「名字」引用分区
-    enabled: true
-    order: 0                          # 分区内排序
-
-categories:                           # 分区；改名会级联，删除时条目回「默认」
-  - {id: "c1a2b3d4", name: "开发工具", icon: "lawnicons:generic_braces", order: 2, expanded: true}
-
 launcher:
   slots:                              # 小窗格子；数组顺序 = 行内顺序，row 决定落哪块
     - {kind: "action", row: 0, action: {type: "file", target: "notepad.exe"}, label: "记事本", icon: ""}
@@ -171,12 +153,12 @@ settings:
 `path`（文件·文件夹·磁盘）/ `usb`（自动检测的可移动磁盘）；`row` 决定落在面板
 （0，最多 10 格）还是存储区（1）；`label` / `icon` 为空时用目标自己的名字与图标。
 
-内置功能 key：`launcherPage` `records` `settings` `configFolder` `configFile`
+内置功能 key：`launcherPage` `settings` `configFolder` `configFile`
 `reload` `elevate` `hide` `quit`。
 
 > 老格式（`apps` / `tools` 固定两行、更早的 `row: 0/1/2` 三行模型）在读取时会自动
-> 翻译成新结构，槽位一个不丢；`ref` 引用的旧写法打开编辑器时会换算成内联 `action`。
-> 分区在条目里按**名字**引用：重命名会级联；删除分区时条目移到「默认」，不会丢。
+> 翻译成新结构；老配置里引用了已下线的「快捷操作」库的格子会被丢弃，
+> `actions` / `categories` 两个顶层键会在读取配置时立即从磁盘上移除。
 
 ---
 
@@ -256,6 +238,7 @@ settings:
 ├── rin_launcher/                # Python 后端
 │   ├── main.py                  # 入口：装配窗口 / 托盘 / 热键 / 单实例
 │   ├── config_manager.py        # 配置读写（data/ 目录策略、旧数据迁移）
+│   ├── system_controls.py       # 音量 / Wi-Fi / 移动热点（pycaw + WinRT）
 │   ├── action_executor.py       # 四种动作的执行引擎（含自动提权闸门）
 │   ├── key_recorder.py          # 按键录制器（全局监听 → 步骤整理）
 │   ├── autostart.py             # 三态启动方式（注册表 / 任务计划）
@@ -267,10 +250,10 @@ settings:
 ├── qml/
 │   ├── CompactWindow.qml        # 常驻桌面右下角的小窗（启动台）
 │   ├── LauncherWindow.qml       # 完整窗口（FluentWindow + NavigationView）
-│   ├── pages/                   # 启动台 / 快捷操作 / 设置 / 关于
-│   ├── dialogs/                 # AppDialog 基类 + 槽位/条目/分区编辑器、图标选择器、确认框
+│   ├── pages/                   # 启动台 / 设置 / 关于
+│   ├── dialogs/                 # AppDialog 基类 + 槽位编辑器、图标选择器、确认框
 │   ├── components/              # AppIcon / ActionForm / KeyboardStepsEditor / CompactPanel /
-│   │                            # CompactRow / CompactTile / SlotListEditor / MiniIconButton …
+│   │                            # CompactRow / CompactTile / SystemControlBar / SlotListEditor …
 │   └── qmldir
 ├── tests/                       # pytest：配置迁移 / 数据目录 / 启动方式 / 版本号
 ├── RinUI/                       # RinUI 库（内联，MIT）
