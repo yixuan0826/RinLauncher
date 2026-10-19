@@ -1,0 +1,139 @@
+import QtQuick 2.15
+import QtQuick.Controls 2.15
+import QtQuick.Layouts 2.15
+import RinUI
+
+import "../../components"
+
+// 设置 → 个性化：主题模式、强调色（可提取系统色）、窗口材质、动画。
+Item {
+    id: pageRoot
+
+    property var page
+
+    Flickable {
+        id: flick
+        anchors.fill: parent
+        clip: true
+        contentWidth: width
+        contentHeight: content.implicitHeight + 48
+        ScrollBar.vertical: ScrollBar {}
+
+        ColumnLayout {
+            id: content
+            x: Math.max(24, (flick.width - width) / 2)
+            width: Math.min(flick.width - 48, 860)
+            spacing: 18
+
+            SettingsGroup {
+                title: qsTr("主题")
+                iconKey: "ic_fluent_paint_brush_20_regular"
+
+                FormRow {
+                    label: qsTr("主题模式")
+                    ComboBox {
+                        id: themeCombo
+                        Layout.preferredWidth: 180
+                        model: [qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")]
+                        onActivated: function (index) {
+                            pageRoot.page.apply("theme",
+                                ["system", "light", "dark"][index])
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("强调色")
+                    description: qsTr("可从系统主题色一键提取")
+                    RowLayout {
+                        spacing: 8
+
+                        DropDownColorPicker {
+                            id: accentPicker
+                            Layout.preferredWidth: 150
+                            onColorChanged: {
+                                if (!pageRoot.page || pageRoot.page.syncing) return
+                                pageRoot.page.apply("accentColor", color.toString())
+                            }
+                        }
+
+                        Button {
+                            text: qsTr("从系统提取")
+                            icon.name: "ic_fluent_color_20_regular"
+                            onClicked: pageRoot.pickSystemAccent()
+                        }
+
+                        ToolButton {
+                            icon.name: "ic_fluent_arrow_reset_20_regular"
+                            ToolTip.text: qsTr("恢复默认强调色")
+                            onClicked: pageRoot.applyAccent("#0078d4")
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("窗口材质")
+                    description: qsTr("云母 / 增强云母需要 Windows 11")
+                    ComboBox {
+                        id: materialCombo
+                        Layout.preferredWidth: 180
+                        model: [qsTr("增强云母"), qsTr("云母"), qsTr("不透明")]
+                        onActivated: function (index) {
+                            pageRoot.page.apply("material",
+                                ["tabbed", "mica", "none"][index])
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("动画效果")
+                    description: qsTr("关闭后界面切换不再有过渡")
+                    Switch {
+                        id: animationSwitch
+                        checkedText: qsTr("开")
+                        uncheckedText: qsTr("关")
+                        onCheckedChanged: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("animationEnabled", checked)
+                        }
+                    }
+                }
+            }
+
+            Text {
+                Layout.fillWidth: true
+                wrapMode: Text.Wrap
+                typography: Typography.Caption
+                color: Theme.currentTheme.colors.textSecondaryColor
+                text: qsTr("窗口材质是全局设置，小窗、启动台编辑与设置窗口会一起切换。")
+            }
+        }
+    }
+
+    function applyAccent(value) {
+        accentPicker.color = value
+        if (pageRoot.page) {
+            pageRoot.page.apply("accentColor", value)
+        }
+    }
+
+    function pickSystemAccent() {
+        var value = ConfigManager.systemAccentColor()
+        if (!value) {
+            ConfigManager.notify(qsTr("没能读到系统主题色，请手动选择"), "warning")
+            return
+        }
+        applyAccent(value)
+        ConfigManager.notify(qsTr("已从系统提取强调色 %1").arg(value.toUpperCase()), "success")
+    }
+
+    function reload() {
+        var model = page.model
+        themeCombo.currentIndex = Math.max(0,
+            ["system", "light", "dark"].indexOf(model.theme))
+        accentPicker.color = model.accentColor || "#0078d4"
+        materialCombo.currentIndex = Math.max(0,
+            ["tabbed", "mica", "none"].indexOf(model.material || "tabbed"))
+        animationSwitch.checked = model.animationEnabled !== false
+    }
+}

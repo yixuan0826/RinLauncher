@@ -13,6 +13,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from rin_launcher import ime
 from rin_launcher.elevation import is_admin, run_elevated
 
 logger = logging.getLogger(__name__)
@@ -259,13 +260,15 @@ class ActionExecutor:
 
     @classmethod
     def _send_key(cls, controller, step: dict[str, Any], pressed: list[Any]) -> None:
-        """发送一步按键；「按住」的键登记进 ``pressed``，供序列结束后的兜底释放。"""
+        """发送一步按键；「按住」的键登记进 ``pressed``，供序列结束后的兑底释放。"""
         keys = cls._keys_for_step(step)
         if not keys:
             logger.warning("Unknown key in keyboard step %r, skipping", step)
             return
 
         command = step.get("action", "click")
+        if command == "click" and cls._send_as_text(step):
+            return
         if command == "press":
             # 按住：全部按下并保持，等后面的步骤来释放。
             for key in keys:
@@ -288,6 +291,28 @@ class ActionExecutor:
                 controller.release(key)
                 if gap and index < last:
                     time.sleep(gap)
+
+    @staticmethod
+    def _printable_char(step: dict[str, Any]) -> str | None:
+        """单字符步骤对应的文本；组合键、功能键返回 None。"""
+        name = str(step.get("key") or "").strip()
+        if len(name) != 1 or not name.isprintable():
+            return None
+        # 录制器把字母统一存成大写，但没带 Shift 的单击敲出来就是小写。
+        return name.lower() if name.isascii() and name.isalpha() else name
+
+    @classmethod
+    def _send_as_text(cls, step: dict[str, Any]) -> bool:
+        """挂着东亚输入法时，可打印字符改用 Unicode 注入。
+
+        第三方输入法会把虚拟键码注入的字母拿去做拼音组词，目标程序什么都收不到；
+        ``SendInput`` + ``KEYEVENTF_UNICODE`` 直接生成 ``WM_CHAR``，不过输入法。
+        组合键、功能键不受影响，仍走原来的虚拟键码路径。
+        """
+        char = cls._printable_char(step)
+        if not char or not ime.east_asian_ime_active():
+            return False
+        return ime.send_text(char)
 
     @staticmethod
     def _keys_for_step(step: dict[str, Any]) -> list[Any]:

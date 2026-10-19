@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_single_source():
     import rin_launcher.config_manager as cm
 
-    assert __version__ == "1.0.0"
+    assert __version__ == "1.1.0"
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__
 
@@ -42,3 +42,6 @@ def test_default_config_has_no_quick_action_library():
     assert all(slot["kind"] == "tool" for slot in slots[:5])
     assert [slot["kind"] for slot in slots[5:]] == ["usb", "path"]
     assert config["settings"]["startupMode"] == "off"
+    assert config["settings"]["updateChannel"] == "stable"
+    assert config["settings"]["autoCheckUpdates"] is True
+    assert "compactAcrylic" not in config["settings"]

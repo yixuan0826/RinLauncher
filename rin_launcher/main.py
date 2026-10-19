@@ -19,8 +19,9 @@ PROJECT_ROOT = (
     if getattr(sys, "frozen", False)
     else Path(__file__).resolve().parent.parent
 )
-QML_ENTRY = PROJECT_ROOT / "qml" / "LauncherWindow.qml"
 COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
+EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
+SETTINGS_ENTRY = PROJECT_ROOT / "qml" / "SettingsWindow.qml"
 ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
 
 # RinUI 启动时会 print 一个带 emoji 的横幅。老终端（cmd.exe 的 GBK 代码页）编码
@@ -37,6 +38,7 @@ for _stream in (sys.stdout, sys.stderr):
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
@@ -53,12 +55,14 @@ from rin_launcher.single_instance import (
 )
 from rin_launcher.system_controls import SystemControls
 from rin_launcher.tray import TrayIcon
+from rin_launcher.updater import UpdateManager
 from RinUI import RinUIWindow
 from RinUI.core import BackdropEffect, is_windows
+from RinUI.core.config import is_win11
 
 logger = logging.getLogger(__name__)
 
-# 完整窗口的材质。小窗走亚克力（见 effects.py），不在这里选。
+# 三个窗口共用的材质。RinUI 的取值：tabbed（增强云母）| mica（云母）| none。
 MATERIALS: dict[str, BackdropEffect] = {
     "tabbed": BackdropEffect.Tabbed,   # 增强云母
     "mica": BackdropEffect.Mica,       # 云母
@@ -93,20 +97,21 @@ class Launcher:
         self.config_manager = ConfigManager()
         self.config_manager.action_executor = ActionExecutor(self.config_manager)
 
-        # 两个 QML 根：常驻桌面右下角的小窗（启动台本体）和完整窗口（启动台设置 / 设置 / 关于）。
-        self.window: RinUIWindow | None = None
+        # 三个 QML 根：桌面小窗、启动台编辑窗口、设置窗口。后两个按需创建。
         self.compact: RinUIWindow | None = None
+        self.editor: RinUIWindow | None = None
+        self.settings: RinUIWindow | None = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
         # 系统控制（音量 / Wi-Fi / 移动热点），小窗底部那排卡片用。
         self.system_controls = SystemControls()
+        # GitHub Releases 更新检查 / 下载 / 安装。
+        self.update_manager = UpdateManager(self.config_manager)
         # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
         self.key_recorder = KeyRecorder()
         # 单实例消息服务端（见 start_single_instance_server）。
         self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
-        # 已经上过的小窗材质参数，避免每次设置改动都重上一次。
-        self._acrylic_state: tuple[bool, bool] | None = None
 
         self._wire_config()
 
@@ -119,13 +124,13 @@ class Launcher:
         self.config_manager.hotkeyChanged.connect(self.apply_hotkey)
         self.config_manager.trayEnabledChanged.connect(self.apply_tray)
         self.config_manager.materialChanged.connect(self.apply_material)
-        self.config_manager.settingsChanged.connect(self.apply_compact_acrylic)
         # QML 里的页面够不到窗口对象，页面级请求统一从后端转上来。
-        self.config_manager.pageRequested.connect(self.show_main_page)
+        self.config_manager.pageRequested.connect(self.show_page)
         self.config_manager.showToast.connect(
             lambda message, _severity: self.tray.show_message("Rin Launcher", message))
-        # 系统控制的失败提示走和小窗同一条 toast 链路。
+        # 系统控制与更新器的提示走和小窗同一条 toast 链路。
         self.system_controls.notify.connect(self.config_manager.notify)
+        self.update_manager.notify.connect(self.config_manager.notify)
 
         self.apply_hotkey(str(settings.get("globalHotkey", "")))
         self.apply_tray(bool(settings.get("showTray", True)))
@@ -146,73 +151,85 @@ class Launcher:
     # ------------------------------------------------------------------
     # Window creation
     # ------------------------------------------------------------------
-    def create_main_window(self) -> bool:
-        if not QML_ENTRY.is_file():
-            logger.error("QML entry point is missing: %s", QML_ENTRY)
-            return False
+    def _create_window(self, entry: Path) -> RinUIWindow | None:
+        """创建一个独立 QML 引擎的窗口，并注入所有后端对象。"""
+        if not entry.is_file():
+            logger.error("QML entry point is missing: %s", entry)
+            return None
 
-        # Inject the backend before loading, so the first binding already sees it.
-        window = RinUIWindow()
-        window.engine.rootContext().setContextProperty("ConfigManager", self.config_manager)
-        window.engine.rootContext().setContextProperty("KeyRecorder", self.key_recorder)
-        window.engine.rootContext().setContextProperty("SystemControls", self.system_controls)
-        window.load(QML_ENTRY)
+        window = RinUIWindow(shared_engine=False)
+        context = window.engine.rootContext()
+        context.setContextProperty("ConfigManager", self.config_manager)
+        context.setContextProperty("KeyRecorder", self.key_recorder)
+        context.setContextProperty("SystemControls", self.system_controls)
+        context.setContextProperty("UpdateManager", self.update_manager)
+        window.load(entry)
 
         if window.root_window is None:
-            logger.error("Failed to load %s", QML_ENTRY)
-            return False
-
-        self.window = window
+            logger.error("Failed to load %s", entry)
+            return None
         if ICON_FILE.is_file():
             window.setIcon(ICON_FILE)
-        self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)))
-
-        # QML 的关闭按钮只发信号，由这里决定是收起还是真的退出。
-        root = window.root_window
-        if hasattr(root, "closeRequested"):
-            root.closeRequested.connect(self.on_close_requested)
-        # 双引擎的 ThemeManager 每次新建窗口后都要重钉一遍（后建的会顶掉先建的）。
-        self._pin_theme_managers()
-        return True
+        return window
 
     def create_compact_window(self) -> bool:
-        if not COMPACT_ENTRY.is_file():
-            logger.error("Compact QML entry point is missing: %s", COMPACT_ENTRY)
-            return False
-
-        window = RinUIWindow()
-        window.engine.rootContext().setContextProperty("ConfigManager", self.config_manager)
-        window.engine.rootContext().setContextProperty("SystemControls", self.system_controls)
-        window.load(COMPACT_ENTRY)
-
-        if window.root_window is None:
-            logger.error("Failed to load %s", COMPACT_ENTRY)
+        window = self._create_window(COMPACT_ENTRY)
+        if window is None:
             return False
 
         self.compact = window
         root = window.root_window
-        # 小窗是独立的 QML 根，够不到主窗口，跨窗口的请求统一走信号回到这里。
-        root.openMainRequested.connect(self.show_main_page)
+        # 小窗是独立的 QML 根，跨窗口的请求统一走信号回到这里。
+        root.openMainRequested.connect(self.show_page)
         root.hideRequested.connect(self.hide_compact)
         root.quitRequested.connect(self.quit)
 
-        # ThemeManager 挂在共享的 rootContext 上，后建的窗口会把它顶掉：
-        # 每个引擎都重钉回自己窗口那一份（懒建主窗后这里尤其重要）。
-        self._pin_theme_managers()
+        # 小窗不是 RinUI 的 FluentWindow，需要手动把 hwnd 注册给 ThemeManager，
+        # 之后才能用和完整窗口同一套云母 / 增强云母。
+        window.theme_manager.set_window(root)
 
-        # 桌面挂件：沉底、不抢焦点 + 亚克力。材质要在窗口有原生句柄之后再上。
+        # 桌面挂件：沉底、不抢焦点。
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
-        self.apply_compact_acrylic()
+        self.apply_material(str(self.config_manager.config["settings"].get(
+            "material", DEFAULT_MATERIAL)))
         return True
 
-    def ensure_main_window(self) -> bool:
-        """完整窗口按需创建：启动时只出小窗，第一次要打开时才构建。"""
-        if self.window is not None:
+    def create_editor_window(self) -> bool:
+        window = self._create_window(EDITOR_ENTRY)
+        if window is None:
+            return False
+        self.editor = window
+        window.root_window.closeRequested.connect(
+            lambda: self._close_window(window))
+        self.apply_material(str(self.config_manager.config["settings"].get(
+            "material", DEFAULT_MATERIAL)))
+        return True
+
+    def create_settings_window(self) -> bool:
+        window = self._create_window(SETTINGS_ENTRY)
+        if window is None:
+            return False
+        self.settings = window
+        window.root_window.closeRequested.connect(
+            lambda: self._close_window(window))
+        self.apply_material(str(self.config_manager.config["settings"].get(
+            "material", DEFAULT_MATERIAL)))
+        return True
+
+    def ensure_editor_window(self) -> bool:
+        if self.editor is not None:
             return True
-        if not self.create_main_window():
-            self.tray.show_message("Rin Launcher", "完整窗口加载失败，可以看看日志")
+        if not self.create_editor_window():
+            self.tray.show_message("Rin Launcher", "启动台编辑窗口加载失败，可以看看日志")
+            return False
+        return True
+
+    def ensure_settings_window(self) -> bool:
+        if self.settings is not None:
+            return True
+        if not self.create_settings_window():
+            self.tray.show_message("Rin Launcher", "设置窗口加载失败，可以看看日志")
             return False
         return True
 
@@ -220,18 +237,6 @@ class Launcher:
         """守着单实例的本地套接字：第二个进程请求「亮出小窗」时照办。"""
         self._single_server = SingleInstanceServer(self.app)
         self._single_server.showRequested.connect(self.show_compact)
-
-    def _pin_theme_managers(self) -> None:
-        """把每个引擎的 ThemeManager 都钉回自己窗口那一份。
-
-        RinUI 的 ThemeManager 挂在各引擎的 rootContext 上，后建的窗口会把先建
-        引擎里的绑定顶掉；谁后建都可能让另一个窗口主题错乱，所以每次新建窗口
-        之后统一重钉一遍。
-        """
-        for window in (self.window, self.compact):
-            if window is not None and window.root_window is not None:
-                window.engine.rootContext().setContextProperty(
-                    "ThemeManager", window.theme_manager)
 
     # ------------------------------------------------------------------
     # OS integration
@@ -241,53 +246,28 @@ class Launcher:
             logger.info("No global hotkey registered (configured value: %r)", sequence)
 
     def apply_material(self, material: str) -> None:
-        """完整窗口的材质：默认「增强云母」。
+        """把全局「窗口材质」同时应用到小窗、编辑窗口和设置窗口。
 
-        RinUI 的 backdrop 只管它自己注册过的窗口，小窗另有亚克力（见
-        ``apply_compact_acrylic``）。非 Windows 上 RinUI 会直接抛错，所以先判断平台。
+        小窗不再有单独的亚克力开关；材质值来自设置里的 material，
+        小窗 QML 会根据 ``backdropActive`` 决定卡片画多透明。
         """
-        if self.window is None or not is_windows():
+        if not is_windows():
             return
         effect = MATERIALS.get(str(material), MATERIALS[DEFAULT_MATERIAL])
-        try:
-            self.window.setBackdropEffect(effect)
-        except Exception:
-            logger.exception("Failed to apply backdrop effect %r", material)
-
-    def apply_compact_acrylic(self) -> None:
-        """小窗的亚克力。QML 侧会根据 ``acrylicActive`` 决定卡片画多透明。"""
-        if self.compact is None or self.compact.root_window is None:
-            return
-        root = self.compact.root_window
-        enabled = bool(self.config_manager.config["settings"].get("compactAcrylic", True))
-        dark = self._is_dark_theme()
-
-        # 设置改动会频繁触发这里，参数没变就别重复问系统了。
-        signature = (enabled, dark)
-        if signature == self._acrylic_state:
-            return
-        self._acrylic_state = signature
-
-        if not enabled:
-            effects.clear_acrylic(root)
-            root.setProperty("acrylicActive", False)
-            return
-
-        applied = effects.apply_acrylic(root, dark=dark)
-        root.setProperty("acrylicActive", applied)
-        if not applied:
-            logger.info("Acrylic unavailable, falling back to a translucent card")
-
-    def _is_dark_theme(self) -> bool:
-        mode = str(self.config_manager.config["settings"].get("theme", "system")).lower()
-        if mode == "dark":
-            return True
-        if mode == "light":
-            return False
-        try:  # 跟随系统
-            return bool(self.app.styleHints().colorScheme().name == "Dark")
-        except Exception:
-            return False
+        # Win10 没有云母 / 增强云母；退回不透明背景，而不是把文字铺在桌面上。
+        if not is_win11() and effect != BackdropEffect.None_:
+            effect = BackdropEffect.None_
+        for window in (self.compact, self.editor, self.settings):
+            if window is None or window.root_window is None:
+                continue
+            try:
+                status = window.theme_manager.apply_backdrop_effect(effect.value)
+                if window is self.compact:
+                    window.root_window.setProperty(
+                        "backdropActive",
+                        status == 0 and effect != BackdropEffect.None_)
+            except Exception:
+                logger.exception("Failed to apply backdrop effect %r", material)
 
     def apply_tray(self, enabled: bool) -> None:
         if enabled:
@@ -327,40 +307,68 @@ class Launcher:
         else:
             self.show_compact()
 
-    def show_main_page(self, page: str) -> None:
-        """打开完整窗口并切到指定页（小窗的编辑按钮也走这里）。"""
-        if not self.ensure_main_window():
+    def show_editor(self) -> None:
+        if not self.ensure_editor_window():
             return
-        root = self.window.root_window
+        root = self.editor.root_window
         if root is None:
             return
         root.show()
         root.raise_()
         root.requestActivate()
-        root.setProperty("requestedPage", page)
 
-    def hide_main(self) -> None:
-        if self.window is not None and self.window.root_window is not None:
-            self.window.root_window.hide()
+    def show_settings(self, section: str = "") -> None:
+        if not self.ensure_settings_window():
+            return
+        root = self.settings.root_window
+        if root is None:
+            return
+        root.show()
+        root.raise_()
+        root.requestActivate()
+        if section:
+            # 新窗口的 QML 连接可能还没建好，稍等一拍再滚到目标分组。
+            QTimer.singleShot(
+                180, lambda: self.config_manager.requestSettingsSection(section))
+
+    def show_page(self, page: str) -> None:
+        """兼容旧路由：launcher 开编辑窗口，about 进设置分类，其余都进设置窗口。"""
+        if page == "launcher":
+            self.show_editor()
+        elif page == "about":
+            self.show_settings("about")
+        else:
+            self.show_settings()
+
+    def hide_editor(self) -> None:
+        if self.editor is not None and self.editor.root_window is not None:
+            self.editor.root_window.hide()
+
+    def hide_settings(self) -> None:
+        if self.settings is not None and self.settings.root_window is not None:
+            self.settings.root_window.hide()
 
     def handle_tray_page(self, page: str) -> None:
-        """托盘菜单里的「启动台」指常驻小窗，设置 / 关于才开完整窗口。"""
-        if page == "launcher":
-            self.show_compact()
-        else:
-            self.show_main_page(page)
+        """托盘菜单：启动台设置 → 编辑窗口，设置 / 关于 → 设置窗口。"""
+        self.show_page(page)
 
-    def on_close_requested(self) -> None:
-        """完整窗口的关闭按钮只收起自己 —— 常驻小窗还在，程序不该跟着退出。"""
-        self.hide_main()
-        if not self.tray.started and not self._visible(self.compact):
-            # 没有托盘、小窗也没显示：再没有任何入口能把它叫回来了。
+    def _close_window(self, window: RinUIWindow) -> None:
+        """编辑 / 设置窗口的关闭按钮只收起自己 —— 小窗还在，程序不退出。"""
+        if window.root_window is not None:
+            window.root_window.hide()
+        if (not self.tray.started and not self._visible(self.compact)
+                and not self._visible(self.editor) and not self._visible(self.settings)):
             self.quit()
+
+    def _auto_check_updates(self) -> None:
+        if self.config_manager.config["settings"].get("autoCheckUpdates", True):
+            self.update_manager.checkSilently()
 
     def quit(self) -> None:
         self.hotkey.unregister()
         self.tray.stop()
         self.system_controls.stop()
+        self.update_manager.stop()
         self.config_manager.stopWatching()
         self.app.quit()
 
@@ -368,6 +376,8 @@ class Launcher:
         self.config_manager.startWatching()
         if not self.config_manager.config["settings"].get("startMinimized", False):
             self.show_compact()
+        # 启动后静默检查一次更新，不阻塞小窗出现。
+        QTimer.singleShot(5000, self._auto_check_updates)
 
         try:
             return self.app.exec()

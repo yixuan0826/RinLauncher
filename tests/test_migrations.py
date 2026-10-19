@@ -81,3 +81,16 @@ settings: {}
     on_disk = (tmp_path / "config.yaml").read_text(encoding="utf-8")
     assert "actions:" not in on_disk
     assert "categories:" not in on_disk
+
+
+def test_obsolete_compact_acrylic_is_removed_on_load(qapp, tmp_path):
+    manager = _load_with(tmp_path, """
+version: 3
+settings:
+  compactAcrylic: true
+""")
+    assert "compactAcrylic" not in manager.config["settings"]
+    on_disk = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "compactAcrylic" not in on_disk
+    assert "updateChannel:" in on_disk
+    assert "autoCheckUpdates:" in on_disk

@@ -16,12 +16,13 @@ import shutil
 import sys
 import time
 import uuid
+import weakref
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import yaml
-from PySide6.QtCore import QFileInfo, QObject, QUrl, Signal, Slot
+from PySide6.QtCore import QCoreApplication, QFileInfo, QObject, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QDesktopServices
 
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
@@ -31,7 +32,12 @@ from watchdog.observers import Observer
 
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher import autostart
-from rin_launcher.elevation import is_admin, restart_elevated
+from rin_launcher.elevation import (
+    is_admin,
+    restart_application,
+    restart_elevated_delayed,
+)
+from rin_launcher.system_theme import read_system_accent_color
 
 logger = logging.getLogger(__name__)
 
@@ -104,6 +110,13 @@ IMAGE_ICON_SUFFIXES: tuple = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
 ICON_STORE_NAME = "icons"
 # 磁盘容量这种系统调用有成本，缓存一小段时间，同一轮刷新里不重复问系统。
 STORAGE_TTL = 20.0
+
+# ── 备份 ────────────────────────────────────────────────────────
+# 自动备份 7 天一次，保留最近 8 份；手动备份不自动删。
+AUTO_BACKUP_INTERVAL = 7 * 24 * 60 * 60
+AUTO_BACKUP_KEEP = 8
+BACKUP_AUTO_PREFIX = "config-auto-"
+BACKUP_MANUAL_PREFIX = "config-manual-"
 
 
 def _human_size(size: int) -> str:
@@ -279,15 +292,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "startMinimized": False,
     "startupMode": "off",
     "globalHotkey": "Ctrl+Space",
-    # 完整窗口材质。RinUI 的取值：tabbed(增强云母) | mica(云母) | acrylic(亚克力) | none
+    # 窗口材质。RinUI 的取值：tabbed(增强云母) | mica(云母) | none(不透明)
     "material": "tabbed",
-    # 小窗是桌面挂件，单独走亚克力（不吃完整窗口那套材质设置）。
-    "compactAcrylic": True,
     "animationEnabled": True,
     "accentColor": "#0078d4",
     "adminAutoElevate": True,
     "confirmAdminActions": True,
     "logLevel": "INFO",
+    "updateChannel": "stable",
+    "autoCheckUpdates": True,
 }
 
 
@@ -474,6 +487,8 @@ class ConfigManager(QObject):
     startupStateChanged = Signal()
     # 小窗要直接打开某一格的编辑器（row, index；index=-1 表示新增）。
     slotEditRequested = Signal(int, int)
+    # 手动 / 自动备份完成后通知设置页刷新。
+    backupChanged = Signal()
 
     def __init__(self, config_dir: Path | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -496,9 +511,17 @@ class ConfigManager(QObject):
         self._removable_cache: tuple[float, str] | None = None
         # 小窗发起的「编辑这一格」请求（页面建好前先记着，见 requestSlotEditor）。
         self._pending_slot_edit: tuple[int, int] | None = None
+        # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
+        self._pending_settings_section: str = ""
         self._config = self._load()
         # 启动就把任务计划状态预热到后台（设置页打开时零等待）。
         self._start_startup_prefetch()
+        # 7 天一次的自动备份：启动先检查，之后每 6 小时再看一次。
+        self._maybe_auto_backup()
+        self._backup_timer = QTimer(self)
+        self._backup_timer.setInterval(6 * 60 * 60 * 1000)
+        self._backup_timer.timeout.connect(self._maybe_auto_backup)
+        self._backup_timer.start()
 
     @property
     def config(self) -> dict[str, Any]:
@@ -517,10 +540,22 @@ class ConfigManager(QObject):
                 raw = yaml.safe_load(handle) or {}
             # _normalize 会就地把旧键 pop 掉，所以先记下「读到过旧库」。
             had_legacy_library = "actions" in raw or "categories" in raw
+            raw_settings = raw.get("settings") or {}
+            try:
+                old_version = int(raw.get("version") or 1)
+            except (TypeError, ValueError):
+                old_version = 1
+            needs_rewrite = (
+                had_legacy_library
+                or old_version != CONFIG_VERSION
+                or "compactAcrylic" in raw_settings
+                or "updateChannel" not in raw_settings
+                or "autoCheckUpdates" not in raw_settings
+            )
             config = self._normalize(raw)
-            # 旧版「快捷操作」库 / 分区不从磁盘上留着：读到就立刻写回一份干净的配置，
-            # 不用等用户下次改设置。
-            if had_legacy_library:
+            # 旧版「快捷操作」库 / 分区、已下线的设置项、缺失的新设置：
+            # 读到就立刻写回一份干净的配置，不用等用户下次改设置。
+            if needs_rewrite:
                 self.save(config, changed="all")
             return config
         except Exception:
@@ -550,8 +585,11 @@ class ConfigManager(QObject):
         if settings.get("startupMode") not in ("off", "normal", "admin"):
             settings["startupMode"] = "off"
         # 小窗改成固定置底、固定主屏右下角之后，这两个老键不再有消费方。
-        for obsolete in ("alwaysOnTop", "compactPos"):
+        for obsolete in ("alwaysOnTop", "compactPos", "compactAcrylic"):
             settings.pop(obsolete, None)
+        if settings.get("updateChannel") not in ("stable", "prerelease"):
+            settings["updateChannel"] = "stable"
+        settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
         data["settings"] = settings
         # launcher 段必须一起规范化：旧格式迁移、坏槽位剔除、内联动作清洗
         # 都靠这一句，漏掉它读回来的就是没洗过的原始字典。
@@ -680,6 +718,93 @@ class ConfigManager(QObject):
         shutil.copy2(self.config_file, self.backup_dir / f"config.yaml.bak.{int(time.time())}")
         for stale in sorted(self.backup_dir.glob("config.yaml.bak.*"))[:-keep]:
             stale.unlink(missing_ok=True)
+
+    # ------------------------------------------------------------------
+    # Backups (manual + 7-day automatic)
+    # ------------------------------------------------------------------
+    def _backup_files(self, prefix: str) -> list[Path]:
+        return sorted(
+            self.backup_dir.glob(f"{prefix}*.yaml"),
+            key=lambda path: path.stat().st_mtime,
+        )
+
+    def _create_backup(self, *, manual: bool, silent: bool = False) -> str:
+        if not self.config_file.is_file():
+            return ""
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        prefix = BACKUP_MANUAL_PREFIX if manual else BACKUP_AUTO_PREFIX
+        target = self.backup_dir / f"{prefix}{stamp}.yaml"
+        suffix = 1
+        while target.exists():
+            target = self.backup_dir / f"{prefix}{stamp}-{suffix}.yaml"
+            suffix += 1
+        try:
+            # 不要用 copy2：它会保留源文件的 mtime，7 天自动备份的判断会失真。
+            shutil.copyfile(self.config_file, target)
+        except OSError:
+            logger.exception("Failed to create backup %s", target)
+            if not silent:
+                self.showToast.emit("备份失败，可以看看日志", "error")
+            return ""
+
+        if not manual:
+            for stale in self._backup_files(BACKUP_AUTO_PREFIX)[:-AUTO_BACKUP_KEEP]:
+                stale.unlink(missing_ok=True)
+        self.backupChanged.emit()
+        if not silent:
+            self.showToast.emit(
+                "已创建手动备份" if manual else "已创建自动备份", "success")
+        logger.info("Created %s backup: %s", "manual" if manual else "auto", target)
+        return str(target)
+
+    def _maybe_auto_backup(self) -> None:
+        """距离上一份自动备份超过 7 天就补一份；启动与每 6 小时各检查一次。"""
+        existing = self._backup_files(BACKUP_AUTO_PREFIX)
+        if existing:
+            try:
+                age = time.time() - existing[-1].stat().st_mtime
+                if age < AUTO_BACKUP_INTERVAL:
+                    return
+            except OSError:
+                pass
+        self._create_backup(manual=False, silent=True)
+
+    @Slot(result=str)
+    def backupNow(self) -> str:
+        """手动备份一份配置，返回备份文件路径（失败为空串）。"""
+        return self._create_backup(manual=True)
+
+    @Slot(result="QVariantMap")
+    def getBackupInfo(self) -> dict[str, Any]:
+        auto = self._backup_files(BACKUP_AUTO_PREFIX)
+        manual = self._backup_files(BACKUP_MANUAL_PREFIX)
+
+        def describe(paths: list[Path]) -> tuple[str, str]:
+            if not paths:
+                return "", ""
+            latest = paths[-1]
+            try:
+                stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(latest.stat().st_mtime))
+            except OSError:
+                stamp = ""
+            return stamp, latest.name
+
+        auto_time, auto_name = describe(auto)
+        manual_time, manual_name = describe(manual)
+        return {
+            "dir": str(self.backup_dir),
+            "autoCount": len(auto),
+            "manualCount": len(manual),
+            "autoTime": auto_time,
+            "manualTime": manual_time,
+            "autoName": auto_name,
+            "manualName": manual_name,
+            "autoKeep": AUTO_BACKUP_KEEP,
+        }
+
+    @Slot()
+    def openBackupFolder(self) -> None:
+        self._reveal(self.backup_dir)
 
     def _write_to(self, path: Path) -> bool:
         try:
@@ -1263,14 +1388,23 @@ class ConfigManager(QObject):
         """启动时后台预热任务计划状态：设置页打开时就不用起子进程了。"""
         if sys.platform != "win32":
             return
-        autostart.refresh_task_exists_async(
-            lambda _value: self.startupStateChanged.emit())
+        autostart.refresh_task_exists_async(self._startup_refresh_callback())
 
     @Slot()
     def refreshStartupState(self) -> None:
         """异步刷新任务计划状态；刷完经 ``startupStateChanged`` 通知界面。"""
-        autostart.refresh_task_exists_async(
-            lambda _value: self.startupStateChanged.emit())
+        autostart.refresh_task_exists_async(self._startup_refresh_callback())
+
+    def _startup_refresh_callback(self) -> Callable[[bool], None]:
+        """后台线程只拿弱引用，别让它在页面退出后还攥着 ConfigManager。"""
+        ref = weakref.ref(self)
+
+        def done(_value: bool) -> None:
+            obj = ref()
+            if obj is not None:
+                obj.startupStateChanged.emit()
+
+        return done
 
     @Slot(result=bool)
     def reloadConfig(self) -> bool:
@@ -1294,8 +1428,22 @@ class ConfigManager(QObject):
 
     @Slot(str)
     def requestSettingsSection(self, name: str) -> None:
-        """标题栏「…」菜单里点设置分区：滚到设置页对应的分组。"""
-        self.settingsSectionRequested.emit(str(name))
+        """标题栏「…」菜单里点设置分区：切到设置页对应的分类。"""
+        name = str(name or "")
+        self._pending_settings_section = name
+        self.settingsSectionRequested.emit(name)
+
+    @Slot(result=str)
+    def takePendingSettingsSection(self) -> str:
+        """设置页刚建好时取走待切的分类（读一次就清空）。"""
+        value = self._pending_settings_section
+        self._pending_settings_section = ""
+        return value
+
+    @Slot(result=str)
+    def systemAccentColor(self) -> str:
+        """当前 Windows 用户的系统强调色（``#RRGGBB``）；读不到时返回空串。"""
+        return read_system_accent_color()
 
     @Slot(int, int)
     def requestSlotEditor(self, row: int, index: int) -> None:
@@ -1323,8 +1471,39 @@ class ConfigManager(QObject):
         return self.save(_default_config(), changed="all")
 
     @Slot(result=bool)
+    def restartApplication(self) -> bool:
+        """延迟 2 秒普通重启，给单实例锁留出释放时间。"""
+        if not restart_application():
+            self.showToast.emit("重启失败，可以看看日志", "error")
+            return False
+        QCoreApplication.quit()
+        return True
+
+    @Slot(result=bool)
     def restartAsAdmin(self) -> bool:
-        return restart_elevated()
+        if is_admin():
+            return self.restartApplication()
+        if not restart_elevated_delayed():
+            self.showToast.emit("提权重启失败，可以看看日志", "error")
+            return False
+        QCoreApplication.quit()
+        return True
+
+    @Slot(str, result=bool)
+    def setUpdateChannel(self, channel: str) -> bool:
+        channel = channel if channel in ("stable", "prerelease") else "stable"
+        if self._config["settings"].get("updateChannel") == channel:
+            return True
+        self._config["settings"]["updateChannel"] = channel
+        return self.save(changed="settings")
+
+    @Slot(bool, result=bool)
+    def setAutoCheckUpdates(self, enabled: bool) -> bool:
+        enabled = bool(enabled)
+        if bool(self._config["settings"].get("autoCheckUpdates", True)) == enabled:
+            return True
+        self._config["settings"]["autoCheckUpdates"] = enabled
+        return self.save(changed="settings")
 
     @Slot(result=bool)
     def importConfig(self) -> bool:

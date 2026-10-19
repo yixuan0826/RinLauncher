@@ -1,5 +1,6 @@
 module RinLauncher
 
-# 页面与对话框都按 URL 直接加载（NavigationView / 对话框实例），这里只登记两个窗口。
-LauncherWindow 1.0 LauncherWindow.qml
+# 三个独立窗口：桌面小窗、启动台编辑、设置。
 CompactWindow 1.0 CompactWindow.qml
+LauncherEditorWindow 1.0 LauncherEditorWindow.qml
+SettingsWindow 1.0 SettingsWindow.qml

@@ -9,8 +9,11 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 from collections.abc import Iterable
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +81,64 @@ def restart_elevated() -> bool:
     if _launch_elevated(target, params):
         os._exit(0)  # the elevated copy owns the session from here on
     return False
+
+
+def _restart_target() -> tuple[str, list[str], str]:
+    """返回 (可执行文件, 参数, 工作目录)；打包与源码模式都适用。"""
+    if getattr(sys, "frozen", False):
+        exe = sys.executable
+        return exe, list(sys.argv[1:]), str(Path(exe).resolve().parent)
+    entry = str(Path(sys.argv[0]).resolve())
+    return sys.executable, [entry, *sys.argv[1:]], str(Path(entry).parent)
+
+
+def _spawn_restart_helper(*, elevated: bool) -> bool:
+    """先让当前进程退出，再由一个隐藏的 PowerShell 脚本在 2 秒后拉起新进程。
+
+    直接 ``Popen`` 会和单实例锁撞车：新进程看到旧进程还在，就会把「显示小窗」
+    消息发给旧进程然后退出。延迟 2 秒能确保旧进程先释放锁。
+    """
+    if sys.platform != "win32":
+        logger.warning("Restart is only supported on Windows")
+        return False
+
+    exe, args, cwd = _restart_target()
+
+    def quote(value: str) -> str:
+        return "'" + value.replace("'", "''") + "'"
+
+    argument_list = ""
+    if args:
+        argument_list = "-ArgumentList @(" + ", ".join(quote(arg) for arg in args) + ")"
+    verb = "-Verb RunAs" if elevated and not is_admin() else ""
+    script = "\n".join([
+        "Start-Sleep -Seconds 2",
+        f"Start-Process -FilePath {quote(exe)} {argument_list} {verb}".strip(),
+        "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue",
+    ])
+    script_path = Path(tempfile.gettempdir()) / f"rinlauncher-restart-{os.getpid()}.ps1"
+    try:
+        script_path.write_text(script, encoding="utf-8-sig")
+        subprocess.Popen(
+            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+             "-WindowStyle", "Hidden", "-File", str(script_path)],
+            cwd=cwd,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return True
+    except Exception:
+        logger.exception("Failed to spawn the restart helper")
+        return False
+
+
+def restart_application() -> bool:
+    """延迟 2 秒后以普通权限重新启动自身。"""
+    return _spawn_restart_helper(elevated=False)
+
+
+def restart_elevated_delayed() -> bool:
+    """延迟 2 秒后以管理员权限重新启动自身（会弹 UAC）。"""
+    return _spawn_restart_helper(elevated=True)
 
 
 def set_run_on_startup(enable: bool) -> bool:

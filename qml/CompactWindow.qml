@@ -23,7 +23,7 @@ Window {
     id: compact
 
     // ── 形态 ──
-    // 窗口与卡片同尺寸：亚克力与系统圆角直接作用在窗口上，外面不套透明边，
+    // 窗口与卡片同尺寸：系统材质与圆角直接作用在窗口上，外面不套透明边，
     // 也就没有那一圈「玻璃边框」。投影交给系统，QML 不再自绘。
     readonly property int edgeMargin: 16      // 贴边时与桌面边缘的距离
     readonly property int contentMargin: 14   // 卡片内的内容留白
@@ -39,9 +39,9 @@ Window {
     // （见 effects.apply_bottom_layer）。
     flags: Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus | Qt.WindowStaysOnBottomHint
 
-    // 亚克力是否真的上成功了（Windows 11 / 10 才有）。后端会 setProperty 进来：
-    // 没上成功就把卡片画得实一点，免得在透明背景上看着发虚。
-    property bool acrylicActive: false
+    // 是否成功套上 RinUI 云母 / 增强云母（由 Python 在应用材质后 setProperty 进来）。
+    // 没上成功就把卡片画实一点，免得在透明背景上看着发虚。
+    property bool backdropActive: false
 
     // ── 状态 ──
     property var panelSlots: []
@@ -103,13 +103,13 @@ Window {
             id: card
             anchors.fill: parent
             radius: compact.cardRadius
-            // 上了亚克力就走「几乎全透」，让系统的模糊透上来；否则退回半透明纯色。
+            // 上了云母就走「几乎全透」，让系统的材质透上来；否则退回半透明纯色。
             // 不描边：窗口的圆角与材质归 DWM 管，卡片只负责填色，边界由材质自己
             // 的明暗变化表达。
             color: Qt.rgba(Theme.currentTheme.colors.backgroundColor.r,
                            Theme.currentTheme.colors.backgroundColor.g,
                            Theme.currentTheme.colors.backgroundColor.b,
-                           compact.acrylicActive ? 0.22 : 0.94)
+                           compact.backdropActive ? 0.18 : 0.94)
         }
 
         ColumnLayout {
@@ -538,6 +538,23 @@ Window {
 
         position: Position.None
 
+        MenuItem {
+            text: qsTr("打开设置")
+            icon.name: "ic_fluent_settings_20_regular"
+            onTriggered: compact.openMain("settings")
+        }
+        MenuSeparator {}
+        MenuItem {
+            text: qsTr("重启")
+            icon.name: "ic_fluent_arrow_sync_20_regular"
+            onTriggered: ConfigManager.restartApplication()
+        }
+        MenuItem {
+            text: qsTr("提权重启")
+            icon.name: "ic_fluent_shield_20_regular"
+            onTriggered: ConfigManager.restartAsAdmin()
+        }
+        MenuSeparator {}
         MenuItem {
             text: qsTr("隐藏小窗")
             icon.name: "ic_fluent_eye_off_20_regular"

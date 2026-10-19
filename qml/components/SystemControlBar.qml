@@ -21,9 +21,12 @@ RowLayout {
     readonly property bool wifiAvailableValue: sys ? sys.wifiAvailable : false
     readonly property bool wifiEnabledValue: sys ? sys.wifiEnabled : false
     readonly property bool wifiBusyValue: sys ? sys.wifiBusy : false
+    readonly property string wifiSsidValue: sys ? sys.wifiSsid : ""
     readonly property bool hotspotAvailableValue: sys ? sys.hotspotAvailable : false
     readonly property bool hotspotEnabledValue: sys ? sys.hotspotEnabled : false
     readonly property bool hotspotBusyValue: sys ? sys.hotspotBusy : false
+    readonly property string hotspotSsidValue: sys ? sys.hotspotSsid : "rinlauncher-hotspot"
+    readonly property string hotspotPasswordValue: sys ? sys.hotspotPassword : "12345678"
 
     readonly property color activeBackground: Qt.rgba(
         Theme.currentTheme.colors.primaryColor.r,
@@ -60,7 +63,10 @@ RowLayout {
         if (!root.wifiAvailableValue) {
             return qsTr("不可用")
         }
-        return root.wifiEnabledValue ? qsTr("已开启") : qsTr("已关闭")
+        if (!root.wifiEnabledValue) {
+            return qsTr("已关闭")
+        }
+        return root.wifiSsidValue.length > 0 ? root.wifiSsidValue : qsTr("已开启")
     }
 
     function hotspotStatus() {
@@ -178,33 +184,38 @@ RowLayout {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.leftMargin: 10
+            anchors.leftMargin: 9
             anchors.rightMargin: 8
-            anchors.topMargin: 9
+            anchors.topMargin: 8
             anchors.bottomMargin: 8
-            spacing: 1
+            spacing: 2
 
-            AppIcon {
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                iconKey: root.wifiEnabledValue
-                    ? "ic_fluent_wifi_1_20_regular"
-                    : "ic_fluent_wifi_off_20_regular"
-                iconSize: 18
-                tint: root.wifiEnabledValue ? root.accentText : root.textSub
-                opacity: root.wifiAvailableValue ? 1 : 0.55
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 5
+
+                AppIcon {
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    iconKey: root.wifiEnabledValue
+                        ? "ic_fluent_wifi_1_20_regular"
+                        : "ic_fluent_wifi_off_20_regular"
+                    iconSize: 16
+                    tint: root.wifiEnabledValue ? root.accentText : root.textSub
+                    opacity: root.wifiAvailableValue ? 1 : 0.55
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("Wi-Fi")
+                    color: root.wifiEnabledValue ? root.accentText : root.textMain
+                    font.pixelSize: 11
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
             }
 
             Item { Layout.fillHeight: true }
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("Wi-Fi")
-                color: root.wifiEnabledValue ? root.accentText : root.textMain
-                font.pixelSize: 12
-                font.bold: true
-                elide: Text.ElideRight
-            }
 
             Label {
                 Layout.fillWidth: true
@@ -243,31 +254,36 @@ RowLayout {
 
         ColumnLayout {
             anchors.fill: parent
-            anchors.leftMargin: 10
+            anchors.leftMargin: 9
             anchors.rightMargin: 8
-            anchors.topMargin: 9
+            anchors.topMargin: 8
             anchors.bottomMargin: 8
-            spacing: 1
+            spacing: 2
 
-            AppIcon {
-                Layout.preferredWidth: 18
-                Layout.preferredHeight: 18
-                iconKey: "ic_fluent_router_20_regular"
-                iconSize: 18
-                tint: root.hotspotEnabledValue ? root.accentText : root.textSub
-                opacity: root.hotspotAvailableValue ? 1 : 0.55
+            RowLayout {
+                Layout.fillWidth: true
+                spacing: 5
+
+                AppIcon {
+                    Layout.preferredWidth: 16
+                    Layout.preferredHeight: 16
+                    iconKey: "ic_fluent_router_20_regular"
+                    iconSize: 16
+                    tint: root.hotspotEnabledValue ? root.accentText : root.textSub
+                    opacity: root.hotspotAvailableValue ? 1 : 0.55
+                }
+
+                Label {
+                    Layout.fillWidth: true
+                    text: qsTr("热点")
+                    color: root.hotspotEnabledValue ? root.accentText : root.textMain
+                    font.pixelSize: 11
+                    font.bold: true
+                    elide: Text.ElideRight
+                }
             }
 
             Item { Layout.fillHeight: true }
-
-            Label {
-                Layout.fillWidth: true
-                text: qsTr("热点")
-                color: root.hotspotEnabledValue ? root.accentText : root.textMain
-                font.pixelSize: 12
-                font.bold: true
-                elide: Text.ElideRight
-            }
 
             Label {
                 Layout.fillWidth: true
@@ -288,8 +304,10 @@ RowLayout {
             onClicked: SystemControls.toggleHotspot()
         }
 
-        ToolTip.text: root.hotspotAvailableValue
-            ? qsTr("移动热点开关")
-            : qsTr("移动热点不可用（没有可共享的网络连接）")
+        ToolTip.text: root.hotspotEnabledValue
+            ? qsTr("热点：%1\n密码：%2").arg(root.hotspotSsidValue).arg(root.hotspotPasswordValue)
+            : (root.hotspotAvailableValue
+                ? qsTr("移动热点开关")
+                : qsTr("移动热点不可用（没有可共享的网络连接）"))
     }
 }

@@ -5,18 +5,59 @@ import RinUI
 
 import "../components"
 import "../dialogs"
+import "settings"
 
-// 设置。
+// 设置页。左侧是可折叠的分类栏，右侧只渲染当前分类。
 //
-// 分组跳转（常规 / 外观 / 启动台 / 热键 / 高级）在标题栏的「…」菜单里，
-// 页面内不再单独放一个「…」菜单（两套菜单挨在一起太乱）。
-// 所有改动都是即时生效的：控件先写进 pending，再由 350ms 的定时器合并写盘，
-// 拖动滑杆或在输入框里连续打字都不会把配置文件刷爆。
+// 之前的「大标题 + 一条长滚动列表」在分类变多以后很难找东西；改成分栏之后，
+// 每一类都是独立的一页，元素数量也跟着降下来了。
 Item {
     id: settingsPage
+    objectName: "settingsPage"
 
     property var model: ({})
     property var pending: ({})
+    property var backupInfo: ({})
+
+    // 读取配置时控件会跟着变。这个标记把「程序赋值」和「用户操作」区分开，
+    // 免得一次重读把所有值又当成用户改动写回磁盘。
+    property bool syncing: false
+
+    readonly property var sections: [
+        { key: "general", title: qsTr("通用"),
+          description: qsTr("启动、热键、权限与日常维护"),
+          icon: "ic_fluent_settings_20_regular" },
+        { key: "personalization", title: qsTr("个性化"),
+          description: qsTr("主题、强调色与窗口材质"),
+          icon: "ic_fluent_paint_brush_20_regular" },
+        { key: "update", title: qsTr("更新"),
+          description: qsTr("更新通道、版本状态与发布说明"),
+          icon: "ic_fluent_arrow_download_20_regular" },
+        { key: "backup", title: qsTr("备份"),
+          description: qsTr("手动备份与每 7 天的自动备份"),
+          icon: "ic_fluent_save_20_regular" },
+        { key: "about", title: qsTr("关于与鸣谢"),
+          description: qsTr("版本、运行环境与开源致谢"),
+          icon: "ic_fluent_info_20_regular" }
+    ]
+
+    property int currentIndex: 0
+    property bool navCollapsed: false
+
+    readonly property var updater: UpdateManager
+    readonly property string updateState: updater ? updater.state : "idle"
+    readonly property string updateMessage: updater ? updater.message : ""
+    readonly property real updateProgress: updater ? updater.progress : 0
+    readonly property bool updateBusy: updater ? updater.busy : false
+    readonly property bool updateCanInstall: updater ? updater.canInstall : false
+    readonly property string updateNotes: updater ? updater.releaseNotes : ""
+    readonly property var updateNoteBlocks: updater ? updater.releaseNoteBlocks : []
+    readonly property string updateReleaseUrl: updater ? updater.releaseUrl : ""
+    readonly property string updateCurrentVersion: updater ? updater.currentVersion : ""
+    readonly property string updateLatestVersion: updater ? updater.latestVersion : ""
+
+    readonly property var activeSection: sections[Math.max(0,
+        Math.min(currentIndex, sections.length - 1))]
 
     ConfirmDialog {
         id: confirmDialog
@@ -29,333 +70,201 @@ Item {
         onTriggered: settingsPage.flush()
     }
 
-    ColumnLayout {
+    RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 68
-            Layout.leftMargin: 16
-            Layout.rightMargin: 16
-            spacing: 8
+        // ── 左侧分类栏 ────────────────────────────────────────────
+        Rectangle {
+            id: navRail
+            Layout.fillHeight: true
+            Layout.preferredWidth: settingsPage.navCollapsed ? 56 : 216
+            color: "transparent"
 
-            Text {
-                Layout.alignment: Qt.AlignVCenter
-                font.bold: true
-                font.pixelSize: Theme.currentTheme.typography.bodySize + 4
-                color: Theme.currentTheme.colors.textColor
-                text: qsTr("设置")
+            Behavior on Layout.preferredWidth {
+                NumberAnimation {
+                    duration: 180
+                    easing.type: Easing.OutCubic
+                }
             }
 
-            Item { Layout.fillWidth: true }
-        }
-
-        Flickable {
-            id: scroller
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-            clip: true
-            contentWidth: width
-            contentHeight: contentColumn.implicitHeight + 28
-            ScrollBar.vertical: ScrollBar {}
+            Rectangle {
+                width: 1
+                anchors.top: parent.top
+                anchors.bottom: parent.bottom
+                anchors.right: parent.right
+                color: Theme.currentTheme.colors.dividerBorderColor
+            }
 
             ColumnLayout {
-                id: contentColumn
-                x: 16
-                width: scroller.width - 32
-                spacing: 16
+                anchors.fill: parent
+                anchors.margins: 8
+                spacing: 2
 
-                // ── 常规 ──
-                SettingsGroup {
-                    id: generalGroup
-                    title: qsTr("常规")
-                    iconKey: "ic_fluent_home_20_regular"
+                Item {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 46
+                    Layout.bottomMargin: 4
 
-                    FormRow {
-                        label: qsTr("启动方式")
-                        description: qsTr("管理员自启动由任务计划实现")
-                        ComboBox {
-                            id: startupCombo
-                            objectName: "startupCombo"
-                            Layout.preferredWidth: 180
-                            model: [qsTr("关闭"), qsTr("登录时启动"), qsTr("管理员自启动")]
-                            onActivated: function (index) {
-                                settingsPage.applyStartup(index)
-                            }
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("启动时最小化")
-                        description: qsTr("启动后只留托盘")
-                        Switch {
-                            id: startMinimizedSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("startMinimized", checked)
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("系统托盘图标")
-                        description: qsTr("关闭后仅热键可用")
-                        Switch {
-                            id: traySwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("showTray", checked)
-                        }
+                    ToolButton {
+                        width: 32
+                        height: 32
+                        anchors.verticalCenter: parent.verticalCenter
+                        x: settingsPage.navCollapsed
+                            ? (parent.width - width) / 2
+                            : parent.width - width
+                        icon.name: settingsPage.navCollapsed
+                            ? "ic_fluent_panel_left_expand_20_regular"
+                            : "ic_fluent_panel_left_contract_20_regular"
+                        ToolTip.text: settingsPage.navCollapsed
+                            ? qsTr("展开分类")
+                            : qsTr("收起分类")
+                        onClicked: settingsPage.navCollapsed = !settingsPage.navCollapsed
                     }
                 }
 
-                // ── 外观 ──
-                SettingsGroup {
-                    id: appearanceGroup
-                    title: qsTr("外观")
-                    iconKey: "lawnicons:generic_gallery"
+                Repeater {
+                    model: settingsPage.sections
 
-                    FormRow {
-                        label: qsTr("主题模式")
-                        ComboBox {
-                            id: themeCombo
-                            Layout.preferredWidth: 180
-                            model: [qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")]
-                            onActivated: function (index) {
-                                settingsPage.apply("theme",
-                                                   ["system", "light", "dark"][index])
-                            }
-                        }
-                    }
+                    delegate: Rectangle {
+                        id: navRow
 
-                    FormRow {
-                        label: qsTr("强调色")
-                        DropDownColorPicker {
-                            id: accentPicker
-                            Layout.preferredWidth: 180
-                            onColorChanged: settingsPage.apply("accentColor", color.toString())
-                        }
-                        ToolButton {
-                            icon.name: "ic_fluent_arrow_reset_20_regular"
-                            ToolTip.text: qsTr("恢复默认强调色")
-                            onClicked: {
-                                accentPicker.color = "#0078d4"
-                                settingsPage.apply("accentColor", "#0078d4")
-                            }
-                        }
-                    }
+                        readonly property bool active:
+                            settingsPage.currentIndex === index
 
-                    FormRow {
-                        label: qsTr("窗口材质")
-                        ComboBox {
-                            id: materialCombo
-                            Layout.preferredWidth: 180
-                            model: [qsTr("增强云母"), qsTr("云母"), qsTr("不透明")]
-                            onActivated: function (index) {
-                                settingsPage.apply("material",
-                                                   ["tabbed", "mica", "none"][index])
-                            }
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("小窗亚克力")
-                        Switch {
-                            id: acrylicSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("compactAcrylic", checked)
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("动画效果")
-                        Switch {
-                            id: animationSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("animationEnabled", checked)
-                        }
-                    }
-                }
-
-                // ── 启动台 ──
-                SettingsGroup {
-                    id: launcherGroup
-                    title: qsTr("启动台")
-                    iconKey: "ic_fluent_apps_20_regular"
-
-                    FormRow {
-                        label: qsTr("打开面板")
-                        Button {
-                            text: qsTr("启动台设置")
-                            icon.name: "ic_fluent_apps_20_regular"
-                            onClicked: settingsPage.openPage("launcher")
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("重新检测")
-                        description: qsTr("插拔磁盘后手动刷新")
-                        Button {
-                            text: qsTr("刷新磁盘")
-                            icon.name: "ic_fluent_arrow_sync_20_regular"
-                            onClicked: ConfigManager.refreshStorageInfo()
-                        }
-                    }
-                }
-
-                // ── 热键 ──
-                SettingsGroup {
-                    id: hotkeyGroup
-                    title: qsTr("热键")
-                    iconKey: "lawnicons:generic_keyboard"
-
-                    FormRow {
-                        label: qsTr("显示 / 隐藏")
-                        description: qsTr("任何程序里都能唤出小窗")
-                        HotkeyField {
-                            id: hotkeyField
-                            Layout.preferredWidth: 260
-                            onEdited: settingsPage.apply("globalHotkey", sequence)
-                        }
-                        ToolButton {
-                            icon.name: "ic_fluent_arrow_reset_20_regular"
-                            ToolTip.text: qsTr("恢复默认热键")
-                            onClicked: {
-                                hotkeyField.value = "Ctrl+Space"
-                                settingsPage.apply("globalHotkey", "Ctrl+Space")
-                            }
-                        }
-                    }
-
-                    Text {
                         Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        typography: Typography.Caption
-                        color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("需含修饰键（Ctrl / Alt / Shift / Win）；留空即关闭。")
-                    }
-                }
+                        Layout.preferredHeight: 42
+                        radius: Theme.currentTheme.appearance.smallRadius
+                        color: navRow.active
+                            ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                                      Theme.currentTheme.colors.primaryColor.g,
+                                      Theme.currentTheme.colors.primaryColor.b,
+                                      0.14)
+                            : hoverHandler.hovered
+                                ? Theme.currentTheme.colors.subtleSecondaryColor
+                                : "transparent"
 
-                // ── 高级 ──
-                SettingsGroup {
-                    id: advancedGroup
-                    title: qsTr("高级")
-                    iconKey: "ic_fluent_toolbox_20_regular"
-
-                    FormRow {
-                        label: qsTr("自动提权")
-                        description: qsTr("关闭后管理员动作会被拦下")
-                        Switch {
-                            id: elevateSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("adminAutoElevate", checked)
+                        Behavior on color {
+                            ColorAnimation { duration: 120 }
                         }
-                    }
 
-                    FormRow {
-                        label: qsTr("提权前确认")
-                        Switch {
-                            id: confirmAdminSwitch
-                            checkedText: qsTr("开")
-                            uncheckedText: qsTr("关")
-                            onCheckedChanged: settingsPage.apply("confirmAdminActions", checked)
+                        Rectangle {
+                            width: 3
+                            height: 16
+                            radius: 2
+                            anchors.left: parent.left
+                            anchors.verticalCenter: parent.verticalCenter
+                            color: Theme.currentTheme.colors.primaryColor
+                            visible: navRow.active
                         }
-                    }
 
-                    FormRow {
-                        label: qsTr("日志级别")
-                        description: qsTr("重启后生效")
-                        ComboBox {
-                            id: logCombo
-                            Layout.preferredWidth: 180
-                            model: ["DEBUG", "INFO", "WARNING", "ERROR"]
-                            onActivated: function (index) {
-                                settingsPage.apply(
-                                    "logLevel",
-                                    ["DEBUG", "INFO", "WARNING", "ERROR"][index])
-                            }
+                        Icon {
+                            anchors.centerIn: parent
+                            visible: settingsPage.navCollapsed
+                            name: modelData.icon
+                            size: 18
+                            color: navRow.active
+                                ? Theme.currentTheme.colors.primaryColor
+                                : Theme.currentTheme.colors.textSecondaryColor
                         }
-                    }
 
-                    FormRow {
-                        label: qsTr("配置")
                         RowLayout {
-                            spacing: 8
-                            Button {
-                                text: qsTr("目录")
-                                icon.name: "ic_fluent_folder_open_20_regular"
-                                onClicked: ConfigManager.openConfigFolder()
+                            anchors.fill: parent
+                            anchors.leftMargin: 14
+                            anchors.rightMargin: 10
+                            visible: !settingsPage.navCollapsed
+                            spacing: 12
+
+                            Icon {
+                                name: modelData.icon
+                                size: 16
+                                color: navRow.active
+                                    ? Theme.currentTheme.colors.primaryColor
+                                    : Theme.currentTheme.colors.textSecondaryColor
                             }
-                            Button {
-                                text: qsTr("文件")
-                                icon.name: "ic_fluent_document_20_regular"
-                                onClicked: ConfigManager.openConfigFile()
-                            }
-                            Button {
-                                text: qsTr("导入")
-                                icon.name: "ic_fluent_arrow_import_20_regular"
-                                onClicked: ConfigManager.importConfig()
-                            }
-                            Button {
-                                text: qsTr("导出")
-                                icon.name: "ic_fluent_arrow_export_20_regular"
-                                onClicked: ConfigManager.exportConfig()
+
+                            Text {
+                                Layout.fillWidth: true
+                                text: modelData.title
+                                wrapMode: Text.NoWrap
+                                elide: Text.ElideRight
+                                color: navRow.active
+                                    ? Theme.currentTheme.colors.textColor
+                                    : Theme.currentTheme.colors.textSecondaryColor
                             }
                         }
-                    }
 
-                    FormRow {
-                        label: qsTr("图标库")
-                        RowLayout {
-                            spacing: 8
-                            Button {
-                                text: qsTr("打开图标目录")
-                                icon.name: "ic_fluent_image_20_regular"
-                                onClicked: ConfigManager.openIconFolder()
-                            }
+                        ToolTip.visible: settingsPage.navCollapsed && hoverHandler.hovered
+                        ToolTip.text: modelData.title
+                        ToolTip.delay: 400
+
+                        HoverHandler {
+                            id: hoverHandler
                         }
-                    }
 
-                    FormRow {
-                        label: qsTr("以管理员重启")
-                        description: qsTr("托盘图标会随之消失")
-                        Button {
-                            text: qsTr("立即重启")
-                            icon.name: "ic_fluent_shield_20_regular"
-                            onClicked: ConfigManager.restartAsAdmin()
-                        }
-                    }
-
-                    FormRow {
-                        label: qsTr("恢复默认")
-                        description: qsTr("重置全部配置，不可撤销")
-                        Button {
-                            text: qsTr("重置")
-                            icon.name: "ic_fluent_arrow_reset_20_regular"
-                            onClicked: confirmDialog.ask(
-                                qsTr("这会清空当前的全部分区、条目、槽位与设置，并恢复出厂默认值。确定继续吗？"),
-                                function () { ConfigManager.resetToDefaults() })
+                        TapHandler {
+                            onTapped: settingsPage.currentIndex = index
                         }
                     }
                 }
 
-                // ── 关于入口 ──
-                SettingsGroup {
-                    title: qsTr("关于")
-                    iconKey: "ic_fluent_info_20_regular"
+                Item { Layout.fillHeight: true }
+            }
+        }
 
-                    FormRow {
-                        label: qsTr("Rin Launcher")
-                        description: qsTr("基于 RinUI（PySide6 + QML）")
-                        Button {
-                            text: qsTr("打开关于页")
-                            icon.name: "ic_fluent_info_20_regular"
-                            onClicked: settingsPage.openPage("about")
-                        }
-                    }
+        // ── 右侧内容 ─────────────────────────────────────────────
+        ColumnLayout {
+            Layout.fillWidth: true
+            Layout.fillHeight: true
+            spacing: 0
+
+            ColumnLayout {
+                Layout.fillWidth: true
+                Layout.leftMargin: 32
+                Layout.rightMargin: 32
+                Layout.topMargin: 22
+                Layout.bottomMargin: 8
+                spacing: 2
+
+                Text {
+                    font.bold: true
+                    font.pixelSize: 20
+                    color: Theme.currentTheme.colors.textColor
+                    text: settingsPage.activeSection.title
+                }
+
+                Text {
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.textSecondaryColor
+                    text: settingsPage.activeSection.description
+                }
+            }
+
+            StackLayout {
+                id: pageStack
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+                currentIndex: settingsPage.currentIndex
+
+                GeneralSettingsPage {
+                    id: generalPage
+                    page: settingsPage
+                }
+                PersonalizationSettingsPage {
+                    id: personalizationPage
+                    page: settingsPage
+                }
+                UpdateSettingsPage {
+                    id: updatePage
+                    page: settingsPage
+                }
+                BackupSettingsPage {
+                    id: backupPage
+                    page: settingsPage
+                }
+                AboutSettingsPage {
+                    id: aboutPage
+                    page: settingsPage
                 }
             }
         }
@@ -363,7 +272,9 @@ Item {
 
     Component.onCompleted: {
         reloadSettings()
-        reloadStartup()
+        reloadBackupInfo()
+        selectSection(ConfigManager.takePendingSettingsSection
+                      ? ConfigManager.takePendingSettingsSection() : "")
     }
 
     // 离开本页时把还没落盘的改动冲掉。
@@ -381,22 +292,12 @@ Item {
             }
         }
 
-        function onSettingsSectionRequested(name) {
-            // 标题栏「…」菜单点了一个设置分区：滚到对应分组。
-            settingsPage.scrollTo(name)
+        function onBackupChanged() {
+            settingsPage.reloadBackupInfo()
         }
 
-        function onStartupStateChanged() {
-            if (!settingsPage.visible) {
-                return
-            }
-            var info = ConfigManager.getStartupState()
-            if (settingsPage.startupPendingAttempts > 0 && info.state === info.mode) {
-                // 提权后的状态就位：收工，顺便把下拉同步到真实值。
-                settingsPage.startupPendingAttempts = 0
-                startupPollTimer.stop()
-            }
-            settingsPage.reloadStartup()
+        function onSettingsSectionRequested(name) {
+            settingsPage.selectSection(name)
         }
     }
 
@@ -405,94 +306,41 @@ Item {
         ConfigManager.requestPage(page)
     }
 
-    // 分组滚动定位：标题栏「…」菜单经 ConfigManager.settingsSectionRequested 调这里。
-    function scrollTo(targetId) {
-        // 分组对象没法用字符串索引，这里显式映射一次，省掉 eval 之类的花招。
+    // 分类页共用一个确认弹窗；每个分类各养一个纯属浪费。
+    function openConfirm(message, onAccepted) {
+        confirmDialog.ask(message, onAccepted)
+    }
+
+    // 分类切换。兼容旧的「分组 id」写法（标题栏 / 托盘菜单还在用）。
+    function selectSection(name) {
         var map = {
-            "generalGroup": generalGroup,
-            "appearanceGroup": appearanceGroup,
-            "launcherGroup": launcherGroup,
-            "hotkeyGroup": hotkeyGroup,
-            "advancedGroup": advancedGroup
+            "general": 0, "generalGroup": 0, "launcherGroup": 0,
+            "hotkeyGroup": 0, "advancedGroup": 0,
+            "personalization": 1, "appearanceGroup": 1,
+            "update": 2, "updateGroup": 2,
+            "backup": 3, "backupGroup": 3,
+            "about": 4, "aboutGroup": 4
         }
-        var group = map[targetId]
-        if (group) {
-            scroller.contentY = Math.max(0, group.y - 8)
-        }
-    }
-
-    // ── 启动方式（三态）────────────────────────────────
-    readonly property var startupModes: ["off", "normal", "admin"]
-    property int startupPendingAttempts: 0
-
-    function applyStartup(index) {
-        var result = ConfigManager.setStartupMode(startupModes[index])
-        if (!result) {
-            reloadStartup()
-            return
-        }
-        if (result.pending) {
-            // 提权进程还没回来（用户可能正对着 UAC 思考）：定时回查系统里的真实状态。
-            startupPendingAttempts = 15
-            startupPollTimer.restart()
-        } else {
-            reloadStartup()
-        }
-    }
-
-    function reloadStartup() {
-        var info = ConfigManager.getStartupState()
-        startupCombo.currentIndex = Math.max(0, startupModes.indexOf(info.state))
-    }
-
-    // 轮询只负责「叫人去刷」：真正的读取发生在后台线程，刷完经
-    // startupStateChanged 回来再更新界面 —— 全程不阻塞 UI。
-    Timer {
-        id: startupPollTimer
-        interval: 2000
-        repeat: true
-        onTriggered: {
-            settingsPage.startupPendingAttempts -= 1
-            if (settingsPage.startupPendingAttempts <= 0) {
-                startupPollTimer.stop()
-                startupFinalTimer.restart()
-            }
-            ConfigManager.refreshStartupState()
-        }
-    }
-
-    // 轮询次数用尽后的兜底复检：等最后一次异步刷新回来再判定成败。
-    Timer {
-        id: startupFinalTimer
-        interval: 1500
-        onTriggered: {
-            var info = ConfigManager.getStartupState()
-            if (info.state !== info.mode) {
-                ConfigManager.notify(qsTr("启动方式没有生效（授权可能被取消了）"), "warning")
-            }
-            settingsPage.reloadStartup()
+        var index = map[String(name || "")]
+        if (index !== undefined) {
+            currentIndex = index
         }
     }
 
     function reloadSettings() {
+        syncing = true
         model = ConfigManager.getSettings()
+        generalPage.reload()
+        personalizationPage.reload()
+        updatePage.reload()
+        backupPage.reload()
+        aboutPage.reload()
+        syncing = false
+    }
 
-        startMinimizedSwitch.checked = model.startMinimized === true
-        traySwitch.checked = model.showTray !== false
-
-        themeCombo.currentIndex = Math.max(0, ["system", "light", "dark"].indexOf(model.theme))
-        accentPicker.color = model.accentColor || "#0078d4"
-        materialCombo.currentIndex = Math.max(0,
-            ["tabbed", "mica", "none"].indexOf(model.material || "tabbed"))
-        acrylicSwitch.checked = model.compactAcrylic !== false
-        animationSwitch.checked = model.animationEnabled !== false
-
-        hotkeyField.value = model.globalHotkey || ""
-
-        elevateSwitch.checked = model.adminAutoElevate !== false
-        confirmAdminSwitch.checked = model.confirmAdminActions !== false
-        logCombo.currentIndex = Math.max(0,
-            ["DEBUG", "INFO", "WARNING", "ERROR"].indexOf(model.logLevel || "INFO"))
+    function reloadBackupInfo() {
+        backupInfo = ConfigManager.getBackupInfo()
+        backupPage.reload()
     }
 
     // 先攒进 pending，再由定时器合并写盘；主题这类要立刻看到效果的顺手就应用。
@@ -526,8 +374,8 @@ Item {
         case "accentColor":
             Theme.setThemeColor(value)
             break
-        // 材质由后端应用：小窗亚克力与完整窗口的云母都要碰原生窗口句柄，
-        // QML 这边碰不到，统一走 settingsChanged → main.apply_material/apply_compact_acrylic。
+        // 材质由后端应用：材质要碰原生窗口句柄，QML 这边碰不到，
+        // 统一走 settingsChanged → main.apply_material。
         }
     }
 }

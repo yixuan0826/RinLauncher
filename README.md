@@ -8,10 +8,11 @@
 > 这类会碰系统的功能。发现问题欢迎提 Issue。
 
 基于 **RinUI（PySide6 + QML）** 的桌面启动台。常驻在桌面右下角的**小窗**负责「点一下
-就用」，**完整窗口**负责「把东西管起来」。目标平台 Windows 10/11。
+就用」，**启动台编辑**与**设置**各自是独立窗口。目标平台 Windows 10/11。
 
-- 常驻小窗：无边框亚克力的桌面挂件，锚在主显示器右下角（不抢焦点、不进任务栏、沉底）
+- 常驻小窗：无边框云母 / 增强云母桌面挂件，锚在主显示器右下角（不抢焦点、不进任务栏、沉底）
 - 双行面板（最多 10 格）+ 存储与磁盘区 + 系统控制（音量 / Wi-Fi / 热点），每格自由定义：文件 / 命令行 / 网址 / 按键模拟
+- 启动台编辑与设置完全分离；更新检查、7 天自动备份、关于都收在设置窗口里
 - 配置、日志、图标都在 exe 同级的 `data/` 目录；首次启动自动生成（并自动迁移旧数据）
 
 ---
@@ -20,12 +21,14 @@
 
 | | |
 | --- | --- |
-| 🪟 **常驻小窗** | 亚克力无焦点桌面挂件：固定主显示器右下角、沉在普通窗口之下；双行面板 + 存储区 + 系统控制 |
+| 🪟 **常驻小窗** | 云母无焦点桌面挂件：固定主显示器右下角、沉在普通窗口之下；双行面板 + 存储区 + 系统控制 |
 | 🧩 **槽位自由定义** | 每一格都自带完整定义：文件 / 命令行 / 网址 / 按键模拟当场填完，每格独立编辑 |
 | 🎛 **系统控制** | 底部一排 Win11 风格卡片：音量滑条（图标可静音）、Wi-Fi 开关、移动热点开关 |
+| 🔄 **自动更新** | 稳定 / Pre-Release 双通道，自动下载 `RinLauncher.zip`，确认后退出安装并重启 |
+| 💾 **配置备份** | 手动备份不自动清理；每 7 天自动备份一次，保留最近 8 份 |
 | ⌨️ **按键模拟** | 参考 SystemTools：全局录制键盘输入或手动编辑，支持组合键与长按 |
 | 🎨 **图标选择器** | 内置 / 随包 / 我的 / 从文件获取四个来源；exe·dll·lnk 提取与 ico·svg·png 导入 |
-| ⚙️ **设置** | 启动方式（普通 / 管理员自启动）、主题材质、托盘、热键、动画开关、配置管理 |
+| ⚙️ **设置** | 左侧可折叠分类栏（通用 / 个性化 / 更新 / 备份 / 关于与鸣谢），支持从系统主题色提取强调色 |
 | 🔐 **管理员支持** | 条目级提权（UAC）、提权前确认开关、登录时以管理员身份自启动（任务计划） |
 | 🖱 **右键菜单** | 小窗每一格右键：打开 · 提权打开 · 编辑这一格 · 再加一格 |
 
@@ -33,28 +36,27 @@
 
 ## 界面导览
 
-**常驻小窗**：贴在主显示器右下角的亚克力挂件（点得动但不抢焦点、不盖在别的窗口上）。
+**常驻小窗**：贴在主显示器右下角的云母挂件（点得动但不抢焦点、不盖在别的窗口上）。
 自上而下：标题条（右上角：编辑启动台 / 更多）→ 双行面板（≤5 格单排，更多平分两排）→
 存储与磁盘区 → 系统控制条（音量 / Wi-Fi / 热点）。
 每格左键启动、右键出菜单；用 `Win+D` 或热键叫回来。
 
-**完整窗口**：侧边三页。
+**启动台编辑窗口**：只负责小窗内容 —— 面板最多 10 格，加 / 删 / 挪 / 改名 / 换图标；
+存储区配目录与磁盘入口。
 
-| 页面 | 作用 |
-| --- | --- |
-| 启动台 | 编辑小窗：面板最多 10 格，加 / 删 / 挪 / 改名 / 换图标；存储区配目录与磁盘入口 |
-| 设置 | 常规 / 外观 / 启动台 / 热键 / 高级；全部即时生效 |
-| 关于 | 版本、仓库链接、运行环境、配置位置、许可证 |
+**设置窗口**：左侧是可折叠的分类栏 —— 通用（启动 / 热键 / 启动台入口 / 权限与维护）、
+个性化（主题 / 强调色 / 材质 / 动画）、更新（通道 / 状态 / 发布说明）、备份、关于与鸣谢。
+所有改动即时生效，强调色可以直接从 Windows 主题色提取。
 
-**托盘与热键**：托盘菜单提供显示/隐藏、跳页、打开配置目录、重载配置、退出；左键单击
-托盘图标切换显示。全局热键默认 `Ctrl+Space`（需含至少一个修饰键）。完整窗口的关闭
-按钮只收起自己，小窗照常跑。
+**托盘与热键**：托盘菜单提供显示/隐藏、打开编辑或设置、打开配置目录、重载配置、退出；
+左键单击托盘图标切换显示。全局热键默认 `Ctrl+Space`（需含至少一个修饰键）。
+两个完整窗口的关闭按钮只收起自己，小窗照常跑。
 
 ---
 
 ## 启动方式
 
-设置 → 常规里的「启动方式」三选一：
+设置 → 通用里的「启动方式」三选一：
 
 | 方式 | 实现 | 说明 |
 | --- | --- | --- |
@@ -111,10 +113,22 @@ $env:RIN_ONEFILE="1"; pyinstaller build.spec; Remove-Item Env:RIN_ONEFILE
 
 ---
 
+## 更新与备份
+
+- **更新**：设置 → 更新。稳定版取 GitHub Releases 的 Latest，测试版取第一个
+  Pre-Release；更新包固定为 `RinLauncher.zip`。发现新版本会自动下载，点「安装并重启」
+  后由隐藏脚本等待进程退出、覆盖安装目录（保留 `data/`）并启动新版本。
+  Release 正文会以 Markdown 显示在「更新说明」里，没有新版本时也能看当前版本的内容。
+- **备份**：设置 → 备份。手动备份随时可做且不会被自动清理；自动备份每 7 天一次，
+  只保留最近 8 份。每次写盘前仍会额外保留 10 份 `config.yaml.bak.*` 作为兜底。
+
+---
+
 ## 数据与配置
 
 路径：exe 同级 `data/config.yaml`（源码运行时是 `%APPDATA%\RinLauncher\config.yaml`）。
-同目录还有 `backups/`（每次写盘前自动备份，保留最近 10 份）、`launcher.log`、`icons/`。
+同目录还有 `backups/`（每次写盘前自动备份 + 手动/7 天自动备份）、`updates/`、
+`launcher.log`、`icons/`。
 
 配置文件被外部程序改动会自动重新加载（0.5 秒防抖，自己的写入会被忽略）；也可以点托盘
 或设置页的「重载配置」手动触发。
@@ -135,8 +149,7 @@ launcher:
 settings:
   theme: "system"                     # system | light | dark
   accentColor: "#0078d4"
-  material: "tabbed"                  # tabbed（增强云母）| mica | none（完整窗口材质）
-  compactAcrylic: true                # 小窗亚克力（仅 Windows）
+  material: "tabbed"                  # tabbed（增强云母）| mica | none；三个窗口共用
   showTray: true
   startMinimized: false               # 启动时只留托盘，不弹小窗
   startupMode: "off"                  # off | normal（登录时启动）| admin（管理员自启动）
@@ -145,6 +158,8 @@ settings:
   confirmAdminActions: true           # 运行管理员动作前先确认
   globalHotkey: "Ctrl+Space"
   logLevel: "INFO"                    # DEBUG | INFO | WARNING | ERROR（重启生效）
+  updateChannel: "stable"             # stable（Latest）| prerelease（Pre-Release）
+  autoCheckUpdates: true              # 启动时静默检查更新
 ```
 
 ### 槽位（`launcher.slots`）
@@ -198,7 +213,10 @@ settings:
 还按着的键会被兜底释放。有 `vk` 用 `vk` 回放（键码优先），没有才解析名称。旧版「键鼠
 模拟」的 `keymouse` / `keymouse_steps` 会在读入时自动迁移，其中的鼠标步骤不再支持，
 迁移时会被跳过。
-
+挂着中文 / 日文 / 韩文输入法时，可打印字符改用 `SendInput` + `KEYEVENTF_UNICODE`
+直接生成 `WM_CHAR`，绕开输入法的拼音组词 —— 搜狗、QQ、微软拼音会把普通按键注入
+当成真实键盘拿去组词，这样发才能真的落进输入框。组合键与功能键仍走虚拟键码，
+不受影响；英文键盘布局下行为与以前完全一致，也不会改动你的输入法状态。
 ## 变量替换
 
 `target` / `arguments` / `working_dir` 支持：
@@ -237,20 +255,27 @@ settings:
 .
 ├── rin_launcher/                # Python 后端
 │   ├── main.py                  # 入口：装配窗口 / 托盘 / 热键 / 单实例
-│   ├── config_manager.py        # 配置读写（data/ 目录策略、旧数据迁移）
+│   ├── config_manager.py        # 配置读写 / 备份 / 旧数据迁移
 │   ├── system_controls.py       # 音量 / Wi-Fi / 移动热点（pycaw + WinRT）
+│   ├── updater.py               # GitHub Releases 更新检查 / 下载 / 安装
 │   ├── action_executor.py       # 四种动作的执行引擎（含自动提权闸门）
 │   ├── key_recorder.py          # 按键录制器（全局监听 → 步骤整理）
+│   ├── ime.py                   # 输入法兼容：东亚布局下用 Unicode 注入字符
 │   ├── autostart.py             # 三态启动方式（注册表 / 任务计划）
 │   ├── single_instance.py       # 单实例保护（QSharedMemory + 本地套接字）
-│   ├── effects.py               # 窗口材质：小窗亚克力 / 无焦点标志
+│   ├── effects.py               # 无焦点 / 置底工具（材质交给 RinUI）
+│   ├── system_theme.py          # 读取 Windows 强调色（注册表 ABGR / ARGB）
+│   ├── system_controls.py       # 音量 / Wi-Fi / 移动热点
+│   ├── updater.py               # GitHub Releases 检查 / 下载 / 安装
 │   ├── hotkey.py                # 全局热键（pynput 监听，信号回主线程）
 │   ├── tray.py                  # 系统托盘（QSystemTrayIcon + QMenu）
 │   └── elevation.py             # Windows UAC 提权 / 注册表自启
 ├── qml/
 │   ├── CompactWindow.qml        # 常驻桌面右下角的小窗（启动台）
-│   ├── LauncherWindow.qml       # 完整窗口（FluentWindow + NavigationView）
-│   ├── pages/                   # 启动台 / 设置 / 关于
+│   ├── LauncherEditorWindow.qml # 启动台编辑窗口
+│   ├── SettingsWindow.qml       # 设置窗口（含更新 / 备份 / 关于）
+│   ├── pages/                   # 启动台 / 设置（左侧分类栏）
+│   │   └── settings/            # 通用 / 个性化 / 更新 / 备份 / 关于与鸣谢
 │   ├── dialogs/                 # AppDialog 基类 + 槽位编辑器、图标选择器、确认框
 │   ├── components/              # AppIcon / ActionForm / KeyboardStepsEditor / CompactPanel /
 │   │                            # CompactRow / CompactTile / SystemControlBar / SlotListEditor …
@@ -267,10 +292,10 @@ settings:
 
 改代码前值得知道的几件事（细节都在源码注释里）：
 
-- **RinUI 是内联的**，其中有一处本地补丁：`ComboBox` 的 `activated` 手动补发（它用的是
-  自定义 `ContextMenu`，原生信号永不触发）—— 同步上游时留意保留。
-- **两个窗口各有一个 QML 引擎**；`ThemeManager` 挂在 `rootContext` 上，新建窗口后要把
-  两个引擎都「钉回自己那一份」（`main.py._pin_theme_managers`）。
+- **RinUI 是内联的**，本地补丁记录在 `RinUI/LOCAL_PATCHES.md`（ComboBox activated、
+  Menu 高度、Slider 手柄空 parent），同步上游时留意保留。
+- **三个窗口各有一个 QML 引擎**（`shared_engine=False`），各自持有自己的 `ThemeManager`；
+  编辑 / 设置窗口按需创建，启动时只建小窗。
 - **下拉一律监听 `onActivated: function (index) {...}`**（属性式写法）；函数声明式不会被
   连接成信号处理器，「选了不生效」多半就是它。
 - **弹窗不用 Qt Popup**：主窗是自绘窗口，`Overlay` 拿不到；`dialogs/AppDialog.qml` 是纯
@@ -279,13 +304,15 @@ settings:
 
 ## 已知限制
 
-- **仅 Windows**：提权（UAC）、任务计划自启动、亚克力与无焦点窗口都是 Windows 专有实现；
-  非 Windows 上相关功能安全降级或直报失败，其余照常。
+- **仅 Windows**：提权（UAC）、任务计划自启动、云母材质、系统控制与无焦点窗口都是
+  Windows 专有实现；非 Windows 上相关功能安全降级或直报失败，其余照常。
+- **自动更新只在打包版可用**：源码模式可以检查 / 下载，但不会自动替换运行目录。
+- **更新包固定为 `RinLauncher.zip`**：Release 里没有这个资产时会明确提示，不会盲下别的包。
 - **小窗高度不可调**：固定为桌面可用高度的一半；面板最多 10 格、存储区独立一条，结构固定。
 - **小窗固定沉底**：永远位于普通窗口之下（桌面之上），被最大化窗口挡住属预期行为；
   热键只负责显示 / 隐藏，不会把它抬到最前。
 - **托盘依赖系统支持**：`isSystemTrayAvailable()` 为假时不建托盘；此时若小窗也未显示，
-  关掉完整窗口会直接退出程序。
+  关掉编辑 / 设置窗口会直接退出程序。
 - **管理员自启动的细节**：任务计划条目名固定为 “Rin Launcher”；移动程序位置后需要重新
   切换一次启动方式；创建 / 删除任务需要管理员权限（切换时弹一次 UAC）。
 - **RinUI 自身的控制台告警**：个别 QML 库内部提示（Slider / propertyCache）不影响功能。

@@ -1,7 +1,7 @@
 # RinUI 本地补丁清单
 
 本目录是内联的 RinUI（MIT，上游：<https://github.com/RinLit-233-shiroko/Rin-UI>）。
-同步上游时，下面两处本地补丁必须手工保留（或移植后再同步），本文件也一并保留。
+同步上游时，下面三处本地补丁必须手工保留（或移植后再同步），本文件也一并保留。
 
 ## 1. ComboBox 手动补发 `activated`
 
@@ -32,6 +32,16 @@ Binding {
 ```
 
 - 症状（丢掉补丁）：菜单最后一行显示不全。
+
+## 3. Slider 手柄不再读 `parent`
+
+`components/BasicInput/Slider.qml` 的 `handle` 定位（约 126–132 行）。
+
+`handle` 挂载前 `parent` 还是 `null`，原来的 `parent.width / parent.height`
+会在控件构造阶段报 `Cannot read property 'height' of null`。改为读 `root`，
+位置语义不变。
+
+- 症状（丢掉补丁）：设置页 / 音量滑条创建时控制台刷空引用错误。
 
 ## 同步建议
 

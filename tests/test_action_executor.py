@@ -297,3 +297,63 @@ def test_run_keyboard_mouse_steps_ignored(executor, key_events):
     action = {"keymouse_steps": [{"type": "mouse", "x": 1}]}
     assert executor._run_keyboard(action) is True
     assert key_events == []
+
+
+def test_printable_char_only_single_characters(executor):
+    assert executor._printable_char({"key": "a"}) == "a"
+    assert executor._printable_char({"key": "A"}) == "a"
+    assert executor._printable_char({"key": "中"}) == "中"
+    assert executor._printable_char({"key": "Ctrl+A"}) is None
+    assert executor._printable_char({"key": "f5"}) is None
+
+
+def test_run_keyboard_types_printable_chars_as_text_when_ime_active(
+        executor, key_events, monkeypatch):
+    """东亚输入法下，单字符改走 Unicode 注入，不会被拿去做拼音组词。"""
+    sent: list[str] = []
+    monkeypatch.setattr(ae.ime, "east_asian_ime_active", lambda: True)
+    monkeypatch.setattr(ae.ime, "send_text", lambda text: sent.append(text) or True)
+    action = {
+        "type": "keyboard",
+        "keyboard_steps": [
+            {"type": "key", "key": "a", "action": "click"},
+            {"type": "key", "key": "1", "action": "click"},
+        ],
+    }
+    assert executor._run_keyboard(action) is True
+    assert sent == ["a", "1"]
+    assert key_events == []
+
+
+def test_run_keyboard_keeps_vk_for_combos_and_special_keys(
+        executor, key_events, monkeypatch):
+    sent: list[str] = []
+    monkeypatch.setattr(ae.ime, "east_asian_ime_active", lambda: True)
+    monkeypatch.setattr(ae.ime, "send_text", lambda text: sent.append(text) or True)
+    action = {
+        "type": "keyboard",
+        "keyboard_steps": [
+            {"type": "key", "key": "Ctrl+A", "action": "click"},
+            {"type": "key", "key": "f5", "action": "click"},
+        ],
+    }
+    assert executor._run_keyboard(action) is True
+    assert sent == []
+    assert ("press", FakeKey.ctrl) in key_events
+
+
+def test_run_keyboard_uses_vk_without_ime(executor, key_events, monkeypatch):
+    monkeypatch.setattr(ae.ime, "east_asian_ime_active", lambda: False)
+    monkeypatch.setattr(ae.ime, "send_text", lambda text: True)
+    action = {"type": "keyboard", "keyboard_steps": [{"type": "key", "key": "a"}]}
+    assert executor._run_keyboard(action) is True
+    assert key_events[0][0] == "press"
+
+
+def test_run_keyboard_falls_back_when_text_injection_fails(
+        executor, key_events, monkeypatch):
+    monkeypatch.setattr(ae.ime, "east_asian_ime_active", lambda: True)
+    monkeypatch.setattr(ae.ime, "send_text", lambda text: False)
+    action = {"type": "keyboard", "keyboard_steps": [{"type": "key", "key": "a"}]}
+    assert executor._run_keyboard(action) is True
+    assert key_events[0][0] == "press"

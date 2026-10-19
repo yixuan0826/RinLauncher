@@ -84,7 +84,7 @@ class TrayIcon(QObject):
 
         menu.addSeparator()
 
-        launcher = QAction("启动台设置", menu)
+        launcher = QAction("启动台编辑", menu)
         launcher.triggered.connect(lambda: self.openPageRequested.emit("launcher"))
         menu.addAction(launcher)
 
