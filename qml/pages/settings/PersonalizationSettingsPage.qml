@@ -44,7 +44,6 @@ Item {
 
                 FormRow {
                     label: qsTr("强调色")
-                    description: qsTr("可从系统主题色一键提取")
                     RowLayout {
                         spacing: 8
 
@@ -73,7 +72,7 @@ Item {
 
                 FormRow {
                     label: qsTr("窗口材质")
-                    description: qsTr("云母 / 增强云母需要 Windows 11")
+                    description: qsTr("云母需要 Windows 11")
                     ComboBox {
                         id: materialCombo
                         Layout.preferredWidth: 180
@@ -87,7 +86,6 @@ Item {
 
                 FormRow {
                     label: qsTr("动画效果")
-                    description: qsTr("关闭后界面切换不再有过渡")
                     Switch {
                         id: animationSwitch
                         checkedText: qsTr("开")
@@ -98,14 +96,6 @@ Item {
                         }
                     }
                 }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                typography: Typography.Caption
-                color: Theme.currentTheme.colors.textSecondaryColor
-                text: qsTr("窗口材质是全局设置，小窗、启动台编辑与设置窗口会一起切换。")
             }
         }
     }

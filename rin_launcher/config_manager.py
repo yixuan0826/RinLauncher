@@ -22,7 +22,16 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from PySide6.QtCore import QCoreApplication, QFileInfo, QObject, QTimer, QUrl, Signal, Slot
+from PySide6.QtCore import (
+    Property,
+    QCoreApplication,
+    QFileInfo,
+    QObject,
+    QTimer,
+    QUrl,
+    Signal,
+    Slot,
+)
 from PySide6.QtGui import QDesktopServices
 
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
@@ -41,19 +50,15 @@ from rin_launcher.system_theme import read_system_accent_color
 
 logger = logging.getLogger(__name__)
 
-APP_REPO = "https://github.com/yixuan0826/RinLauncher"
-
 DEFAULT_CONFIG_DIR = Path.home() / "AppData" / "Roaming" / "RinLauncher"
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 BUNDLED_ICON_DIR = ASSETS_DIR / "icons" / "lawnicons"
-APP_ICON_FILE = ASSETS_DIR / "icon.png"
 
 # ── 常驻小窗的两块 ──────────────────────────────────────────────────
 # 面板：一块「双行」的格子板（最多 PANEL_CAPACITY 格），小窗把它的槽位按行
 # 平分渲染成上下两排；存储区：存储卡片 + 磁盘入口。槽位都写在 launcher.slots。
 ROW_PANEL = 0        # 双行面板
 ROW_STORAGE = 1      # 存储与磁盘
-LAUNCHER_ROWS = 2
 PANEL_CAPACITY = 10  # 面板最多固定几格
 
 # 行语义随版本变化：<3 的配置里 0/1/2 是老的「常用应用 / 快捷功能 / 存储与
@@ -90,12 +95,6 @@ SLOT_KIND_LABELS: dict[str, str] = {
     SLOT_TOOL: "内置功能",
     SLOT_PATH: "打开路径",
     SLOT_USB: "可移动磁盘（自动检测）",
-}
-SLOT_KIND_ICONS: dict[str, str] = {
-    SLOT_ACTION: "ic_fluent_play_20_regular",
-    SLOT_TOOL: "ic_fluent_wrench_20_regular",
-    SLOT_PATH: "ic_fluent_folder_open_20_regular",
-    SLOT_USB: "ic_fluent_usb_plug_20_regular",
 }
 
 # 槽位不再引用任何外部条目：动作直接写在槽位里（内联）。
@@ -479,6 +478,8 @@ class ConfigManager(QObject):
     hotkeyChanged = Signal(str)
     trayEnabledChanged = Signal(bool)
     materialChanged = Signal(str)
+    # 强调色：三个窗口是独立 QML 引擎，靠这个信号让每个引擎各自更新 Theme。
+    accentColorChanged = Signal(str)
     # 页面 / 窗口级的请求：QML 侧的页面够不到窗口对象，统一从这里转给 main.py。
     pageRequested = Signal(str)
     # 设置页分组跳转（标题栏「…」菜单里选一个分区）。
@@ -548,9 +549,9 @@ class ConfigManager(QObject):
             needs_rewrite = (
                 had_legacy_library
                 or old_version != CONFIG_VERSION
-                or "compactAcrylic" in raw_settings
                 or "updateChannel" not in raw_settings
                 or "autoCheckUpdates" not in raw_settings
+                or bool(set(raw_settings) - set(DEFAULT_SETTINGS))
             )
             config = self._normalize(raw)
             # 旧版「快捷操作」库 / 分区、已下线的设置项、缺失的新设置：
@@ -577,16 +578,16 @@ class ConfigManager(QObject):
         data.pop("categories", None)
         # settings keys added by newer builds get their default value
         raw_settings = dict(data.get("settings") or {})
-        settings = {**DEFAULT_SETTINGS, **raw_settings}
+        # 只保留当前版本认识的键：旧版遗留的 language / searchEngine /
+        # gridColumns / itemSize / blurBackground 等不再读入，下次保存就消失。
+        settings = {key: value for key, value in raw_settings.items()
+                    if key in DEFAULT_SETTINGS}
+        settings = {**DEFAULT_SETTINGS, **settings}
         # 旧版「开机自动启动」布尔值迁进三态启动方式（关闭 / 登录时启动 / 管理员自启动）。
-        settings.pop("autoStart", None)
         if "startupMode" not in raw_settings and raw_settings.get("autoStart"):
             settings["startupMode"] = "normal"
         if settings.get("startupMode") not in ("off", "normal", "admin"):
             settings["startupMode"] = "off"
-        # 小窗改成固定置底、固定主屏右下角之后，这两个老键不再有消费方。
-        for obsolete in ("alwaysOnTop", "compactPos", "compactAcrylic"):
-            settings.pop(obsolete, None)
         if settings.get("updateChannel") not in ("stable", "prerelease"):
             settings["updateChannel"] = "stable"
         settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
@@ -833,6 +834,12 @@ class ConfigManager(QObject):
         """A detached copy, so the settings dialog can edit it before saving."""
         return dict(self._config["settings"])
 
+    @Property(str, notify=accentColorChanged)
+    def accentColor(self) -> str:
+        """当前强调色（``#RRGGBB``），启动与跨窗口同步都读这里。"""
+        value = str(self._config["settings"].get("accentColor") or "")
+        return value or str(DEFAULT_SETTINGS["accentColor"])
+
     # ── 启动台槽位 ────────────────────────────────────────────────────
     def _resolve_slot(self, slot: dict[str, Any]) -> dict[str, Any] | None:
         """把槽位解析成界面直接能画的一条数据；动作不完整时返回 None。"""
@@ -853,7 +860,6 @@ class ConfigManager(QObject):
                 arguments=inline.get("arguments", ""),
                 working_dir=inline.get("working_dir", ""),
                 keyboard_steps=inline.get("keyboard_steps") or [],
-                runAs=inline.get("run_as", "user"),
                 admin=inline.get("run_as") == "admin",
                 inlineAction=True,
             )
@@ -908,14 +914,6 @@ class ConfigManager(QObject):
         return resolved
 
     @Slot(result="QVariantList")
-    def getSlotCatalog(self) -> list[dict]:
-        """可选的槽位类型与内置功能，给编辑器的下拉用。"""
-        return [
-            {"kind": kind, "title": SLOT_KIND_LABELS[kind], "icon": SLOT_KIND_ICONS[kind]}
-            for kind in SLOT_KINDS
-        ]
-
-    @Slot(result="QVariantList")
     def getToolCatalog(self) -> list[dict]:
         return [{"key": key, "title": title, "icon": icon}
                 for key, title, icon in TOOL_CATALOG]
@@ -934,11 +932,6 @@ class ConfigManager(QObject):
     def getLauncherStoragePath(self) -> str:
         """第三行那张存储卡片配置的目录（原始值，空串表示用主目录）。"""
         return str(self._config["launcher"].get("storagePath") or "")
-
-    @Slot(int, result="QVariantList")
-    def getSlotsInRow(self, row: int) -> list[dict]:
-        """某一行的槽位解析结果，按显示顺序。"""
-        return [item for item in self.getLauncherSlots() if item.get("row") == row]
 
     @Slot(result="QVariantMap")
     def getStorageInfo(self) -> dict[str, Any]:
@@ -984,14 +977,6 @@ class ConfigManager(QObject):
     @Slot(result=str)
     def pickFolder(self) -> str:
         path = QFileDialog.getExistingDirectory(None, "选择文件夹", str(Path.home()))
-        return path or ""
-
-    @Slot(result=str)
-    def pickProgram(self) -> str:
-        """挑一个程序 / 动态库，用于「从程序提取图标」。"""
-        path, _ = QFileDialog.getOpenFileName(
-            None, "选择程序或 DLL", str(Path.home()),
-            "程序与库 (*.exe *.dll *.ico *.lnk);;所有文件 (*)")
         return path or ""
 
     @Slot(str)
@@ -1133,15 +1118,6 @@ class ConfigManager(QObject):
         if notify:
             self.showToast.emit(f"已提取图标：{source.name}", "success")
         return self._icon_key(target)
-
-    @Slot(str, result=str)
-    def extractIcon(self, path: str) -> str:
-        """从程序 / 快捷方式 / DLL 里抽出图标（path 为空时弹文件选择框）。"""
-        if not path:
-            path = self.pickProgram()
-        if not path:
-            return ""
-        return self._extract_icon_file(path)
 
     @Slot(str, result=str)
     def acquireIcon(self, path: str) -> str:
@@ -1338,6 +1314,7 @@ class ConfigManager(QObject):
     def updateSettings(self, settings: dict) -> bool:
         settings = dict(settings)
         previous = self._config["settings"]
+        old_accent = str(previous.get("accentColor") or "")
 
         # 启动方式不走这里：三态切换要碰注册表 / 任务计划，走 setStartupMode()。
         settings.pop("autoStart", None)
@@ -1353,6 +1330,8 @@ class ConfigManager(QObject):
                 self.trayEnabledChanged.emit(bool(previous["showTray"]))
             if "material" in settings:
                 self.materialChanged.emit(str(previous["material"]))
+            if "accentColor" in settings and self.accentColor != old_accent:
+                self.accentColorChanged.emit(self.accentColor)
         return saved
 
     # ── 启动方式（关闭 / 登录时启动 / 管理员自启动）─────────────────
@@ -1414,6 +1393,7 @@ class ConfigManager(QObject):
         self.configChanged.emit()
         self.launcherChanged.emit()
         self.settingsChanged.emit()
+        self.accentColorChanged.emit(self.accentColor)
         return True
 
     @Slot(str, str)

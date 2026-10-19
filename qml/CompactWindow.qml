@@ -43,6 +43,18 @@ Window {
     // 没上成功就把卡片画实一点，免得在透明背景上看着发虚。
     property bool backdropActive: false
 
+    // 强调色是全局设置，但 Theme/Utils 是每个 QML 引擎各自的单例：新窗口创建时
+    // 应用一次，之后靠 ConfigManager 的信号让三个窗口一起变。
+    function applyAccentColor() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var value = ConfigManager.accentColor
+        if (value && value.length > 0) {
+            Utils.primaryColor = value
+        }
+    }
+
     // ── 状态 ──
     property var panelSlots: []
     property var storageSlots: []
@@ -230,7 +242,7 @@ Window {
                                     Layout.alignment: Qt.AlignVCenter
                                     iconKey: "ic_fluent_storage_20_regular"
                                     iconSize: 24
-                                    tint: Theme.currentTheme.colors.primaryColor
+                                    tint: Utils.accentIconColor
                                 }
 
                                 ColumnLayout {
@@ -333,7 +345,7 @@ Window {
                                         iconSize: 22
                                         tint: modelData.exists === false
                                             ? Theme.currentTheme.colors.textSecondaryColor
-                                            : Theme.currentTheme.colors.primaryColor
+                                            : Utils.accentIconColor
                                     }
 
                                     ColumnLayout {
@@ -574,6 +586,7 @@ Window {
         snapToCorner()
         reload()
         applyAnimationSetting()
+        applyAccentColor()
     }
 
     Connections {
@@ -588,6 +601,10 @@ Window {
             // 动画总开关变化即时生效。
             compact.applyAnimationSetting()
         }
+
+        // 强调色 / 整份配置变化：每个窗口是独立 QML 引擎，都要各自更新。
+        function onAccentColorChanged() { compact.applyAccentColor() }
+        function onConfigChanged() { compact.applyAccentColor() }
 
         function onShowToast(message, _severity) {
             toastText.text = message

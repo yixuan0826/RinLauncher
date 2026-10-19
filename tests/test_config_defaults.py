@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_single_source():
     import rin_launcher.config_manager as cm
 
-    assert __version__ == "1.1.0"
+    assert __version__ == "1.1.1"
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__
 
@@ -45,3 +45,25 @@ def test_default_config_has_no_quick_action_library():
     assert config["settings"]["updateChannel"] == "stable"
     assert config["settings"]["autoCheckUpdates"] is True
     assert "compactAcrylic" not in config["settings"]
+
+
+def test_accent_color_is_persisted_and_signalled(qapp, tmp_path):
+    """强调色以 config.yaml 为准：重启后仍能读回，变化时通知所有窗口。"""
+    from rin_launcher.config_manager import ConfigManager
+
+    first = ConfigManager(config_dir=tmp_path)
+    try:
+        assert first.accentColor == "#0078d4"
+        colours = []
+        first.accentColorChanged.connect(colours.append)
+        assert first.updateSettings({"accentColor": "#5175a1"})
+        assert first.accentColor == "#5175a1"
+        assert colours == ["#5175a1"]
+    finally:
+        first.stopWatching()
+
+    second = ConfigManager(config_dir=tmp_path)
+    try:
+        assert second.accentColor == "#5175a1"
+    finally:
+        second.stopWatching()

@@ -143,7 +143,7 @@ AppDialog {
                     Layout.fillWidth: true
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("RinUI 自带的 Fluent 字体图标，共 %1 个。")
+                    text: qsTr("内置 Fluent 图标（%1）")
                         .arg(picker.fluentIcons.length)
                 }
 
@@ -165,7 +165,7 @@ AppDialog {
                     Layout.fillWidth: true
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("随程序附带的 %1 个通用图标，会跟着主题色变化。")
+                    text: qsTr("随包图标（%1），会跟着主题色变化")
                         .arg(picker.bundledIcons.length)
                 }
 
@@ -191,7 +191,7 @@ AppDialog {
                         Layout.fillWidth: true
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("导入自己的 svg / png / ico，或从文件获取。共 %1 个。")
+                        text: qsTr("我的图标（%1）")
                             .arg(picker.customIcons.length)
                     }
                     Button {

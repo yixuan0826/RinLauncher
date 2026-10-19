@@ -14,6 +14,28 @@ FluentWindowBase {
     title: qsTr("设置")
     titleEnabled: true
 
+    // 本窗口换色时自己已经当场应用；这里接住其他来源（恢复默认 / 导入配置 /
+    // 外部修改 config.yaml）的强调色变化。
+    function applyAccentColor() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var value = ConfigManager.accentColor
+        if (value && value.length > 0) {
+            Utils.primaryColor = value
+        }
+    }
+
+    Component.onCompleted: applyAccentColor()
+
+    // FluentWindowBase 的默认属性是 content（只收 Item），Connections 不能直接
+    // 当子对象写；挂到属性上，信号一样能收到。
+    property Connections accentWatcher: Connections {
+        target: ConfigManager
+        function onAccentColorChanged() { applyAccentColor() }
+        function onConfigChanged() { applyAccentColor() }
+    }
+
     signal closeRequested()
 
     onClosing: function (close) {

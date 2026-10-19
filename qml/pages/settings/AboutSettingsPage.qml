@@ -9,8 +9,6 @@ import "../../components"
 Item {
     id: pageRoot
 
-    property var page
-
     Flickable {
         id: flick
         anchors.fill: parent

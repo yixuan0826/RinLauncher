@@ -83,7 +83,7 @@ AppDialog {
                     Layout.alignment: Qt.AlignVCenter
                     iconKey: editor.iconKey.length > 0 ? editor.iconKey : editor.previewIcon
                     iconSize: 40
-                    tint: Theme.currentTheme.colors.primaryColor
+                    tint: Utils.accentIconColor
                 }
 
                 ColumnLayout {
@@ -167,7 +167,7 @@ AppDialog {
                             iconKey: modelData.icon
                             iconSize: 18
                             tint: kindTile.selected
-                                ? Theme.currentTheme.colors.primaryColor
+                                ? Utils.accentIconColor
                                 : Theme.currentTheme.colors.textColor
                         }
 
@@ -285,7 +285,7 @@ AppDialog {
                 wrapMode: Text.Wrap
                 typography: Typography.Caption
                 color: Theme.currentTheme.colors.textSecondaryColor
-                text: qsTr("插上 U 盘 / 移动硬盘后自动识别第一个，不用指定盘符。")
+                text: qsTr("插上后自动识别第一个可移动磁盘。")
             }
         }
 
@@ -374,13 +374,13 @@ AppDialog {
     // ------------------------------------------------------------------
     readonly property var kindOptions: [
         {"kind": "action", "title": qsTr("动作"), "icon": "ic_fluent_play_20_regular",
-         "hint": qsTr("运行程序、命令或网址，也可以回放按键")},
+         "hint": qsTr("程序、命令、网址或按键")},
         {"kind": "tool", "title": qsTr("内置功能"), "icon": "ic_fluent_wrench_20_regular",
-         "hint": qsTr("小窗自带的功能，例如设置、重载、隐藏")},
+         "hint": qsTr("设置、重载、隐藏等内置功能")},
         {"kind": "path", "title": qsTr("打开路径"), "icon": "ic_fluent_folder_open_20_regular",
-         "hint": qsTr("打开一个文件、文件夹或磁盘")},
+         "hint": qsTr("文件、文件夹或磁盘")},
         {"kind": "usb", "title": qsTr("可移动磁盘"), "icon": "ic_fluent_usb_plug_20_regular",
-         "hint": qsTr("插上 U 盘 / 移动硬盘后自动识别")}
+         "hint": qsTr("自动识别移动磁盘")}
     ]
 
     readonly property string kindTitle: {

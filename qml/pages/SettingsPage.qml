@@ -25,19 +25,14 @@ Item {
 
     readonly property var sections: [
         { key: "general", title: qsTr("通用"),
-          description: qsTr("启动、热键、权限与日常维护"),
           icon: "ic_fluent_settings_20_regular" },
         { key: "personalization", title: qsTr("个性化"),
-          description: qsTr("主题、强调色与窗口材质"),
           icon: "ic_fluent_paint_brush_20_regular" },
         { key: "update", title: qsTr("更新"),
-          description: qsTr("更新通道、版本状态与发布说明"),
           icon: "ic_fluent_arrow_download_20_regular" },
         { key: "backup", title: qsTr("备份"),
-          description: qsTr("手动备份与每 7 天的自动备份"),
           icon: "ic_fluent_save_20_regular" },
         { key: "about", title: qsTr("关于与鸣谢"),
-          description: qsTr("版本、运行环境与开源致谢"),
           icon: "ic_fluent_info_20_regular" }
     ]
 
@@ -50,7 +45,6 @@ Item {
     readonly property real updateProgress: updater ? updater.progress : 0
     readonly property bool updateBusy: updater ? updater.busy : false
     readonly property bool updateCanInstall: updater ? updater.canInstall : false
-    readonly property string updateNotes: updater ? updater.releaseNotes : ""
     readonly property var updateNoteBlocks: updater ? updater.releaseNoteBlocks : []
     readonly property string updateReleaseUrl: updater ? updater.releaseUrl : ""
     readonly property string updateCurrentVersion: updater ? updater.currentVersion : ""
@@ -78,7 +72,7 @@ Item {
         Rectangle {
             id: navRail
             Layout.fillHeight: true
-            Layout.preferredWidth: settingsPage.navCollapsed ? 56 : 216
+            Layout.preferredWidth: settingsPage.navCollapsed ? 56 : 184
             color: "transparent"
 
             Behavior on Layout.preferredWidth {
@@ -232,12 +226,6 @@ Item {
                     color: Theme.currentTheme.colors.textColor
                     text: settingsPage.activeSection.title
                 }
-
-                Text {
-                    typography: Typography.Caption
-                    color: Theme.currentTheme.colors.textSecondaryColor
-                    text: settingsPage.activeSection.description
-                }
             }
 
             StackLayout {
@@ -264,7 +252,6 @@ Item {
                 }
                 AboutSettingsPage {
                     id: aboutPage
-                    page: settingsPage
                 }
             }
         }
@@ -372,7 +359,10 @@ Item {
                           : Theme.mode.Auto)
             break
         case "accentColor":
-            Theme.setThemeColor(value)
+            // 只改当前引擎的 Utils 单例：强调色以 config.yaml 为准，其余窗口
+            // 由 ConfigManager.accentColorChanged 同步；不走 Theme.setThemeColor，
+            // 免得拖动颜色选择器时每帧都往 RinUI 的配置文件里写一次。
+            Utils.primaryColor = value
             break
         // 材质由后端应用：材质要碰原生窗口句柄，QML 这边碰不到，
         // 统一走 settingsChanged → main.apply_material。

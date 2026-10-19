@@ -192,7 +192,7 @@ class Launcher:
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
         self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)))
+            "material", DEFAULT_MATERIAL)), window)
         return True
 
     def create_editor_window(self) -> bool:
@@ -203,7 +203,7 @@ class Launcher:
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
         self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)))
+            "material", DEFAULT_MATERIAL)), window)
         return True
 
     def create_settings_window(self) -> bool:
@@ -214,7 +214,7 @@ class Launcher:
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
         self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)))
+            "material", DEFAULT_MATERIAL)), window)
         return True
 
     def ensure_editor_window(self) -> bool:
@@ -245,11 +245,12 @@ class Launcher:
         if not self.hotkey.register(sequence):
             logger.info("No global hotkey registered (configured value: %r)", sequence)
 
-    def apply_material(self, material: str) -> None:
-        """把全局「窗口材质」同时应用到小窗、编辑窗口和设置窗口。
+    def apply_material(self, material: str,
+                       target: RinUIWindow | None = None) -> None:
+        """把全局「窗口材质」应用到指定窗口（默认三个窗口全部）。
 
-        小窗不再有单独的亚克力开关；材质值来自设置里的 material，
-        小窗 QML 会根据 ``backdropActive`` 决定卡片画多透明。
+        新建窗口时只给它自己上材质；同一份材质对已有窗口重复应用只是白跑
+        DwmSetWindowAttribute。
         """
         if not is_windows():
             return
@@ -257,7 +258,8 @@ class Launcher:
         # Win10 没有云母 / 增强云母；退回不透明背景，而不是把文字铺在桌面上。
         if not is_win11() and effect != BackdropEffect.None_:
             effect = BackdropEffect.None_
-        for window in (self.compact, self.editor, self.settings):
+        targets = (target,) if target is not None else (self.compact, self.editor, self.settings)
+        for window in targets:
             if window is None or window.root_window is None:
                 continue
             try:
@@ -292,6 +294,8 @@ class Launcher:
             return
         root = self.compact.root_window
         root.show()
+        # 小窗可见时才需要系统状态轮询；隐藏期间不碰 WinRT。
+        self.system_controls.setActive(True)
         # 小窗带 WindowDoesNotAcceptFocus，requestActivate() 是无效调用（Qt 会打一条
         # 警告）。置底窗口不能 raise_()（那会把它翻到别的窗口上面），显示完再向
         # 系统兜一次底，防止刚显示时被抬到前台。
@@ -300,6 +304,7 @@ class Launcher:
     def hide_compact(self) -> None:
         if self.compact is not None and self.compact.root_window is not None:
             self.compact.root_window.hide()
+            self.system_controls.setActive(False)
 
     def toggle_compact(self) -> None:
         if self._visible(self.compact):
@@ -339,14 +344,6 @@ class Launcher:
             self.show_settings("about")
         else:
             self.show_settings()
-
-    def hide_editor(self) -> None:
-        if self.editor is not None and self.editor.root_window is not None:
-            self.editor.root_window.hide()
-
-    def hide_settings(self) -> None:
-        if self.settings is not None and self.settings.root_window is not None:
-            self.settings.root_window.hide()
 
     def handle_tray_page(self, page: str) -> None:
         """托盘菜单：启动台设置 → 编辑窗口，设置 / 关于 → 设置窗口。"""

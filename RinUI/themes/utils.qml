@@ -14,6 +14,22 @@ QtObject {
     property var fontIconIndex: Icons.FluentIcons // 字体图标索引
 
     property color primaryColor: "#605ed2" // 默认主题色
+    // 图标 / 强调前景用的强调色：在主题已经调整过的主色上再加一道亮度保险 ——
+    // 深色主题下保证足够亮、浅色主题下保证足够暗，系统主题色特别暗 / 特别亮时
+    // 小图标也不会糊在背景里。只用于前景，填充与描边仍用 primaryColor。
+    readonly property color accentIconColor: {
+        var themed = (typeof Theme !== "undefined" && Theme.currentTheme)
+                     ? Theme.currentTheme.colors.primaryColor : Qt.color(primaryColor)
+        var dark = (typeof Theme !== "undefined" && Theme.currentTheme)
+                   ? Theme.isDark() : false
+        var value = themed.hsvValue
+        var target = dark ? Math.max(value, 0.78) : Math.min(value, 0.72)
+        if (Math.abs(target - value) < 0.001) {
+            return themed
+        }
+        var hue = themed.hsvHue
+        return Qt.hsva(hue < 0 ? 0 : hue, themed.hsvSaturation, target, 1.0)
+    }
     property QtObject colors: Theme.currentTheme.colors // 主题颜色
     property QtObject appearance: Theme.currentTheme.appearance // 界面外观
     property QtObject typography: Theme.currentTheme.typography // 字体

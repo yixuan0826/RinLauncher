@@ -51,7 +51,6 @@ Item {
 
                 FormRow {
                     label: qsTr("手动备份")
-                    description: qsTr("手动备份不会被自动清理")
                     Text {
                         Layout.fillWidth: true
                         color: Theme.currentTheme.colors.textSecondaryColor
@@ -83,14 +82,6 @@ Item {
                         onClicked: ConfigManager.openBackupFolder()
                     }
                 }
-            }
-
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                typography: Typography.Caption
-                color: Theme.currentTheme.colors.textSecondaryColor
-                text: qsTr("备份是完整的 config.yaml 副本，文件名带时间戳；需要回滚时把备份复制回配置目录即可。")
             }
         }
     }

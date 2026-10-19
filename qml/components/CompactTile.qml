@@ -69,7 +69,7 @@ Item {
             placeholder: "ic_fluent_add_20_regular"
             tint: tile.empty || tile.disabled
                 ? Theme.currentTheme.colors.textSecondaryColor
-                : Theme.currentTheme.colors.primaryColor
+                : Utils.accentIconColor
         }
 
         Text {
@@ -97,7 +97,7 @@ Item {
         visible: !!tile.slot && tile.slot.admin === true
         iconKey: "ic_fluent_shield_20_regular"
         iconSize: 11
-        tint: Theme.currentTheme.colors.primaryColor
+        tint: Utils.accentIconColor
     }
 
     MouseArea {

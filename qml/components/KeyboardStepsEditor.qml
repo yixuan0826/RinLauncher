@@ -274,8 +274,8 @@ ColumnLayout {
                    ? Theme.currentTheme.colors.systemCriticalColor
                    : Theme.currentTheme.colors.textSecondaryColor
             text: root.recording
-                  ? qsTr("正在录制：直接敲键盘，敲完点「结束录制」回来。")
-                  : qsTr("录制会把真实按键整理成下面的步骤；不录制也能在下面手动「新增」。")
+                  ? qsTr("正在录制，直接敲键盘即可。")
+                  : qsTr("录制会整理成步骤，也可以在下方手动新增。")
         }
     }
 
@@ -349,8 +349,8 @@ ColumnLayout {
             typography: Typography.Caption
             color: Theme.currentTheme.colors.textSecondaryColor
             text: root.recording
-                  ? qsTr("正在录制，按键会实时出现在这里…")
-                  : qsTr("还没有步骤：点「开始录制键盘输入」，或在下面「新增」一条。")
+                  ? qsTr("正在录制…")
+                  : qsTr("还没有步骤。")
         }
     }
 

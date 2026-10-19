@@ -10,7 +10,6 @@ RowLayout {
 
     property string iconKey: ""
     property string title: ""
-    property string trailing: ""
 
     Layout.fillWidth: true
     spacing: 8
@@ -19,7 +18,7 @@ RowLayout {
         Layout.alignment: Qt.AlignVCenter
         iconKey: header.iconKey
         iconSize: 18
-        tint: Theme.currentTheme.colors.primaryColor
+        tint: Utils.accentIconColor
     }
 
     Text {
@@ -28,13 +27,6 @@ RowLayout {
         font.pixelSize: Theme.currentTheme.typography.bodySize + 1
         color: Theme.currentTheme.colors.textColor
         text: header.title
-    }
-
-    Text {
-        Layout.alignment: Qt.AlignVCenter
-        typography: Typography.Caption
-        color: Theme.currentTheme.colors.textSecondaryColor
-        text: header.trailing
     }
 
     Item { Layout.fillWidth: true }

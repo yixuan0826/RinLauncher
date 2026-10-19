@@ -34,7 +34,6 @@ Item {
 
                 FormRow {
                     label: qsTr("启动方式")
-                    description: qsTr("管理员自启动由任务计划实现")
                     ComboBox {
                         id: startupCombo
                         Layout.preferredWidth: 180
@@ -47,7 +46,6 @@ Item {
 
                 FormRow {
                     label: qsTr("启动时最小化")
-                    description: qsTr("启动后只留托盘")
                     Switch {
                         id: startMinimizedSwitch
                         checkedText: qsTr("开")
@@ -61,7 +59,6 @@ Item {
 
                 FormRow {
                     label: qsTr("系统托盘图标")
-                    description: qsTr("关闭后仅热键可用")
                     Switch {
                         id: traySwitch
                         checkedText: qsTr("开")
@@ -75,7 +72,6 @@ Item {
 
                 FormRow {
                     label: qsTr("显示 / 隐藏")
-                    description: qsTr("任何程序里都能唤出小窗")
                     HotkeyField {
                         id: hotkeyField
                         Layout.preferredWidth: 260
@@ -99,7 +95,7 @@ Item {
                     wrapMode: Text.Wrap
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("热键需含修饰键（Ctrl / Alt / Shift / Win）；留空即关闭。")
+                    text: qsTr("热键需含修饰键；留空即关闭。")
                 }
             }
 
@@ -109,7 +105,6 @@ Item {
 
                 FormRow {
                     label: qsTr("编辑启动台")
-                    description: qsTr("打开独立的启动台编辑窗口")
                     Button {
                         text: qsTr("打开编辑窗口")
                         icon.name: "ic_fluent_apps_20_regular"
@@ -119,7 +114,7 @@ Item {
 
                 FormRow {
                     label: qsTr("重新检测磁盘")
-                    description: qsTr("插拔 U 盘 / 移动硬盘后手动刷新")
+                    description: qsTr("插拔 U 盘后点击刷新")
                     Button {
                         text: qsTr("刷新磁盘")
                         icon.name: "ic_fluent_arrow_sync_20_regular"
@@ -176,7 +171,6 @@ Item {
 
                 FormRow {
                     label: qsTr("配置文件")
-                    description: qsTr("导入 / 导出 YAML")
                     RowLayout {
                         spacing: 8
                         Button {
@@ -204,7 +198,6 @@ Item {
 
                 FormRow {
                     label: qsTr("重启程序")
-                    description: qsTr("提权重启会弹一次 UAC")
                     RowLayout {
                         spacing: 8
                         Button {
@@ -236,7 +229,7 @@ Item {
     function confirmReset() {
         // ConfirmDialog 在设置页根部，一页一份，避免每个分类各养一个弹窗。
         pageRoot.page.openConfirm(
-            qsTr("这会清空当前的全部分区、条目、槽位与设置，并恢复出厂默认值。确定继续吗？"),
+            qsTr("这会清空全部配置并恢复默认值，确定继续吗？"),
             function () { ConfigManager.resetToDefaults() })
     }
 

@@ -32,7 +32,6 @@ Item {
 
                 FormRow {
                     label: qsTr("更新通道")
-                    description: qsTr("稳定版取 GitHub Latest；测试版取最新 Pre-Release")
                     ComboBox {
                         id: channelCombo
                         Layout.preferredWidth: 220
@@ -47,7 +46,6 @@ Item {
 
                 FormRow {
                     label: qsTr("启动时检查")
-                    description: qsTr("发现新版本会自动下载，安装前会再提示")
                     Switch {
                         id: autoCheckSwitch
                         checkedText: qsTr("开")
@@ -245,17 +243,9 @@ Item {
                             wrapMode: Text.Wrap
                             typography: Typography.Caption
                             color: Theme.currentTheme.colors.textSecondaryColor
-                            text: qsTr("检查更新后，这里会显示最新 Release 的更新说明。")
+                            text: qsTr("暂无更新说明")
                         }
                     }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    typography: Typography.Caption
-                    color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("内容来自 GitHub Release 正文（支持标题、列表、引用、代码块与链接）。")
                 }
             }
         }

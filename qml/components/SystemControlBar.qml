@@ -37,7 +37,7 @@ RowLayout {
     readonly property color hoverColor: Theme.currentTheme.colors.controlSecondaryColor
     readonly property color textMain: Theme.currentTheme.colors.textColor
     readonly property color textSub: Theme.currentTheme.colors.textSecondaryColor
-    readonly property color accentText: Theme.currentTheme.colors.primaryColor
+    readonly property color accentText: Utils.accentIconColor
 
     function background(active, hovered) {
         return active ? activeBackground : (hovered ? hoverColor : tileColor)

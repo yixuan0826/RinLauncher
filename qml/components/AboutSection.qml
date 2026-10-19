@@ -13,20 +13,16 @@ ColumnLayout {
 
     readonly property string repoUrl: "https://github.com/yixuan0826/RinLauncher"
 
-    // (组件, 许可证, 链接, 说明)
+    // (组件, 许可证, 链接)
     readonly property var components: [
         {"name": "RinUI", "license": "MIT",
-         "url": "https://github.com/RinLit-233-shiroko/Rin-UI",
-         "note": "Fluent Design 风格的 QML 控件库，已内联在本仓库"},
+         "url": "https://github.com/RinLit-233-shiroko/Rin-UI"},
         {"name": "Lawnicons", "license": "Apache-2.0",
-         "url": "https://github.com/LawnchairLauncher/lawnicons",
-         "note": "随包附带的通用图标，为适配 Qt 补过 viewBox"},
+         "url": "https://github.com/LawnchairLauncher/lawnicons"},
         {"name": "Fluent UI System Icons", "license": "MIT",
-         "url": "https://github.com/microsoft/fluentui-system-icons",
-         "note": "界面里的字体图标，随 RinUI 提供"},
+         "url": "https://github.com/microsoft/fluentui-system-icons"},
         {"name": "PySide6 / Qt", "license": "LGPL-3.0",
-         "url": "https://www.qt.io/qt-for-python",
-         "note": "Python 的 Qt 绑定与运行时"}
+         "url": "https://www.qt.io/qt-for-python"}
     ]
 
     Layout.fillWidth: true
@@ -35,17 +31,17 @@ ColumnLayout {
     // ── 主卡片 ──
     Frame {
         Layout.fillWidth: true
-        Layout.preferredHeight: 140
+        Layout.preferredHeight: 112
 
         RowLayout {
             anchors.fill: parent
-            anchors.margins: 20
-            spacing: 20
+            anchors.margins: 18
+            spacing: 18
 
             AppIcon {
                 Layout.alignment: Qt.AlignVCenter
                 iconKey: "url:" + Qt.resolvedUrl("../../assets/icon.png")
-                iconSize: 64
+                iconSize: 56
             }
 
             ColumnLayout {
@@ -68,13 +64,6 @@ ColumnLayout {
                         color: Theme.currentTheme.colors.textSecondaryColor
                         text: qsTr("v%1").arg(aboutSection.runtime.version || "-")
                     }
-                }
-
-                Text {
-                    Layout.fillWidth: true
-                    wrapMode: Text.Wrap
-                    color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("常驻桌面右下角的启动台小窗，配独立的启动台编辑窗口与设置窗口。")
                 }
 
                 RowLayout {
@@ -101,13 +90,6 @@ ColumnLayout {
         iconKey: "ic_fluent_desktop_20_regular"
         title: qsTr("运行环境")
 
-        FormRow {
-            label: qsTr("程序版本")
-            Text {
-                color: Theme.currentTheme.colors.textColor
-                text: aboutSection.runtime.version || "-"
-            }
-        }
         FormRow {
             label: qsTr("Python")
             Text {
@@ -153,20 +135,12 @@ ColumnLayout {
         iconKey: "ic_fluent_certificate_20_regular"
         title: qsTr("鸣谢与许可证")
 
-        Text {
-            Layout.fillWidth: true
-            wrapMode: Text.Wrap
-            color: Theme.currentTheme.colors.textSecondaryColor
-            text: qsTr("Rin Launcher 以 MIT 许可证发布。下面这些项目直接或间接地撑起了它，"
-                       + "在此逐一致谢。")
-        }
-
         Repeater {
             model: aboutSection.components
 
             delegate: Frame {
                 Layout.fillWidth: true
-                implicitHeight: 56
+                implicitHeight: 44
 
                 RowLayout {
                     anchors.fill: parent
@@ -174,26 +148,12 @@ ColumnLayout {
                     anchors.rightMargin: 12
                     spacing: 10
 
-                    ColumnLayout {
+                    Text {
                         Layout.fillWidth: true
-                        Layout.minimumWidth: 80
-                        spacing: 0
-
-                        Text {
-                            Layout.fillWidth: true
-                            wrapMode: Text.NoWrap
-                            elide: Text.ElideRight
-                            color: Theme.currentTheme.colors.textColor
-                            text: modelData.name
-                        }
-                        Text {
-                            Layout.fillWidth: true
-                            wrapMode: Text.NoWrap
-                            elide: Text.ElideRight
-                            typography: Typography.Caption
-                            color: Theme.currentTheme.colors.textSecondaryColor
-                            text: modelData.note
-                        }
+                        wrapMode: Text.NoWrap
+                        elide: Text.ElideRight
+                        color: Theme.currentTheme.colors.textColor
+                        text: modelData.name
                     }
 
                     Text {
@@ -225,10 +185,7 @@ ColumnLayout {
             wrapMode: Text.Wrap
             typography: Typography.Caption
             color: Theme.currentTheme.colors.textSecondaryColor
-            text: qsTr("其他依赖：pycaw、comtypes、pywinrt（MIT）、PyYAML（MIT）、"
-                       + "darkdetect（MIT）、pynput（LGPL-3.0）、watchdog（Apache-2.0）、"
-                       + "pywin32（PSF-2.0）。Lawnicons 的图标为适配 Qt 做过修改（补 viewBox），"
-                       + "已按 Apache-2.0 §4(b) 在 assets/icons/lawnicons/NOTICE 中标注。")
+            text: qsTr("其他依赖：pycaw、comtypes、pywinrt、PyYAML、darkdetect、pynput、watchdog、pywin32。")
         }
     }
 

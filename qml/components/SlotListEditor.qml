@@ -11,7 +11,6 @@ import RinUI
 ColumnLayout {
     id: list
 
-    property int row: 0
     property var slots: []
     property string emptyHint: ""
     // 数字序号从 1 开始显示。
@@ -103,7 +102,7 @@ ColumnLayout {
                 Layout.alignment: Qt.AlignHCenter
                 iconKey: "ic_fluent_add_circle_20_regular"
                 iconSize: 26
-                tint: Theme.currentTheme.colors.primaryColor
+                tint: Utils.accentIconColor
             }
 
             Text {
@@ -175,7 +174,7 @@ ColumnLayout {
                         anchors.centerIn: parent
                         iconKey: modelData.icon || ""
                         iconSize: 22
-                        tint: Theme.currentTheme.colors.primaryColor
+                        tint: Utils.accentIconColor
                     }
                 }
 

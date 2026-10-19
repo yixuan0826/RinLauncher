@@ -34,6 +34,24 @@ def test_bogus_startup_mode_falls_back_to_off(qapp, tmp_path):
     assert manager.config["settings"]["startupMode"] == "off"
 
 
+def test_unknown_settings_keys_are_dropped(qapp, tmp_path):
+    """已下线的设置键不再跟着配置走：读入时丢掉，并写回干净的文件。"""
+    manager = _load_with(
+        tmp_path,
+        "version: 3\n"
+        "settings:\n"
+        "  language: zh_CN\n"
+        "  gridColumns: 6\n"
+        "  theme: dark\n",
+    )
+    settings = manager.config["settings"]
+    assert "language" not in settings
+    assert "gridColumns" not in settings
+    assert settings["theme"] == "dark"
+    on_disk = (tmp_path / "config.yaml").read_text(encoding="utf-8")
+    assert "language:" not in on_disk
+
+
 def test_inline_keymouse_steps_migrate_to_keyboard(qapp, tmp_path):
     manager = _load_with(tmp_path, """
 version: 3

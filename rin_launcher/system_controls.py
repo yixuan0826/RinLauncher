@@ -35,8 +35,13 @@ _IS_WINDOWS = sys.platform == "win32"
 HOTSPOT_SSID = "rinlauncher-hotspot"
 HOTSPOT_PASSWORD = "12345678"
 
+# 状态轮询间隔：Windows 快速设置里一拨开关，小窗最多两秒就跟上。
+_POLL_INTERVAL_MS = 2000
+# Wi-Fi SSID 的 netsh 兜底查询有子进程开销，最多 15 秒一次。
+_SSID_REFRESH_SECONDS = 15.0
+
 # ── 音量：pycaw + comtypes ──────────────────────────────────────────
-_AUDIO_IMPORT_ERROR = ""
+# ── 音量：pycaw + comtypes ──────────────────────────────────────────
 try:
     if _IS_WINDOWS:
         from ctypes import POINTER, cast
@@ -47,12 +52,10 @@ try:
         _AUDIO_AVAILABLE = True
     else:
         _AUDIO_AVAILABLE = False
-except Exception as exc:  # pragma: no cover - 依赖缺失时只走降级分支
+except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
     _AUDIO_AVAILABLE = False
-    _AUDIO_IMPORT_ERROR = str(exc)
 
 # ── Wi-Fi / 热点：WinRT ────────────────────────────────────────────
-_WINRT_IMPORT_ERROR = ""
 _WIFI_RADIO_KIND: Any = None
 try:
     if _IS_WINDOWS:
@@ -77,9 +80,8 @@ try:
         _WINRT_AVAILABLE = True
     else:
         _WINRT_AVAILABLE = False
-except Exception as exc:  # pragma: no cover - 依赖缺失时只走降级分支
+except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
     _WINRT_AVAILABLE = False
-    _WINRT_IMPORT_ERROR = str(exc)
 
 
 class SystemControls(QObject):
@@ -113,8 +115,13 @@ class SystemControls(QObject):
         self._wifi_enabled = False
         self._wifi_busy = False
         self._wifi_ssid = ""
+        # SSID 缓存（工作线程读写）：轮询时优先复用，避免每 2 秒起一次 netsh。
+        self._ssid_cache = ""
+        self._ssid_checked_at = 0.0
+        self._last_poll_wifi_on = False
 
         self._hotspot_manager: Any = None
+        self._hotspot_profile_id = ""
         self._hotspot_available = False
         self._hotspot_enabled = False
         self._hotspot_busy = False
@@ -133,31 +140,25 @@ class SystemControls(QObject):
             target=self._winrt_loop, name="rin-winrt", daemon=True)
         self._winrt_thread.start()
 
-        # 状态轮询：音量 / Wi-Fi / 热点都只需要读属性，开销很小。
+        # 状态轮询：只在小窗可见时跑，隐藏时停掉，省电也省 COM 调用。
+        self._active = False
         self._timer = QTimer(self)
-        self._timer.setInterval(5000)
+        self._timer.setInterval(_POLL_INTERVAL_MS)
         self._timer.setTimerType(Qt.CoarseTimer)
         self._timer.timeout.connect(self.refresh)
-        self._timer.start()
 
-        # 等窗口先画出来再做第一次系统查询，避免拖慢小窗出现。
-        QTimer.singleShot(200, self.refresh)
-
-    # ------------------------------------------------------------------
-    # 可用性（constant：进程生命周期内不会变）
-    # ------------------------------------------------------------------
-    @Property(bool, constant=True)
-    def volumeAvailable(self) -> bool:
-        return _AUDIO_AVAILABLE
-
-    @Property(bool, constant=True)
-    def wifiSupported(self) -> bool:
-        return _WINRT_AVAILABLE
-
-    @Property(str, constant=True)
-    def backendError(self) -> str:
-        """依赖缺失时的说明，给 ToolTip / 日志用。"""
-        return "; ".join(part for part in (_AUDIO_IMPORT_ERROR, _WINRT_IMPORT_ERROR) if part)
+    @Slot(bool)
+    def setActive(self, active: bool) -> None:
+        """小窗显示 / 隐藏时启停轮询；重新显示时立刻读一次。"""
+        active = bool(active)
+        if active == self._active:
+            return
+        self._active = active
+        if active:
+            self._timer.start()
+            QTimer.singleShot(0, self.refresh)
+        else:
+            self._timer.stop()
 
     # ------------------------------------------------------------------
     # 音量
@@ -310,25 +311,41 @@ class SystemControls(QObject):
             logger.warning("netsh %s failed", " ".join(args), exc_info=True)
             return 1, ""
 
-    def _connected_wifi_ssid(self) -> str:
-        """当前已连接的 Wi-Fi SSID；没连上或读取失败时返回空串。"""
+    def _connected_wifi_ssid(self, *, precise: bool = True) -> str:
+        """当前已连接的 Wi-Fi SSID；没连上或读取失败时返回空串。
+
+        WinRT 只在「有 Internet 连接」时给得出 profile，所以还要有 netsh 兜底。
+        netsh 是子进程，两秒一次的轮询不能每次都跑：``precise=False`` 时结果
+        缓存 ``_SSID_REFRESH_SECONDS`` 秒，到期后再真正读一次。
+        """
+        now = time.monotonic()
+        if not precise and now - self._ssid_checked_at < _SSID_REFRESH_SECONDS:
+            return self._ssid_cache
+
+        ssid = ""
         try:
             profile = NetworkInformation.get_internet_connection_profile()
             if profile is not None and profile.is_wlan_connection_profile:
                 details = profile.wlan_connection_profile_details
                 if details is not None:
-                    return str(details.get_connected_ssid() or "")
+                    ssid = str(details.get_connected_ssid() or "")
         except Exception:
             logger.debug("Reading connected SSID via WinRT failed", exc_info=True)
-        # 没有 Internet 连接时 WinRT 可能拿不到 profile，退回 netsh。
-        _code, output = self._netsh("wlan", "show", "interfaces")
-        for line in output.splitlines():
-            if ":" not in line:
-                continue
-            key, value = line.split(":", 1)
-            if key.strip().upper() == "SSID":
-                return value.strip()
-        return ""
+
+        if not ssid:
+            # 没有 Internet 连接（或走的是有线）时 WinRT 拿不到 WLAN profile。
+            _code, output = self._netsh("wlan", "show", "interfaces")
+            for line in output.splitlines():
+                if ":" not in line:
+                    continue
+                key, value = line.split(":", 1)
+                if key.strip().upper() == "SSID":
+                    ssid = value.strip()
+                    break
+
+        self._ssid_cache = ssid
+        self._ssid_checked_at = now
+        return ssid
 
     def _saved_auto_profile(self) -> str:
         """第一个「自动连接」的已保存 Wi-Fi 配置名。"""
@@ -386,20 +403,43 @@ class SystemControls(QObject):
                 logger.warning("Reading the Wi-Fi radio state failed", exc_info=True)
                 self._wifi_radio = None
                 self._wifi_scanned_at = 0.0
-        self._wifiStateReady.emit(available, enabled, self._connected_wifi_ssid())
+        # 刚打开 Wi-Fi 的那一拍强制精确读一次，之后交给缓存，别每 2 秒起 netsh。
+        precise = enabled and not self._last_poll_wifi_on
+        ssid = self._connected_wifi_ssid(precise=precise) if enabled else ""
+        self._last_poll_wifi_on = enabled
+        self._wifiStateReady.emit(available, enabled, ssid)
 
         manager = self._tethering_manager()
-        hotspot_available = manager is not None
+        hotspot_available = manager is not None and radio is not None
         hotspot_enabled = False
         if manager is not None:
             try:
-                hotspot_enabled = (
-                    manager.tethering_operational_state == TetheringOperationalState.ON)
+                state = manager.tethering_operational_state
+                if state == TetheringOperationalState.UNKNOWN:
+                    # manager 绑定的连接已经失效，下一次重新创建。
+                    self._hotspot_manager = None
+                    self._hotspot_profile_id = ""
+                    hotspot_available = False
+                else:
+                    hotspot_enabled = state == TetheringOperationalState.ON
             except Exception:
                 logger.warning("Reading the hotspot state failed", exc_info=True)
                 self._hotspot_manager = None
+                self._hotspot_profile_id = ""
                 hotspot_available = False
         self._hotspotStateReady.emit(hotspot_available, hotspot_enabled)
+
+    def _wait_radio_state(self, radio: Any, target: Any, timeout: float = 5.0) -> bool:
+        """等网卡真正切到目标状态；系统异步切换时状态不会立刻变。"""
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            try:
+                if radio.state == target:
+                    return True
+            except Exception:
+                return False
+            time.sleep(0.25)
+        return False
 
     def _winrt_toggle_wifi(self) -> None:
         """切 Wi-Fi；只在 WinRT 工作线程里调用。"""
@@ -410,6 +450,7 @@ class SystemControls(QObject):
             return
         ok = False
         message = ""
+        turn_on = False
         try:
             turn_on = radio.state != RadioState.ON
             target = RadioState.ON if turn_on else RadioState.OFF
@@ -417,6 +458,9 @@ class SystemControls(QObject):
             ok = status == RadioAccessStatus.ALLOWED
             if not ok:
                 message = f"系统拒绝了 Wi-Fi 开关操作（{status}）"
+            elif not self._wait_radio_state(radio, target):
+                ok = False
+                message = "Wi-Fi 状态没有在预期时间内切换，请稍后重试"
         except Exception as exc:
             logger.exception("Toggling the Wi-Fi radio failed")
             message = f"Wi-Fi 开关失败：{exc}"
@@ -477,22 +521,56 @@ class SystemControls(QObject):
         return HOTSPOT_PASSWORD
 
     def _tethering_manager(self) -> Any:
-        """只在 WinRT 工作线程里调用。"""
+        """只在 WinRT 工作线程里调用。
+
+        manager 是绑定在「当前 Internet 连接」上的，换了网络（有线 ↔ Wi-Fi）就得
+        重新创建；用连接名做标识，profile 变了就重建。
+        """
         if not _WINRT_AVAILABLE:
             return None
-        if self._hotspot_manager is not None:
-            return self._hotspot_manager
         try:
             profile = NetworkInformation.get_internet_connection_profile()
             if profile is None:
                 # 没有联网时 Windows 也拿不到可共享的连接配置。
+                self._hotspot_manager = None
+                self._hotspot_profile_id = ""
                 return None
-            self._hotspot_manager = (
-                NetworkOperatorTetheringManager.create_from_connection_profile(profile))
+            profile_id = str(getattr(profile, "connection_profile_name", "") or "")
+            if self._hotspot_manager is not None and profile_id == self._hotspot_profile_id:
+                return self._hotspot_manager
+            manager = NetworkOperatorTetheringManager.create_from_connection_profile(profile)
+            if manager is None:
+                logger.info("Mobile hotspot manager is unavailable for profile %r", profile_id)
+                self._hotspot_manager = None
+                self._hotspot_profile_id = ""
+                return None
+            self._hotspot_manager = manager
+            self._hotspot_profile_id = profile_id
         except Exception:
             logger.warning("Mobile hotspot is not available", exc_info=True)
             self._hotspot_manager = None
+            self._hotspot_profile_id = ""
         return self._hotspot_manager
+
+    def _ensure_wifi_for_hotspot(self) -> tuple[bool, str]:
+        """开热点前确保 Wi-Fi 网卡是开的；Windows 的移动热点靠它广播。"""
+        radio = self._radio()
+        if radio is None:
+            return False, "开启热点需要 Wi-Fi 网卡，当前没有检测到"
+        try:
+            if radio.state == RadioState.ON:
+                return True, ""
+            if radio.state != RadioState.OFF:
+                return False, "Wi-Fi 网卡当前不可用，无法开启热点"
+            status = radio.set_state_async(RadioState.ON).get()
+            if status != RadioAccessStatus.ALLOWED:
+                return False, f"开启热点前无法打开 Wi-Fi（{status}）"
+        except Exception as exc:
+            logger.exception("Turning Wi-Fi on for the hotspot failed")
+            return False, f"开启热点前无法打开 Wi-Fi：{exc}"
+        if not self._wait_radio_state(radio, RadioState.ON):
+            return False, "Wi-Fi 没有在预期时间内打开，热点未启动"
+        return True, ""
 
     def _winrt_toggle_hotspot(self) -> None:
         manager = self._tethering_manager()
@@ -507,6 +585,11 @@ class SystemControls(QObject):
             turn_on = (
                 manager.tethering_operational_state != TetheringOperationalState.ON)
             if turn_on:
+                ready, ready_message = self._ensure_wifi_for_hotspot()
+                if not ready:
+                    self._hotspotFinished.emit(False, ready_message)
+                    self._winrt_poll()
+                    return
                 configured, config_message = self._configure_hotspot(manager)
                 if not configured:
                     self._hotspotFinished.emit(False, config_message)
@@ -515,20 +598,35 @@ class SystemControls(QObject):
             operation = (manager.start_tethering_async() if turn_on
                          else manager.stop_tethering_async())
             result = operation.get()
-            status = result.status
-            ok = status == TetheringOperationStatus.SUCCESS
+            status = getattr(result, "status", None)
+            ok = status in (TetheringOperationStatus.SUCCESS,)
+            if turn_on and status == TetheringOperationStatus.ALREADY_ON:
+                ok = True
             if not ok:
-                detail = result.additional_error_message or ""
+                detail = getattr(result, "additional_error_message", "") or ""
                 message = detail or f"移动热点操作失败（{status}）"
         except Exception as exc:
             logger.exception("Toggling the mobile hotspot failed")
             message = f"移动热点操作失败：{exc}"
-        if not ok:
+        if ok:
+            # 系统是异步切换的，等状态落到目标值再回报，界面不会「刚开完又弹回去」。
+            state = (TetheringOperationalState.ON if turn_on
+                     else TetheringOperationalState.OFF)
+            deadline = time.monotonic() + 5.0
+            while time.monotonic() < deadline:
+                try:
+                    if manager.tethering_operational_state == state:
+                        break
+                except Exception:
+                    break
+                time.sleep(0.25)
+            if turn_on:
+                self.notify.emit(
+                    f"热点已开启：{HOTSPOT_SSID}，密码 {HOTSPOT_PASSWORD}", "success")
+        else:
             # 下次重新根据当前网络连接创建 manager。
             self._hotspot_manager = None
-        elif turn_on:
-            self.notify.emit(
-                f"热点已开启：{HOTSPOT_SSID}，密码 {HOTSPOT_PASSWORD}", "success")
+            self._hotspot_profile_id = ""
         self._hotspotFinished.emit(ok, message)
         self._winrt_poll()
 
@@ -542,11 +640,15 @@ class SystemControls(QObject):
                 configuration.authentication_kind = TetheringWiFiAuthenticationKind.WPA2
             except Exception:
                 logger.debug("WPA2 hotspot auth is not supported", exc_info=True)
-            result = manager.configure_access_point_async(configuration).get()
-            status = result.status
-            if status != TetheringOperationStatus.SUCCESS:
-                detail = getattr(result, "additional_error_message", "") or ""
-                return False, detail or f"移动热点配置失败（{status}）"
+            # ConfigureAccessPointAsync 是 IAsyncAction（没有 result 负载）：
+            # 直接 get() 等完成即可。旧代码把它当 operation result 读 .status，
+            # pywinrt 返回 None，于是点热点就弹 “NoneType has no attribute status”。
+            manager.configure_access_point_async(configuration).get()
+            current = manager.get_current_access_point_configuration()
+            if str(getattr(current, "ssid", "") or "") != HOTSPOT_SSID:
+                return False, (
+                    "移动热点配置没有生效（当前 SSID："
+                    f"{getattr(current, 'ssid', '') or '空'}）")
         except Exception as exc:
             logger.exception("Configuring the mobile hotspot failed")
             return False, f"移动热点配置失败：{exc}"

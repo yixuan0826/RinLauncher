@@ -16,8 +16,6 @@ import sys
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_ACCENT = "#0078D4"
-
 # (注册表键, 值名, 字节序)
 _ACCENT_SOURCES: tuple[tuple[str, str, str], ...] = (
     (r"Software\Microsoft\Windows\DWM", "AccentColor", "abgr"),

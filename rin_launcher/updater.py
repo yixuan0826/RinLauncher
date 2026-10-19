@@ -41,7 +41,6 @@ USER_AGENT = f"RinLauncher/{APP_VERSION}"
 STATE_IDLE = "idle"
 STATE_CHECKING = "checking"
 STATE_UP_TO_DATE = "up-to-date"
-STATE_AVAILABLE = "available"
 STATE_DOWNLOADING = "downloading"
 STATE_READY = "ready"
 STATE_INSTALLING = "installing"
@@ -76,7 +75,6 @@ _HEADING = re.compile(r"^(#{1,6})\s+(.+?)\s*#*\s*$")
 _BULLET = re.compile(r"^[-*+]\s+(.+)$")
 _ORDERED = re.compile(r"^(\d{1,3})[.)]\s+(.+)$")
 _RULE = re.compile(r"^(?:-{3,}|\*{3,}|_{3,})$")
-_FENCE = re.compile(r"^```")
 
 _INLINE_CODE = re.compile(r"`([^`\n]+)`")
 _LINK = re.compile(r"\[([^\]]+)\]\((https?://[^)\s]+)\)")
@@ -237,7 +235,6 @@ class UpdateManager(QObject):
         self._state = STATE_IDLE
         self._message = "尚未检查更新"
         self._latest_version = ""
-        self._release_notes = ""
         self._release_blocks: list[dict[str, Any]] = []
         self._release_url = ""
         self._download_url = ""
@@ -269,10 +266,6 @@ class UpdateManager(QObject):
     @Property(str, notify=changed)
     def latestVersion(self) -> str:
         return self._latest_version
-
-    @Property(str, notify=changed)
-    def releaseNotes(self) -> str:
-        return self._release_notes
 
     @Property("QVariantList", notify=changed)
     def releaseNoteBlocks(self) -> list[dict[str, Any]]:
@@ -412,7 +405,6 @@ class UpdateManager(QObject):
     def _apply_release(self, latest: str, notes: str, release_url: str) -> None:
         """Release 元数据：版本号、更新说明、页面地址。不触发下载。"""
         self._latest_version = latest
-        self._release_notes = notes
         self._release_blocks = parse_release_notes(notes)
         self._release_url = release_url
         self.changed.emit()
@@ -575,7 +567,6 @@ class UpdateManager(QObject):
         self._state = STATE_IDLE
         self._message = "尚未检查更新"
         self._latest_version = ""
-        self._release_notes = ""
         self._release_blocks = []
         self._release_url = ""
         self._download_url = ""
