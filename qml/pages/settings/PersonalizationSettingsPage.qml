@@ -11,6 +11,11 @@ Item {
 
     property var page
 
+    // 颜色选择器在组件构造阶段会从默认红色发出一次 colorChanged。
+    // 只有「已完成回填」且「用户真正打开过选择器」时才把它当成用户操作。
+    property bool accentReady: false
+    property bool accentUserEditing: false
+
     Flickable {
         id: flick
         anchors.fill: parent
@@ -43,6 +48,24 @@ Item {
                 }
 
                 FormRow {
+                    label: qsTr("跟随系统强调色")
+                    Switch {
+                        id: followAccentSwitch
+                        checkedText: qsTr("开")
+                        uncheckedText: qsTr("关")
+                        onCheckedChanged: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("accentColorMode",
+                                checked ? "system" : "custom")
+                            if (!checked) {
+                                // 取消跟随时把当前系统色存成自定义色，颜色不跳变。
+                                pageRoot.page.apply("accentColor", ConfigManager.accentColor)
+                            }
+                        }
+                    }
+                }
+
+                FormRow {
                     label: qsTr("强调色")
                     RowLayout {
                         spacing: 8
@@ -50,9 +73,13 @@ Item {
                         DropDownColorPicker {
                             id: accentPicker
                             Layout.preferredWidth: 150
+                            enabled: !followAccentSwitch.checked
+                            onClicked: pageRoot.accentUserEditing = true
                             onColorChanged: {
+                                if (!pageRoot.accentReady || !pageRoot.accentUserEditing) return
                                 if (!pageRoot.page || pageRoot.page.syncing) return
                                 pageRoot.page.apply("accentColor", color.toString())
+                                pageRoot.page.apply("accentColorMode", "custom")
                             }
                         }
 
@@ -101,8 +128,12 @@ Item {
     }
 
     function applyAccent(value) {
+        pageRoot.accentReady = false
+        pageRoot.accentUserEditing = false
         accentPicker.color = value
+        pageRoot.accentReady = true
         if (pageRoot.page) {
+            pageRoot.page.apply("accentColorMode", "custom")
             pageRoot.page.apply("accentColor", value)
         }
     }
@@ -119,11 +150,15 @@ Item {
 
     function reload() {
         var model = page.model
+        pageRoot.accentReady = false
+        pageRoot.accentUserEditing = false
         themeCombo.currentIndex = Math.max(0,
             ["system", "light", "dark"].indexOf(model.theme))
+        followAccentSwitch.checked = (model.accentColorMode || "custom") === "system"
         accentPicker.color = model.accentColor || "#0078d4"
         materialCombo.currentIndex = Math.max(0,
             ["tabbed", "mica", "none"].indexOf(model.material || "tabbed"))
         animationSwitch.checked = model.animationEnabled !== false
+        Qt.callLater(function () { pageRoot.accentReady = true })
     }
 }

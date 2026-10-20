@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_single_source():
     import rin_launcher.config_manager as cm
 
-    assert __version__ == "1.1.1"
+    assert __version__ == "1.1.2"
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__
 
@@ -53,6 +53,8 @@ def test_accent_color_is_persisted_and_signalled(qapp, tmp_path):
 
     first = ConfigManager(config_dir=tmp_path)
     try:
+        # 新配置默认跟随系统；测试固定到自定义模式再验证持久化。
+        first.updateSettings({"accentColorMode": "custom"})
         assert first.accentColor == "#0078d4"
         colours = []
         first.accentColorChanged.connect(colours.append)
@@ -64,6 +66,7 @@ def test_accent_color_is_persisted_and_signalled(qapp, tmp_path):
 
     second = ConfigManager(config_dir=tmp_path)
     try:
+        assert second.getSettings()["accentColorMode"] == "custom"
         assert second.accentColor == "#5175a1"
     finally:
         second.stopWatching()

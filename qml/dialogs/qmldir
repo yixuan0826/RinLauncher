@@ -2,3 +2,4 @@ AppDialog 1.0 AppDialog.qml
 ConfirmDialog 1.0 ConfirmDialog.qml
 IconPickerDialog 1.0 IconPickerDialog.qml
 SlotEditorDialog 1.0 SlotEditorDialog.qml
+StartMenuDialog 1.0 StartMenuDialog.qml

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
 import time
 import webbrowser
 from pathlib import Path
@@ -18,7 +20,9 @@ from rin_launcher.elevation import is_admin, run_elevated
 
 logger = logging.getLogger(__name__)
 
-_URL_SCHEMES = ("http://", "https://", "ftp://", "file://", "mailto:")
+# RFC 3986 的 scheme：http/https、mailto、classisland:// 都算合法。
+_SCHEME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9+.-]*:")
+_DRIVE_PATH_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 
 def _split_args(text: str) -> list[str]:
@@ -74,10 +78,12 @@ class ActionExecutor:
 
     def __init__(self, config_manager):
         self.config_manager = config_manager
+        self._keyboard_lock = threading.Lock()
         self._handlers = {
             "file": self._run_file,
             "cmd": self._run_cmd,
             "url": self._run_url,
+            "uwp": self._run_uwp,
             "keyboard": self._run_keyboard,
             # 旧配置里可能还留着 keymouse；按键模拟接手，鼠标步骤会被忽略。
             "keymouse": self._run_keyboard,
@@ -180,12 +186,51 @@ class ActionExecutor:
         url = self._expand(action.get("target"))
         if not url:
             return False
-        if not url.startswith(_URL_SCHEMES):
+        # 盘符路径走 file://；其余没有 scheme 的裸地址补 https://。
+        if _DRIVE_PATH_RE.match(url):
+            url = Path(url).as_uri()
+        elif not _SCHEME_RE.match(url):
             url = f"https://{url}"
+        # 普通网址继续交给默认浏览器；自定义协议交给 ShellExecute，
+        # 它才能找到注册过的 classisland:// 之类协议处理器。
+        if url.lower().startswith(("http://", "https://", "ftp://", "mailto:")):
+            try:
+                return webbrowser.open(url)
+            except Exception:
+                logger.exception("Failed to open %s", url)
+                return False
+        try:
+            if sys.platform == "win32":
+                os.startfile(url)
+                return True
+        except OSError:
+            logger.warning("No handler for %s, falling back to browser", url)
         try:
             return webbrowser.open(url)
         except Exception:
             logger.exception("Failed to open %s", url)
+            return False
+
+    def _run_uwp(self, action: dict[str, Any]) -> bool:
+        """启动 UWP / WSA 应用：target 是 AUMID。"""
+        aumid = self._expand(action.get("target")).strip()
+        if not aumid:
+            return False
+        target = f"shell:AppsFolder\\{aumid}"
+        try:
+            if sys.platform == "win32":
+                os.startfile(target)
+                return True
+        except OSError:
+            logger.warning("Direct AUMID activation failed, using explorer")
+        try:
+            subprocess.Popen(
+                ["explorer.exe", target],
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            return True
+        except OSError:
+            logger.exception("Failed to launch UWP app %s", aumid)
             return False
 
     def _run_keyboard(self, action: dict[str, Any]) -> bool:
@@ -206,22 +251,39 @@ class ActionExecutor:
             steps = action.get("keymouse_steps")  # 旧字段兜底
         controller = keyboard.Controller()
         pressed: list[Any] = []
+        # 总时长 + 10 秒看门狗：即使某次注入卡住，也不会把序列永远挂着。
+        total = 0.0
         for step in steps or []:
             try:
-                duration = max(0.0, float(step.get("duration") or 0))
+                total += max(0.0, float(step.get("duration") or 0))
             except (TypeError, ValueError):
-                duration = 0.0
-            if duration:
-                time.sleep(duration)
-            if step.get("type") == "key":
-                self._send_key(controller, step, pressed)
-            # wait 步骤：等待就是它本身，上面的 sleep 已经完成它的职责。
-        while pressed:
-            key = pressed.pop()
+                pass
+        deadline = time.monotonic() + total + 10.0
+        with self._keyboard_lock:
             try:
-                controller.release(key)
+                for step in steps or []:
+                    try:
+                        duration = max(0.0, float(step.get("duration") or 0))
+                    except (TypeError, ValueError):
+                        duration = 0.0
+                    if duration:
+                        time.sleep(duration)
+                    if time.monotonic() > deadline:
+                        logger.error("Keyboard sequence timed out; releasing held keys")
+                        return False
+                    if step.get("type") == "key":
+                        self._send_key(controller, step, pressed)
+                    # wait 步骤：等待就是它本身，上面的 sleep 已经完成它的职责。
             except Exception:
-                logger.warning("Failed to release key %r after the sequence", key)
+                logger.exception("Keyboard sequence failed")
+                return False
+            finally:
+                while pressed:
+                    key = pressed.pop()
+                    try:
+                        controller.release(key)
+                    except Exception:
+                        logger.warning("Failed to release key %r after the sequence", key)
         return True
 
     # ------------------------------------------------------------------

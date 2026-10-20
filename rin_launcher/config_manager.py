@@ -12,8 +12,10 @@ there is no separate snake_case layer).
 from __future__ import annotations
 
 import logging
+import os
 import shutil
 import sys
+import threading
 import time
 import uuid
 import weakref
@@ -27,6 +29,7 @@ from PySide6.QtCore import (
     QCoreApplication,
     QFileInfo,
     QObject,
+    Qt,
     QTimer,
     QUrl,
     Signal,
@@ -40,7 +43,7 @@ from watchdog.events import FileSystemEventHandler
 from watchdog.observers import Observer
 
 from rin_launcher import __version__ as APP_VERSION
-from rin_launcher import autostart
+from rin_launcher import autostart, start_menu
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
@@ -98,7 +101,7 @@ SLOT_KIND_LABELS: dict[str, str] = {
 }
 
 # 槽位不再引用任何外部条目：动作直接写在槽位里（内联）。
-ACTION_TYPES: tuple = ("file", "cmd", "url", "keyboard")
+ACTION_TYPES: tuple = ("file", "cmd", "url", "uwp", "keyboard")
 # 旧版「键鼠模拟」已降级为「按键模拟」：读到旧类型名就迁成 keyboard，
 # 旧字段 keymouse_steps 中的鼠标步骤直接跳过（执行端不再认识它）。
 LEGACY_ACTION_TYPES: dict[str, str] = {"keymouse": "keyboard"}
@@ -295,11 +298,15 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "material": "tabbed",
     "animationEnabled": True,
     "accentColor": "#0078d4",
+    # system = 跟随 Windows 强调色；custom = 使用 accentColor。
+    "accentColorMode": "system",
     "adminAutoElevate": True,
     "confirmAdminActions": True,
     "logLevel": "INFO",
     "updateChannel": "stable",
     "autoCheckUpdates": True,
+    "updateMirror": "github",
+    "updateMirrorAuto": True,
 }
 
 
@@ -414,6 +421,8 @@ def _derive_action_name(action: dict[str, Any]) -> str:
     kind = action.get("type")
     if kind == "keyboard":
         return "按键动作"
+    if kind == "uwp":
+        return "UWP 应用"
     target = str(action.get("target") or "").strip().strip('"')
     if not target:
         return "未配置动作"
@@ -524,6 +533,16 @@ class ConfigManager(QObject):
         self._backup_timer.timeout.connect(self._maybe_auto_backup)
         self._backup_timer.start()
 
+        # 跟随系统强调色：注册表读取很轻，几秒一次就够；变化时通知所有窗口。
+        self._last_system_accent = (
+            read_system_accent_color()
+            if self._config["settings"].get("accentColorMode") == "system" else "")
+        self._accent_timer = QTimer(self)
+        self._accent_timer.setInterval(6000)
+        self._accent_timer.setTimerType(Qt.CoarseTimer)
+        self._accent_timer.timeout.connect(self._poll_system_accent)
+        self._accent_timer.start()
+
     @property
     def config(self) -> dict[str, Any]:
         return self._config
@@ -583,6 +602,16 @@ class ConfigManager(QObject):
         settings = {key: value for key, value in raw_settings.items()
                     if key in DEFAULT_SETTINGS}
         settings = {**DEFAULT_SETTINGS, **settings}
+        # 强调色模式：旧配置没有这个键。旧版颜色选择器的默认可写回红色，
+        # 读到 #ff0000 且没有显式模式时视为被写坏，迁到「跟随系统」。
+        raw_mode = str(raw_settings.get("accentColorMode") or "").strip()
+        if raw_mode not in ("system", "custom"):
+            legacy_accent = str(raw_settings.get("accentColor") or "").lower()
+            raw_mode = "system" if legacy_accent in ("", "#ff0000") else "custom"
+        settings["accentColorMode"] = raw_mode
+        if settings.get("updateMirror") not in ("github", "ghfast", "ghproxy"):
+            settings["updateMirror"] = "github"
+        settings["updateMirrorAuto"] = bool(settings.get("updateMirrorAuto", True))
         # 旧版「开机自动启动」布尔值迁进三态启动方式（关闭 / 登录时启动 / 管理员自启动）。
         if "startupMode" not in raw_settings and raw_settings.get("autoStart"):
             settings["startupMode"] = "normal"
@@ -836,8 +865,13 @@ class ConfigManager(QObject):
 
     @Property(str, notify=accentColorChanged)
     def accentColor(self) -> str:
-        """当前强调色（``#RRGGBB``），启动与跨窗口同步都读这里。"""
-        value = str(self._config["settings"].get("accentColor") or "")
+        """当前强调色（``#RRGGBB``）；跟随系统时实时读 Windows 设置。"""
+        settings = self._config["settings"]
+        if settings.get("accentColorMode", "custom") == "system":
+            system = read_system_accent_color()
+            if system:
+                return system
+        value = str(settings.get("accentColor") or "")
         return value or str(DEFAULT_SETTINGS["accentColor"])
 
     # ── 启动台槽位 ────────────────────────────────────────────────────
@@ -1315,6 +1349,7 @@ class ConfigManager(QObject):
         settings = dict(settings)
         previous = self._config["settings"]
         old_accent = str(previous.get("accentColor") or "")
+        old_mode = str(previous.get("accentColorMode") or "")
 
         # 启动方式不走这里：三态切换要碰注册表 / 任务计划，走 setStartupMode()。
         settings.pop("autoStart", None)
@@ -1330,9 +1365,24 @@ class ConfigManager(QObject):
                 self.trayEnabledChanged.emit(bool(previous["showTray"]))
             if "material" in settings:
                 self.materialChanged.emit(str(previous["material"]))
-            if "accentColor" in settings and self.accentColor != old_accent:
+            mode_changed = ("accentColorMode" in settings
+                            and self._config["settings"].get("accentColorMode") != old_mode)
+            if mode_changed or ("accentColor" in settings
+                                and self.accentColor != old_accent):
+                if self._config["settings"].get("accentColorMode") == "system":
+                    self._last_system_accent = read_system_accent_color()
                 self.accentColorChanged.emit(self.accentColor)
         return saved
+
+    @Slot(bool)
+    def _poll_system_accent(self) -> None:
+        """只在跟随系统时读注册表；颜色变了就通知界面。"""
+        if self._config["settings"].get("accentColorMode", "custom") != "system":
+            return
+        color = read_system_accent_color()
+        if color and color != self._last_system_accent:
+            self._last_system_accent = color
+            self.accentColorChanged.emit(color)
 
     # ── 启动方式（关闭 / 登录时启动 / 管理员自启动）─────────────────
     @Slot(str, result="QVariantMap")
@@ -1485,6 +1535,22 @@ class ConfigManager(QObject):
         self._config["settings"]["autoCheckUpdates"] = enabled
         return self.save(changed="settings")
 
+    @Slot(str, result=bool)
+    def setUpdateMirror(self, mirror: str) -> bool:
+        mirror = mirror if mirror in ("github", "ghfast", "ghproxy") else "github"
+        if self._config["settings"].get("updateMirror") == mirror:
+            return True
+        self._config["settings"]["updateMirror"] = mirror
+        return self.save(changed="settings")
+
+    @Slot(bool, result=bool)
+    def setUpdateMirrorAuto(self, enabled: bool) -> bool:
+        enabled = bool(enabled)
+        if bool(self._config["settings"].get("updateMirrorAuto", True)) == enabled:
+            return True
+        self._config["settings"]["updateMirrorAuto"] = enabled
+        return self.save(changed="settings")
+
     @Slot(result=bool)
     def importConfig(self) -> bool:
         path, _ = QFileDialog.getOpenFileName(
@@ -1503,15 +1569,79 @@ class ConfigManager(QObject):
         path, _ = QFileDialog.getOpenFileName(None, "选择文件或程序", str(Path.home()))
         return path or ""
 
+    @Slot(result=str)
+    def pickShortcut(self) -> str:
+        """挑一个开始菜单快捷方式（.lnk）。"""
+        start = str(Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows"
+                    / "Start Menu" / "Programs")
+        path, _ = QFileDialog.getOpenFileName(
+            None, "选择快捷方式", start, "快捷方式 (*.lnk);;所有文件 (*)")
+        return path or ""
+
+    @Slot(result="QVariantList")
+    def listStartMenuApps(self) -> list[dict]:
+        """开始菜单里的传统应用 / UWP·WSA / WSL 发行版。"""
+        return start_menu.list_start_menu_apps()
+
+    @Slot(str, result="QVariantMap")
+    def parseShortcut(self, path: str) -> dict:
+        app = start_menu.parse_shortcut(path)
+        return dict(app) if app else {}
+
+    @Slot("QVariantMap", int, result=bool)
+    def addAppSlot(self, app: dict, row: int) -> bool:
+        """把开始菜单条目直接建成一格；传统应用顺手抽取图标。"""
+        kind = str(app.get("kind") or "lnk")
+        name = str(app.get("name") or "").strip()
+        target = str(app.get("target") or "").strip()
+        if not target:
+            return False
+        if kind == "uwp":
+            action = {"type": "uwp", "target": target, "arguments": "",
+                      "working_dir": "", "run_as": "user", "keyboard_steps": []}
+        elif kind == "wsl":
+            action = {"type": "cmd", "target": target,
+                      "arguments": str(app.get("arguments") or ""),
+                      "working_dir": "", "run_as": "user", "keyboard_steps": []}
+        else:
+            action = {"type": "file", "target": target,
+                      "arguments": str(app.get("arguments") or ""),
+                      "working_dir": str(app.get("working_dir") or ""),
+                      "run_as": "user", "keyboard_steps": []}
+        icon = ""
+        if kind == "lnk":
+            icon = self._extract_icon_file(target, notify=False)
+        payload = {"kind": SLOT_ACTION, "label": name, "icon": icon, "action": action}
+        return self.addLauncherSlot(int(row), payload)
+
     @Slot("QVariantMap")
     def executeAction(self, action: dict) -> None:
         name = action.get("name", "")
         if self.action_executor is None:
             self.showToast.emit("动作执行器未初始化", "error")
-        elif self.action_executor.execute(dict(action)):
+            return
+        # 键盘回放可能包含延时和系统注入；放后台线程，界面不跟着卡。
+        if action.get("type") in ("keyboard", "keymouse"):
+            self.showToast.emit(f"按键序列已开始: {name}", "info")
+            threading.Thread(
+                target=self._execute_action_worker,
+                args=(dict(action), name), name="rin-keyboard-action", daemon=True,
+            ).start()
+            return
+        if self.action_executor.execute(dict(action)):
             self.showToast.emit(f"已执行: {name}", "success")
         else:
             self.showToast.emit(f"执行失败: {name}", "error")
+
+    def _execute_action_worker(self, action: dict, name: str) -> None:
+        try:
+            ok = self.action_executor.execute(action) if self.action_executor else False
+        except Exception:
+            logger.exception("Background action failed")
+            ok = False
+        self.showToast.emit(
+            f"已执行: {name}" if ok else f"执行失败: {name}",
+            "success" if ok else "error")
 
     @Slot("QVariantMap", result=bool)
     def runLauncherSlot(self, slot: dict) -> bool:

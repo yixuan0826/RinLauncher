@@ -34,6 +34,17 @@ def test_bogus_startup_mode_falls_back_to_off(qapp, tmp_path):
     assert manager.config["settings"]["startupMode"] == "off"
 
 
+def test_legacy_red_accent_migrates_to_system(qapp, tmp_path):
+    """旧颜色选择器把默认红色写进配置；读到它时切到跟随系统。"""
+    manager = _load_with(tmp_path, "settings:\n  accentColor: '#ff0000'\n")
+    assert manager.config["settings"]["accentColorMode"] == "system"
+
+
+def test_custom_accent_stays_custom(qapp, tmp_path):
+    manager = _load_with(tmp_path, "settings:\n  accentColor: '#123456'\n")
+    assert manager.config["settings"]["accentColorMode"] == "custom"
+
+
 def test_unknown_settings_keys_are_dropped(qapp, tmp_path):
     """已下线的设置键不再跟着配置走：读入时丢掉，并写回干净的文件。"""
     manager = _load_with(

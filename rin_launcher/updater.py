@@ -23,10 +23,12 @@ import time
 import urllib.error
 import urllib.request
 import zipfile
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtCore import Property, QCoreApplication, QObject, QTimer, Signal, Slot
+from PySide6.QtWidgets import QFileDialog
 
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher.config_manager import ConfigManager
@@ -37,6 +39,17 @@ REPO = "yixuan0826/RinLauncher"
 API_ROOT = f"https://api.github.com/repos/{REPO}/releases"
 ASSET_NAME = "rinlauncher.zip"
 USER_AGENT = f"RinLauncher/{APP_VERSION}"
+
+MIRRORS: dict[str, str] = {
+    "ghfast": "https://ghfast.top/",
+    "ghproxy": "https://ghproxy.net/",
+}
+MIRROR_LABELS = {"github": "GitHub", "ghfast": "ghfast", "ghproxy": "ghproxy"}
+SPEED_URLS = {
+    "github": f"https://api.github.com/repos/{REPO}/releases/latest",
+    "ghfast": f"https://ghfast.top/https://raw.githubusercontent.com/{REPO}/main/README.md",
+    "ghproxy": f"https://ghproxy.net/https://raw.githubusercontent.com/{REPO}/main/README.md",
+}
 
 STATE_IDLE = "idle"
 STATE_CHECKING = "checking"
@@ -228,6 +241,7 @@ class UpdateManager(QObject):
     _downloadStart = Signal(str, str, str)
     _progressReady = Signal(float)
     _downloadFinished = Signal(bool, str)
+    _speedReady = Signal(list)
 
     def __init__(self, config_manager: ConfigManager, parent: QObject | None = None):
         super().__init__(parent)
@@ -241,12 +255,15 @@ class UpdateManager(QObject):
         self._progress = 0.0
         self._silent = False
         self._thread: threading.Thread | None = None
+        self._mirror_speeds: list[dict[str, Any]] = []
+        self._speed_testing = False
 
         self._stateReady.connect(self._apply_state)
         self._releaseReady.connect(self._apply_release)
         self._downloadStart.connect(self._apply_download_start)
         self._progressReady.connect(self._apply_progress)
         self._downloadFinished.connect(self._apply_download)
+        self._speedReady.connect(self._apply_speed_results)
 
     # ------------------------------------------------------------------
     # QML 属性
@@ -296,6 +313,23 @@ class UpdateManager(QObject):
     def autoCheck(self) -> bool:
         return bool(self._config.config["settings"].get("autoCheckUpdates", True))
 
+    @Property(str, notify=changed)
+    def mirror(self) -> str:
+        value = str(self._config.config["settings"].get("updateMirror", "github"))
+        return value if value in MIRROR_LABELS else "github"
+
+    @Property(bool, notify=changed)
+    def mirrorAuto(self) -> bool:
+        return bool(self._config.config["settings"].get("updateMirrorAuto", True))
+
+    @Property("QVariantList", notify=changed)
+    def mirrorSpeeds(self) -> list[dict[str, Any]]:
+        return self._mirror_speeds
+
+    @Property(bool, notify=changed)
+    def speedTesting(self) -> bool:
+        return self._speed_testing
+
     @Slot(str)
     def setChannel(self, channel: str) -> None:
         self._config.setUpdateChannel(channel)
@@ -305,6 +339,66 @@ class UpdateManager(QObject):
     @Slot(bool)
     def setAutoCheck(self, enabled: bool) -> None:
         self._config.setAutoCheckUpdates(enabled)
+        self.changed.emit()
+
+    @Slot(str)
+    def setMirror(self, mirror: str) -> None:
+        self._config.setUpdateMirror(mirror)
+        self.changed.emit()
+
+    @Slot(bool)
+    def setMirrorAuto(self, enabled: bool) -> None:
+        self._config.setUpdateMirrorAuto(enabled)
+        self.changed.emit()
+
+    def _mirror_url(self, url: str) -> str:
+        base = MIRRORS.get(self.mirror)
+        return f"{base.rstrip('/')}/{url}" if base else url
+
+    @Slot()
+    def testMirrors(self) -> None:
+        """并行测速三个下载源；自动模式会切到最快且可用的那个。"""
+        if self._speed_testing:
+            return
+        self._speed_testing = True
+        self.changed.emit()
+        threading.Thread(target=self._speed_worker, name="rin-mirror-speed",
+                         daemon=True).start()
+
+    @staticmethod
+    def _measure(url: str) -> int:
+        started = time.monotonic()
+        request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+        with urllib.request.urlopen(request, timeout=6) as response:
+            response.read(4096)
+        return int((time.monotonic() - started) * 1000)
+
+    def _speed_worker(self) -> None:
+        results: list[dict[str, Any]] = []
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            futures = {
+                pool.submit(self._measure, url): name
+                for name, url in SPEED_URLS.items()
+            }
+            for future, name in futures.items():
+                try:
+                    ms = future.result()
+                    results.append({"name": name, "label": MIRROR_LABELS[name],
+                                    "ms": ms, "ok": True})
+                except Exception:
+                    results.append({"name": name, "label": MIRROR_LABELS[name],
+                                    "ms": -1, "ok": False})
+        order = {name: index for index, name in enumerate(MIRROR_LABELS)}
+        results.sort(key=lambda item: order.get(item["name"], 99))
+        self._speedReady.emit(results)
+
+    def _apply_speed_results(self, results: list[dict[str, Any]]) -> None:
+        self._mirror_speeds = results
+        self._speed_testing = False
+        best = min((item for item in results if item.get("ok")),
+                   key=lambda item: item["ms"], default=None)
+        if best is not None and self.mirrorAuto:
+            self._config.setUpdateMirror(best["name"])
         self.changed.emit()
 
     # ------------------------------------------------------------------
@@ -331,7 +425,7 @@ class UpdateManager(QObject):
             target=self._check_worker, name="rin-update-check", daemon=True)
         self._thread.start()
 
-    def _api_request(self, url: str) -> Any:
+    def _api_request(self, url: str, timeout: float = 8.0) -> Any:
         request = urllib.request.Request(
             url,
             headers={
@@ -339,13 +433,28 @@ class UpdateManager(QObject):
                 "Accept": "application/vnd.github+json",
             },
         )
-        with urllib.request.urlopen(request, timeout=20) as response:
+        with urllib.request.urlopen(request, timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8"))
+
+    def _api_get(self, path: str) -> Any:
+        """先直连；镜像模式下再试一次镜像前缀（是否支持 API 取决于镜像）。"""
+        sources = [path]
+        if self.mirror != "github":
+            sources.append(self._mirror_url(path))
+        last_error: Exception | None = None
+        for index, url in enumerate(sources):
+            try:
+                return self._api_request(url, 8.0 if index == 0 else 15.0)
+            except Exception as exc:
+                last_error = exc
+        if last_error is not None:
+            raise last_error
+        return None
 
     def _check_worker(self) -> None:
         try:
             if self.channel == "prerelease":
-                releases = self._api_request(f"{API_ROOT}?per_page=30")
+                releases = self._api_get(f"{API_ROOT}?per_page=30")
                 release = next(
                     (item for item in releases
                      if item.get("prerelease") and not item.get("draft")),
@@ -356,7 +465,7 @@ class UpdateManager(QObject):
                         STATE_UP_TO_DATE, "测试通道暂时没有预发布版本")
                     return
             else:
-                release = self._api_request(f"{API_ROOT}/latest")
+                release = self._api_get(f"{API_ROOT}/latest")
 
             tag = str(release.get("tag_name") or "")
             latest = tag.lstrip("vV")
@@ -391,8 +500,9 @@ class UpdateManager(QObject):
                 return
 
             digest = str(asset.get("digest") or "")
+            download_url = str(asset.get("browser_download_url") or "")
             self._downloadStart.emit(
-                str(asset.get("browser_download_url") or ""), latest, digest)
+                self._mirror_url(download_url) if download_url else "", latest, digest)
         except urllib.error.HTTPError as exc:
             self._stateReady.emit(STATE_ERROR, f"检查更新失败：HTTP {exc.code}")
         except Exception as exc:
@@ -490,7 +600,27 @@ class UpdateManager(QObject):
         if not archive.is_file():
             self.notify.emit("更新包不存在，请重新检查更新", "error")
             return
+        self._install_archive(archive)
+
+    @Slot()
+    def installFromFile(self) -> None:
+        """离线更新：用户自己下载的 RinLauncher.zip。"""
+        if not getattr(sys, "frozen", False):
+            self.notify.emit("源码模式不支持安装更新", "warning")
+            return
+        folder = self._config.config_dir / "updates"
+        folder.mkdir(parents=True, exist_ok=True)
+        path, _ = QFileDialog.getOpenFileName(
+            None, "选择更新包", str(folder), "更新包 (*.zip);;所有文件 (*)")
+        if path:
+            self._install_archive(Path(path))
+
+    def _install_archive(self, archive: Path) -> None:
+        """校验并安装一个 zip；在线下载与离线选择共用这一条路径。"""
         try:
+            if not archive.is_file() or archive.stat().st_size == 0:
+                self.notify.emit("更新包不存在或为空", "error")
+                return
             staging = self._config.config_dir / "updates" / f"staging-{int(time.time())}"
             with zipfile.ZipFile(archive) as bundle:
                 # 防 Zip Slip：所有条目必须落在 staging 目录内。

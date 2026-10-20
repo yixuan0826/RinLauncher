@@ -10,22 +10,19 @@ from rin_launcher import ime
 class _FakeUser32:
     """记录 SendInput 的输入事件，并提供布局查询。"""
 
-    def __init__(self, layout=0x0804, foreground=1, delivered=None):
-        self.layout = layout
-        self.foreground = foreground
+    def __init__(self, layout=0x0804, layouts=None, delivered=None):
+        self.layouts = list(layouts) if layouts is not None else [layout]
         self.delivered = delivered
         self.count = 0
         self.size = 0
         self.events: list[tuple] = []
 
-    def GetForegroundWindow(self):
-        return self.foreground
-
-    def GetWindowThreadProcessId(self, _hwnd, _pointer):
-        return 7
-
-    def GetKeyboardLayout(self, _thread):
-        return self.layout
+    def GetKeyboardLayoutList(self, count, pointer):
+        if count <= 0:
+            return len(self.layouts)
+        for index in range(min(count, len(self.layouts))):
+            pointer[index] = self.layouts[index]
+        return min(count, len(self.layouts))
 
     def SendInput(self, count, events, size):
         self.count = count
@@ -37,6 +34,9 @@ class _FakeUser32:
 def _install(monkeypatch, user32):
     monkeypatch.setattr(ime, "_user32", user32)
     monkeypatch.setattr(ime, "available", lambda: True)
+    # 布局检测有 1 秒缓存；测试里每次重置。
+    monkeypatch.setattr(ime, "_layout_checked_at", 0.0)
+    monkeypatch.setattr(ime, "_layout_active", False)
     return user32
 
 
@@ -93,8 +93,8 @@ def test_latin_layout_is_not_treated_as_ime(monkeypatch):
     assert ime.east_asian_ime_active() is False
 
 
-def test_no_foreground_window_means_no_ime(monkeypatch):
-    _install(monkeypatch, _FakeUser32(foreground=0))
+def test_no_layouts_means_no_ime(monkeypatch):
+    _install(monkeypatch, _FakeUser32(layouts=[]))
 
     assert ime.east_asian_ime_active() is False
 

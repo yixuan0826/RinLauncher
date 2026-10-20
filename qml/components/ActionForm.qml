@@ -16,7 +16,7 @@ ColumnLayout {
     property string actionType: "file"
     property var steps: []
 
-    readonly property var typeKeys: ["file", "cmd", "url", "keyboard"]
+    readonly property var typeKeys: ["file", "cmd", "url", "uwp", "keyboard"]
 
     Layout.fillWidth: true
     spacing: 10
@@ -86,7 +86,8 @@ ColumnLayout {
         var hints = [
             qsTr("选择文件或程序，例如 notepad.exe"),
             qsTr("命令行，例如 ping"),
-            qsTr("网址，例如 https://example.com"),
+            qsTr("网址或协议链接，例如 https://… / classisland://…"),
+            qsTr("AUMID，例如 Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"),
             qsTr("在下面的「按键序列」里配置")
         ]
         var index = typeKeys.indexOf(actionType)
@@ -102,7 +103,8 @@ ColumnLayout {
             id: typeCombo
             objectName: "actionTypeCombo"
             Layout.preferredWidth: 200
-            model: [qsTr("文件 / 程序"), qsTr("命令行"), qsTr("网址"), qsTr("按键模拟")]
+            model: [qsTr("文件 / 程序"), qsTr("命令行"), qsTr("网址"),
+                    qsTr("UWP / WSA 应用"), qsTr("按键模拟")]
             // 只在用户真的选了才动状态：程序回填 currentIndex 会触发
             // currentIndexChanged，用 activated 才能把「读配置」和「改配置」分开。
             onActivated: function (index) {
@@ -197,7 +199,9 @@ ColumnLayout {
         wrapMode: Text.Wrap
         typography: Typography.Caption
         color: Theme.currentTheme.colors.textSecondaryColor
-        text: qsTr("目标支持 {configdir}、{homedir}、{desktop}、{documents}、{downloads} "
+        text: form.actionType === "url"
+            ? qsTr("支持 http(s)、mailto 以及 ClassIsland 等自定义协议（如 classisland://）。")
+            : qsTr("目标支持 {configdir}、{homedir}、{desktop}、{documents}、{downloads} "
                    + "等占位符，以及 %ENV% 环境变量。")
     }
 }

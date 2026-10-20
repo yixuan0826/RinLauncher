@@ -11,6 +11,12 @@ Item {
 
     property var page
 
+    readonly property var mirrorNames: ["github", "ghfast", "ghproxy"]
+    readonly property var speedResults: pageRoot.page && pageRoot.page.updater
+        ? pageRoot.page.updater.mirrorSpeeds : []
+    readonly property bool speedTesting: pageRoot.page && pageRoot.page.updater
+        ? pageRoot.page.updater.speedTesting : false
+
     Flickable {
         id: flick
         objectName: "updateSettingsFlick"
@@ -54,6 +60,91 @@ Item {
                             if (!pageRoot.page || pageRoot.page.syncing) return
                             if (!pageRoot.page.updater) return
                             pageRoot.page.updater.setAutoCheck(checked)
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("更新源")
+                    ComboBox {
+                        id: mirrorCombo
+                        Layout.preferredWidth: 160
+                        model: ["GitHub", "ghfast", "ghproxy"]
+                        onActivated: function (index) {
+                            if (!pageRoot.page || !pageRoot.page.updater) return
+                            pageRoot.page.updater.setMirror(pageRoot.mirrorNames[index])
+                        }
+                    }
+                    Button {
+                        text: pageRoot.speedTesting ? qsTr("测速中…") : qsTr("测速并自动选择")
+                        icon.name: "ic_fluent_flash_20_regular"
+                        enabled: !pageRoot.speedTesting
+                        onClicked: {
+                            if (pageRoot.page && pageRoot.page.updater) {
+                                pageRoot.page.updater.testMirrors()
+                            }
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("自动选择最快")
+                    Switch {
+                        id: mirrorAutoSwitch
+                        checkedText: qsTr("开")
+                        uncheckedText: qsTr("关")
+                        onCheckedChanged: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            if (!pageRoot.page.updater) return
+                            pageRoot.page.updater.setMirrorAuto(checked)
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("测速结果")
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        spacing: 2
+
+                        Repeater {
+                            model: pageRoot.speedResults
+
+                            delegate: Text {
+                                color: modelData.ok
+                                    ? Theme.currentTheme.colors.textColor
+                                    : Theme.currentTheme.colors.textSecondaryColor
+                                text: modelData.ok
+                                    ? qsTr("%1 · %2 ms").arg(modelData.label).arg(modelData.ms)
+                                    : qsTr("%1 · 超时").arg(modelData.label)
+                            }
+                        }
+
+                        Text {
+                            visible: pageRoot.speedResults.length === 0
+                            typography: Typography.Caption
+                            color: Theme.currentTheme.colors.textSecondaryColor
+                            text: qsTr("尚未测速")
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup {
+                title: qsTr("离线更新")
+                iconKey: "ic_fluent_folder_zip_20_regular"
+
+                FormRow {
+                    label: qsTr("本地安装包")
+                    description: qsTr("选择自己下载的 RinLauncher.zip")
+                    Button {
+                        text: qsTr("选择本地 zip…")
+                        icon.name: "ic_fluent_arrow_upload_20_regular"
+                        enabled: !pageRoot.page.updateBusy
+                        onClicked: {
+                            if (pageRoot.page && pageRoot.page.updater) {
+                                pageRoot.page.updater.installFromFile()
+                            }
                         }
                     }
                 }
@@ -279,5 +370,8 @@ Item {
         var model = page.model
         channelCombo.currentIndex = model.updateChannel === "prerelease" ? 1 : 0
         autoCheckSwitch.checked = model.autoCheckUpdates !== false
+        mirrorCombo.currentIndex = Math.max(0,
+            pageRoot.mirrorNames.indexOf(model.updateMirror || "github"))
+        mirrorAutoSwitch.checked = model.updateMirrorAuto !== false
     }
 }

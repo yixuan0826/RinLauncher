@@ -36,6 +36,13 @@ Item {
         onSaved: launcherSettings.reload()
     }
 
+    StartMenuDialog {
+        id: startMenuDialog
+        objectName: "startMenuDialog"
+        targetRow: launcherSettings.rowPanel
+        onAccepted: launcherSettings.reload()
+    }
+
     // ------------------------------------------------------------------
     // 界面
     // ------------------------------------------------------------------
@@ -81,6 +88,13 @@ Item {
             }
 
             Item { Layout.fillWidth: true }
+
+            Button {
+                text: qsTr("从开始菜单添加")
+                icon.name: "ic_fluent_add_20_regular"
+                highlighted: true
+                onClicked: startMenuDialog.open()
+            }
 
             ToolButton {
                 icon.name: "ic_fluent_arrow_sync_20_regular"

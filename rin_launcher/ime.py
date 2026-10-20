@@ -19,6 +19,7 @@ from __future__ import annotations
 import ctypes
 import logging
 import sys
+import time
 
 logger = logging.getLogger(__name__)
 
@@ -75,12 +76,9 @@ try:  # 非 Windows 上直接当空实现，导入本模块不会炸。
         _fields_ = [("type", wintypes.DWORD), ("union", INPUTUNION)]
 
     _user32 = ctypes.WinDLL("user32", use_last_error=True)
-    _user32.GetForegroundWindow.restype = wintypes.HWND
-    _user32.GetWindowThreadProcessId.argtypes = [
-        wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
-    _user32.GetWindowThreadProcessId.restype = wintypes.DWORD
-    _user32.GetKeyboardLayout.argtypes = [wintypes.DWORD]
-    _user32.GetKeyboardLayout.restype = wintypes.HANDLE
+    _user32.GetKeyboardLayoutList.argtypes = [
+        ctypes.c_int, ctypes.POINTER(wintypes.HANDLE)]
+    _user32.GetKeyboardLayoutList.restype = ctypes.c_int
     _user32.SendInput.argtypes = [
         wintypes.UINT, ctypes.POINTER(INPUT), ctypes.c_int]
     _user32.SendInput.restype = wintypes.UINT
@@ -89,6 +87,10 @@ except (OSError, AttributeError) as error:  # pragma: no cover - 非 Windows 环
     INPUT = None
     KEYBDINPUT = None
     logger.debug("Unicode key injection is unavailable: %s", error)
+
+# 布局检测每秒最多做一次；结果缓存，避免每敲一个字都枚举一遍。
+_layout_checked_at = 0.0
+_layout_active = False
 
 
 def available() -> bool:
@@ -107,19 +109,35 @@ def _handle(value: object) -> int:
 
 
 def east_asian_ime_active() -> bool:
-    """前台窗口所在的线程是不是挂着中日韩输入法布局。
+    """当前会话是否装有中日韩输入法布局。
 
-    这是「字母键会被拿去组词」的可靠信号：中文 / 日文 / 韩文布局下才需要改用
-    Unicode 注入；英文布局下维持原来的虚拟键码注入，行为和以前完全一致。
+    不再跨线程查询前台窗口的 ``GetKeyboardLayout``：前台线程卡住时，那个调用
+    可能把回放线程一起拖死。枚举本会话已加载的键盘布局即可判断是否需要 Unicode
+    注入，且没有阻塞风险。
     """
+    global _layout_checked_at, _layout_active
     if not available():
         return False
-    hwnd = _handle(_user32.GetForegroundWindow())
-    if not hwnd:
-        return False
-    thread = _user32.GetWindowThreadProcessId(hwnd, None)
-    layout = _handle(_user32.GetKeyboardLayout(thread))
-    return (layout & 0x3FF) in (_PRIMARY_CHINESE, _PRIMARY_JAPANESE, _PRIMARY_KOREAN)
+    now = time.monotonic()
+    if now - _layout_checked_at < 1.0:
+        return _layout_active
+    _layout_checked_at = now
+    _layout_active = False
+    try:
+        count = int(_user32.GetKeyboardLayoutList(0, None))
+        if count <= 0:
+            return False
+        layouts = (ctypes.c_void_p * count)()
+        got = int(_user32.GetKeyboardLayoutList(count, layouts))
+        for index in range(max(0, got)):
+            layout = _handle(layouts[index])
+            if (layout & 0x3FF) in (_PRIMARY_CHINESE, _PRIMARY_JAPANESE, _PRIMARY_KOREAN):
+                _layout_active = True
+                break
+    except Exception:
+        logger.debug("Enumerating keyboard layouts failed", exc_info=True)
+        _layout_active = False
+    return _layout_active
 
 
 def send_text(text: str) -> bool:

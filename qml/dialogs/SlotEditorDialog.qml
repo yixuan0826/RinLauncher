@@ -47,6 +47,27 @@ AppDialog {
         onPicked: editor.iconKey = iconKey
     }
 
+    StartMenuDialog {
+        id: startMenuPicker
+        objectName: "startMenuPicker"
+        parent: editor
+        pickMode: true
+        onPicked: {
+            editor.kind = "action"
+            editor.label = app.name || ""
+            editor.iconKey = app.icon || ""
+            inlineAction.load({
+                "type": app.kind === "uwp" ? "uwp"
+                        : (app.kind === "wsl" ? "cmd" : "file"),
+                "target": app.target || "",
+                "arguments": app.arguments || "",
+                "working_dir": app.working_dir || "",
+                "run_as": "user",
+                "keyboard_steps": []
+            })
+        }
+    }
+
     ColumnLayout {
         Layout.fillWidth: true
         Layout.fillHeight: true
@@ -68,6 +89,14 @@ AppDialog {
                 id: formColumn
                 width: formScroller.width
                 spacing: 12
+
+        Button {
+            Layout.fillWidth: true
+            highlighted: true
+            text: qsTr("从开始菜单导入…")
+            icon.name: "ic_fluent_apps_20_regular"
+            onClicked: startMenuPicker.open()
+        }
 
         // ── 预览 ──
         Frame {
@@ -429,6 +458,9 @@ AppDialog {
         var data = inlineAction.read()
         if (data.type === "keyboard") {
             return qsTr("按键动作")
+        }
+        if (data.type === "uwp") {
+            return qsTr("UWP 应用")
         }
         if (data.target.length === 0) {
             return qsTr("未配置动作")

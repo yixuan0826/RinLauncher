@@ -364,6 +364,14 @@ Item {
             // 免得拖动颜色选择器时每帧都往 RinUI 的配置文件里写一次。
             Utils.primaryColor = value
             break
+        case "accentColorMode":
+            if (value === "system") {
+                var systemColor = ConfigManager.systemAccentColor()
+                if (systemColor && systemColor.length > 0) {
+                    Utils.primaryColor = systemColor
+                }
+            }
+            break
         // 材质由后端应用：材质要碰原生窗口句柄，QML 这边碰不到，
         // 统一走 settingsChanged → main.apply_material。
         }

@@ -357,3 +357,18 @@ def test_run_keyboard_falls_back_when_text_injection_fails(
     action = {"type": "keyboard", "keyboard_steps": [{"type": "key", "key": "a"}]}
     assert executor._run_keyboard(action) is True
     assert key_events[0][0] == "press"
+
+
+def test_run_url_keeps_custom_protocol(executor, monkeypatch):
+    opened = []
+    monkeypatch.setattr(ae.os, "startfile", lambda url: opened.append(url), raising=False)
+    assert executor._run_url({"target": "classisland://app"}) is True
+    assert opened == ["classisland://app"]
+
+
+def test_run_uwp_opens_apps_folder(executor, monkeypatch):
+    opened = []
+    monkeypatch.setattr(ae.os, "startfile", lambda url: opened.append(url), raising=False)
+    aumid = "Microsoft.WindowsCalculator_8wekyb3d8bbwe!App"
+    assert executor._run_uwp({"target": aumid}) is True
+    assert opened == [f"shell:AppsFolder\\{aumid}"]

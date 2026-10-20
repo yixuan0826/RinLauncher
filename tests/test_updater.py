@@ -94,3 +94,41 @@ def test_auto_backups_keep_latest_eight_and_manual_is_kept(qapp):
         assert info["autoCount"] == cm.AUTO_BACKUP_KEEP
         assert info["manualCount"] == 1
         assert info["autoKeep"] == 8
+
+
+def test_mirror_url_and_auto_selection(qapp, tmp_path):
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    updater = UpdateManager(manager)
+    try:
+        updater.setMirror("ghfast")
+        assert updater._mirror_url("https://github.com/a/b") == (
+            "https://ghfast.top/https://github.com/a/b")
+        updater.setMirror("github")
+        assert updater._mirror_url("https://github.com/a/b") == "https://github.com/a/b"
+
+        updater._apply_speed_results([
+            {"name": "github", "label": "GitHub", "ms": 300, "ok": True},
+            {"name": "ghfast", "label": "ghfast", "ms": 100, "ok": True},
+            {"name": "ghproxy", "label": "ghproxy", "ms": -1, "ok": False},
+        ])
+        assert manager.getSettings()["updateMirror"] == "ghfast"
+        assert updater.mirror == "ghfast"
+    finally:
+        manager.stopWatching()
+
+
+def test_install_archive_rejects_zip_slip(qapp, tmp_path):
+    import zipfile
+
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    updater = UpdateManager(manager)
+    errors: list[str] = []
+    updater.notify.connect(lambda message, _severity: errors.append(message))
+    archive = tmp_path / "bad.zip"
+    with zipfile.ZipFile(archive, "w") as bundle:
+        bundle.writestr("../evil.exe", "x")
+    try:
+        updater._install_archive(archive)
+    finally:
+        manager.stopWatching()
+    assert any("非法路径" in message for message in errors), errors
