@@ -29,6 +29,12 @@ Item {
     property int panelSlotCount: 0
     property string storagePath: ""
     property var storage: ({})
+    // 「磁盘」下拉：文件夹用上面的浏览按钮，盘根可以直接在这里选。
+    property var storageDrives: []
+    readonly property var storageDriveLabels: [qsTr("选择一块磁盘…")].concat(
+        storageDrives.map(function (drive) {
+            return drive.label + "（" + drive.path.replace(/\\$/, "") + "）"
+        }))
 
     SlotEditorDialog {
         id: slotEditor
@@ -192,6 +198,26 @@ Item {
                         }
                     }
 
+                    FormRow {
+                        label: qsTr("磁盘")
+                        labelWidth: 88
+                        description: qsTr("把卡片固定到某块盘；小窗显示卷标")
+
+                        ComboBox {
+                            objectName: "storageDrivePicker"
+                            Layout.fillWidth: true
+                            Layout.maximumWidth: 320
+                            model: launcherSettings.storageDriveLabels
+                            currentIndex: -1
+                            onActivated: function (index) {
+                                if (index > 0 && index <= launcherSettings.storageDrives.length) {
+                                    launcherSettings.setStoragePath(
+                                        launcherSettings.storageDrives[index - 1].path)
+                                }
+                            }
+                        }
+                    }
+
                     SlotListEditor {
                         objectName: "storageSlotList"
                         slots: launcherSettings.storageSlots
@@ -238,6 +264,7 @@ Item {
         panelSlotCount = filterRaw(rowPanel).length
         storagePath = ConfigManager.getLauncherStoragePath()
         storage = ConfigManager.getStorageInfo()
+        storageDrives = ConfigManager.getDrives()
         syncStorageField()
     }
 

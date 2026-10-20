@@ -132,8 +132,12 @@ class Launcher:
         self.system_controls.notify.connect(self.config_manager.notify)
         self.update_manager.notify.connect(self.config_manager.notify)
 
-        self.apply_hotkey(str(settings.get("globalHotkey", "")))
-        self.apply_tray(bool(settings.get("showTray", True)))
+        # 热键与托盘放到小窗首帧之后：pynput 的全局键盘钩子和 QSystemTrayIcon
+        # 都要跟系统打交道，没必要挡在「小窗可见」这条关键路径上。
+        QTimer.singleShot(120, lambda: self.apply_hotkey(
+            str(settings.get("globalHotkey", ""))))
+        QTimer.singleShot(120, lambda: self.apply_tray(
+            bool(settings.get("showTray", True))))
 
     def _wire_tray(self) -> None:
         # 托盘可以在设置里反复开关，重复连接会让一次点击触发多次。
@@ -370,10 +374,14 @@ class Launcher:
         self.app.quit()
 
     def run(self) -> int:
-        self.config_manager.startWatching()
         if not self.config_manager.config["settings"].get("startMinimized", False):
             self.show_compact()
-        # 启动后静默检查一次更新，不阻塞小窗出现。
+        # 这些都不是「小窗可见」的必要条件，推迟到首帧之后：
+        #   * watchdog 的导入与文件监听（几十毫秒）；
+        #   * schtasks 子进程查任务计划状态；
+        #   * 静默更新检查（本来就在 5 秒后）。
+        QTimer.singleShot(1200, self.config_manager.startWatching)
+        QTimer.singleShot(4000, self.config_manager._start_startup_prefetch)
         QTimer.singleShot(5000, self._auto_check_updates)
 
         try:

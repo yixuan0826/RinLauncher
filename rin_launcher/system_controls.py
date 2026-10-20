@@ -41,47 +41,127 @@ _POLL_INTERVAL_MS = 2000
 _SSID_REFRESH_SECONDS = 15.0
 
 # ── 音量：pycaw + comtypes ──────────────────────────────────────────
-# ── 音量：pycaw + comtypes ──────────────────────────────────────────
-try:
-    if _IS_WINDOWS:
-        from ctypes import POINTER, cast
+# 这几个依赖的导入要一两百毫秒，而小窗显示前根本用不到。做成延迟导入：
+# SystemControls 构造不再拖慢冷启动，第一次 refresh（小窗出来之后）才加载。
+_AUDIO_LOADED = False
+_AUDIO_AVAILABLE = False
+AudioUtilities: Any = None
+IAudioEndpointVolume: Any = None
+CLSCTX_ALL: Any = None
+CoInitialize: Any = None
+cast: Any = None
+POINTER: Any = None
 
-        from comtypes import CLSCTX_ALL, CoInitialize
-        from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
 
+def _load_audio() -> bool:
+    global _AUDIO_LOADED, _AUDIO_AVAILABLE
+    global AudioUtilities, IAudioEndpointVolume, CLSCTX_ALL, CoInitialize, cast, POINTER
+    if _AUDIO_LOADED:
+        return _AUDIO_AVAILABLE
+    _AUDIO_LOADED = True
+    if not _IS_WINDOWS:
+        return False
+    try:
+        from ctypes import POINTER as _POINTER
+        from ctypes import cast as _cast
+
+        from comtypes import CLSCTX_ALL as _CLSCTX_ALL
+        from comtypes import CoInitialize as _CoInitialize
+        from pycaw.pycaw import AudioUtilities as _AudioUtilities
+        from pycaw.pycaw import IAudioEndpointVolume as _IAudioEndpointVolume
+
+        AudioUtilities = _AudioUtilities
+        IAudioEndpointVolume = _IAudioEndpointVolume
+        CLSCTX_ALL = _CLSCTX_ALL
+        CoInitialize = _CoInitialize
+        cast = _cast
+        POINTER = _POINTER
         _AUDIO_AVAILABLE = True
-    else:
-        _AUDIO_AVAILABLE = False
-except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
-    _AUDIO_AVAILABLE = False
+    except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
+        logger.debug("pycaw / comtypes is unavailable", exc_info=True)
+    return _AUDIO_AVAILABLE
+
 
 # ── Wi-Fi / 热点：WinRT ────────────────────────────────────────────
+# 同理：winrt 的导入链会顺带拖进 asyncio 等模块，放到工作线程里再加载。
+_WINRT_LOADED = False
+_WINRT_AVAILABLE = False
 _WIFI_RADIO_KIND: Any = None
-try:
-    if _IS_WINDOWS:
-        from winrt.runtime import ApartmentType, init_apartment
+ApartmentType: Any = None
+init_apartment: Any = None
+Radio: Any = None
+RadioAccessStatus: Any = None
+RadioState: Any = None
+NetworkInformation: Any = None
+NetworkOperatorTetheringAccessPointConfiguration: Any = None
+NetworkOperatorTetheringManager: Any = None
+TetheringOperationalState: Any = None
+TetheringOperationStatus: Any = None
+TetheringWiFiAuthenticationKind: Any = None
+
+
+def _load_winrt() -> bool:
+    global _WINRT_LOADED, _WINRT_AVAILABLE, _WIFI_RADIO_KIND
+    global ApartmentType, init_apartment
+    global Radio, RadioAccessStatus, RadioState, NetworkInformation
+    global NetworkOperatorTetheringAccessPointConfiguration, NetworkOperatorTetheringManager
+    global TetheringOperationalState, TetheringOperationStatus, TetheringWiFiAuthenticationKind
+    if _WINRT_LOADED:
+        return _WINRT_AVAILABLE
+    _WINRT_LOADED = True
+    if not _IS_WINDOWS:
+        return False
+    try:
+        from winrt.runtime import ApartmentType as _ApartmentType
+        from winrt.runtime import init_apartment as _init_apartment
         from winrt.windows.devices.radios import (
-            Radio,
-            RadioAccessStatus,
-            RadioKind,
-            RadioState,
+            Radio as _Radio,
         )
-        from winrt.windows.networking.connectivity import NetworkInformation
+        from winrt.windows.devices.radios import (
+            RadioAccessStatus as _RadioAccessStatus,
+        )
+        from winrt.windows.devices.radios import (
+            RadioKind as _RadioKind,
+        )
+        from winrt.windows.devices.radios import (
+            RadioState as _RadioState,
+        )
+        from winrt.windows.networking.connectivity import (
+            NetworkInformation as _NetworkInformation,
+        )
         from winrt.windows.networking.networkoperators import (
-            NetworkOperatorTetheringAccessPointConfiguration,
-            NetworkOperatorTetheringManager,
-            TetheringOperationalState,
-            TetheringOperationStatus,
-            TetheringWiFiAuthenticationKind,
+            NetworkOperatorTetheringAccessPointConfiguration as _TetheringConfig,
+        )
+        from winrt.windows.networking.networkoperators import (
+            NetworkOperatorTetheringManager as _TetheringManager,
+        )
+        from winrt.windows.networking.networkoperators import (
+            TetheringOperationalState as _TetheringState,
+        )
+        from winrt.windows.networking.networkoperators import (
+            TetheringOperationStatus as _TetheringStatus,
+        )
+        from winrt.windows.networking.networkoperators import (
+            TetheringWiFiAuthenticationKind as _TetheringAuth,
         )
 
+        ApartmentType = _ApartmentType
+        init_apartment = _init_apartment
+        Radio = _Radio
+        RadioAccessStatus = _RadioAccessStatus
+        RadioState = _RadioState
+        NetworkInformation = _NetworkInformation
+        NetworkOperatorTetheringAccessPointConfiguration = _TetheringConfig
+        NetworkOperatorTetheringManager = _TetheringManager
+        TetheringOperationalState = _TetheringState
+        TetheringOperationStatus = _TetheringStatus
+        TetheringWiFiAuthenticationKind = _TetheringAuth
         # pywinrt 把 WinRT 的 WiFi 枚举写成 WI_FI；老版本可能叫 WIFI。
-        _WIFI_RADIO_KIND = getattr(RadioKind, "WI_FI", None) or getattr(RadioKind, "WIFI", None)
+        _WIFI_RADIO_KIND = getattr(_RadioKind, "WI_FI", None) or getattr(_RadioKind, "WIFI", None)
         _WINRT_AVAILABLE = True
-    else:
-        _WINRT_AVAILABLE = False
-except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
-    _WINRT_AVAILABLE = False
+    except Exception:  # pragma: no cover - 依赖缺失时只走降级分支
+        logger.debug("winrt is unavailable", exc_info=True)
+    return _WINRT_AVAILABLE
 
 
 class SystemControls(QObject):
@@ -99,6 +179,7 @@ class SystemControls(QObject):
     _hotspotFinished = Signal(bool, str)
     _wifiStateReady = Signal(bool, bool, str)
     _hotspotStateReady = Signal(bool, bool)
+    _winrtReady = Signal()
 
     def __init__(self, parent: QObject | None = None):
         super().__init__(parent)
@@ -130,18 +211,20 @@ class SystemControls(QObject):
         self._hotspotFinished.connect(self._finish_hotspot)
         self._wifiStateReady.connect(self._apply_wifi_state)
         self._hotspotStateReady.connect(self._apply_hotspot_state)
+        self._winrtReady.connect(self._on_winrt_ready)
 
         # Qt 主线程是单线程公寓（STA），WinRT 的 IAsyncOperation.get() 会直接报
         # “Cannot call blocking method from single-threaded apartment”。所以所有
         # WinRT 调用都放在一个 MTA 工作线程里串行执行，结果用信号回到主线程。
         self._winrt_queue: queue.Queue[str | None] = queue.Queue()
         self._poll_pending = False
+        # 先置状态再起线程：_winrtReady 可能紧接着从工作线程发出来。
+        self._active = False
         self._winrt_thread = threading.Thread(
             target=self._winrt_loop, name="rin-winrt", daemon=True)
         self._winrt_thread.start()
 
         # 状态轮询：只在小窗可见时跑，隐藏时停掉，省电也省 COM 调用。
-        self._active = False
         self._timer = QTimer(self)
         self._timer.setInterval(_POLL_INTERVAL_MS)
         self._timer.setTimerType(Qt.CoarseTimer)
@@ -156,9 +239,22 @@ class SystemControls(QObject):
         self._active = active
         if active:
             self._timer.start()
-            QTimer.singleShot(0, self.refresh)
+            # 第一帧先让小窗画出来；音量端点（pycaw）的首次导入放到 150ms 后。
+            QTimer.singleShot(150, self.refresh)
         else:
             self._timer.stop()
+
+    def _queue_winrt_poll(self) -> None:
+        """把一次 Wi-Fi / 热点轮询丢给工作线程；主线程从不直接碰 WinRT。"""
+        if (_WINRT_AVAILABLE and self._active and not self._poll_pending
+                and not self._wifi_busy and not self._hotspot_busy):
+            self._poll_pending = True
+            self._winrt_queue.put("poll")
+
+    @Slot()
+    def _on_winrt_ready(self) -> None:
+        """工作线程加载完 WinRT 后补一次状态读取（不触发音量导入）。"""
+        self._queue_winrt_poll()
 
     # ------------------------------------------------------------------
     # 音量
@@ -172,7 +268,7 @@ class SystemControls(QObject):
         return self._muted
 
     def _ensure_volume(self) -> Any:
-        if not _AUDIO_AVAILABLE:
+        if not _load_audio():
             return None
         if self._volume_interface is not None:
             return self._volume_interface
@@ -323,14 +419,15 @@ class SystemControls(QObject):
             return self._ssid_cache
 
         ssid = ""
-        try:
-            profile = NetworkInformation.get_internet_connection_profile()
-            if profile is not None and profile.is_wlan_connection_profile:
-                details = profile.wlan_connection_profile_details
-                if details is not None:
-                    ssid = str(details.get_connected_ssid() or "")
-        except Exception:
-            logger.debug("Reading connected SSID via WinRT failed", exc_info=True)
+        if _WINRT_AVAILABLE:
+            try:
+                profile = NetworkInformation.get_internet_connection_profile()
+                if profile is not None and profile.is_wlan_connection_profile:
+                    details = profile.wlan_connection_profile_details
+                    if details is not None:
+                        ssid = str(details.get_connected_ssid() or "")
+            except Exception:
+                logger.debug("Reading connected SSID via WinRT failed", exc_info=True)
 
         if not ssid:
             # 没有 Internet 连接（或走的是有线）时 WinRT 拿不到 WLAN profile。
@@ -391,6 +488,8 @@ class SystemControls(QObject):
 
     def _winrt_poll(self) -> None:
         """读一次 Wi-Fi / 热点状态；只在 WinRT 工作线程里调用。"""
+        if not _WINRT_AVAILABLE:
+            return
         radio = self._radio()
         available = False
         enabled = False
@@ -443,6 +542,9 @@ class SystemControls(QObject):
 
     def _winrt_toggle_wifi(self) -> None:
         """切 Wi-Fi；只在 WinRT 工作线程里调用。"""
+        if not _WINRT_AVAILABLE:
+            self._wifiFinished.emit(False, "Wi-Fi 控制不可用：缺少 winrt 依赖")
+            return
         radio = self._radio()
         if radio is None:
             self._wifiFinished.emit(False, "没有检测到 Wi-Fi 无线网卡")
@@ -481,7 +583,8 @@ class SystemControls(QObject):
 
     @Slot()
     def toggleWifi(self) -> None:
-        if not _WINRT_AVAILABLE:
+        # 依赖还在工作线程里加载时也照常排队，加载完会继续处理。
+        if _WINRT_LOADED and not _WINRT_AVAILABLE:
             self.notify.emit("Wi-Fi 控制不可用：缺少 winrt 依赖", "warning")
             return
         if self._wifi_busy:
@@ -573,6 +676,9 @@ class SystemControls(QObject):
         return True, ""
 
     def _winrt_toggle_hotspot(self) -> None:
+        if not _WINRT_AVAILABLE:
+            self._hotspotFinished.emit(False, "移动热点不可用：缺少 winrt 依赖")
+            return
         manager = self._tethering_manager()
         if manager is None:
             self._hotspotFinished.emit(False, "移动热点不可用：当前没有可共享的网络连接")
@@ -662,7 +768,7 @@ class SystemControls(QObject):
 
     @Slot()
     def toggleHotspot(self) -> None:
-        if not _WINRT_AVAILABLE:
+        if _WINRT_LOADED and not _WINRT_AVAILABLE:
             self.notify.emit("移动热点不可用：缺少 winrt 依赖", "warning")
             return
         if self._hotspot_busy:
@@ -682,11 +788,15 @@ class SystemControls(QObject):
     # ------------------------------------------------------------------
     def _winrt_loop(self) -> None:
         """WinRT 专用工作线程：MTA + 串行执行，避免主线程 STA 阻塞报错。"""
+        # 依赖在这里才导入（见 _load_winrt），不拖慢小窗的首帧。
+        _load_winrt()
         if _WINRT_AVAILABLE:
             try:
                 init_apartment(ApartmentType.MULTI_THREADED)
             except Exception:
                 logger.debug("WinRT apartment is already initialized", exc_info=True)
+        # 依赖就绪后通知主线程补一次轮询；信号跨线程自动排队。
+        self._winrtReady.emit()
         while True:
             task = self._winrt_queue.get()
             if task is None:
@@ -718,10 +828,7 @@ class SystemControls(QObject):
                 self.mutedChanged.emit()
 
         # WinRT 查询丢给工作线程，主线程只读缓存值。
-        if (_WINRT_AVAILABLE and not self._poll_pending
-                and not self._wifi_busy and not self._hotspot_busy):
-            self._poll_pending = True
-            self._winrt_queue.put("poll")
+        self._queue_winrt_poll()
 
     @Slot()
     def stop(self) -> None:

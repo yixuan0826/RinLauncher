@@ -29,8 +29,26 @@ jobs:
       - name: Package (zip)
         run: Compress-Archive -Path dist/RinLauncher/* -DestinationPath RinLauncher.zip
 
+      - name: Extract release notes
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          $content = Get-Content CHANGELOG.md -Raw -Encoding utf8
+          $pattern = "(?ms)^##\s+" + [regex]::Escape($version) + "\b.*?(?=^##\s|\z)"
+          $match = [regex]::Match($content, $pattern)
+          if ($match.Success) {
+            $body = $match.Value.Trim() +
+              "`n`n[完整更新日志](https://github.com/yixuan0826/RinLauncher/blob/main/CHANGELOG.md)"
+          } else {
+            $body = "Rin Launcher $version"
+          }
+          $body | Set-Content release-notes.md -Encoding utf8
+
       - name: Publish release
         uses: softprops/action-gh-release@v2
         with:
           files: RinLauncher.zip
-          generate_release_notes: true
+          body_path: release-notes.md
+          draft: false
+          prerelease: false
+          make_latest: true

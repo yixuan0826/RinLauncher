@@ -35,12 +35,10 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtGui import QDesktopServices, QIcon
 
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
-from watchdog.events import FileSystemEventHandler
-from watchdog.observers import Observer
 
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher import autostart, start_menu
@@ -135,6 +133,54 @@ def _drive_kind(code: int) -> str:
     return {2: "removable", 3: "fixed", 4: "network", 5: "cdrom", 6: "ramdisk"}.get(code, "")
 
 
+_DRIVE_KIND_LABELS = {
+    "removable": "可移动磁盘", "fixed": "本地磁盘", "network": "网络位置",
+    "cdrom": "光驱", "ramdisk": "内存盘",
+}
+
+
+def _volume_label(root: str) -> str:
+    """读盘根的卷标（如 ``课件``）；没有卷标或读不到时返回空串。"""
+    if sys.platform != "win32" or not root:
+        return ""
+    try:
+        import ctypes
+
+        buffer = ctypes.create_unicode_buffer(261)
+        if ctypes.windll.kernel32.GetVolumeInformationW(
+                ctypes.c_wchar_p(root), buffer, 261, None, None, None, None, 0):
+            return buffer.value.strip()
+    except Exception:
+        logger.debug("Cannot read volume label of %s", root, exc_info=True)
+    return ""
+
+
+def _drive_details(path: Path) -> dict[str, Any]:
+    """路径是盘根时返回卷标 / 类型；普通文件夹返回空字典。
+
+    小窗的存储卡片要显示「课件」而不是「E:\\」：盘符对用户没有意义，卷标才是
+    他自己起的名字。普通文件夹仍然用目录名。
+    """
+    root = str(path.anchor or "")
+    if not root or str(path) != root:
+        return {}
+    kind = ""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+
+            kind = _drive_kind(ctypes.windll.kernel32.GetDriveTypeW(
+                ctypes.c_wchar_p(root)))
+        except Exception:
+            logger.debug("Cannot read drive type of %s", root, exc_info=True)
+    return {
+        "root": root,
+        "label": _volume_label(root),
+        "kind": kind,
+        "kindLabel": _DRIVE_KIND_LABELS.get(kind, ""),
+    }
+
+
 def _find_removable_drive() -> str:
     """返回第一个可移动磁盘的根路径（如 ``E:\\``）；找不到或非 Windows 返回空串。"""
     if sys.platform != "win32":
@@ -187,10 +233,7 @@ def _list_drives() -> list[dict[str, Any]]:
         logger.exception("Failed to enumerate drives")
         return []
 
-    kind_labels = {
-        "removable": "可移动磁盘", "fixed": "本地磁盘", "network": "网络位置",
-        "cdrom": "光驱", "ramdisk": "内存盘",
-    }
+    kind_labels = _DRIVE_KIND_LABELS
     drives: list[dict[str, Any]] = []
     for index in range(26):
         if not mask & (1 << index):
@@ -458,12 +501,20 @@ def _default_config() -> dict[str, Any]:
     }
 
 
-class _ConfigWatcher(FileSystemEventHandler):
-    """Debounced listener for edits made to the config file by other programs."""
+class _ConfigWatcher:
+    """Debounced listener for edits made to the config file by other programs.
+
+    不继承 ``watchdog.events.FileSystemEventHandler``：watchdog 只要求处理器有
+    ``dispatch(event)``。这样模块导入时就不用把 watchdog 那一整条导入链拉起来，
+    冷启动能省几十毫秒（``Observer`` 在 ``startWatching`` 里才导入）。
+    """
 
     def __init__(self, on_change: Callable[[], None]):
         self._on_change = on_change
         self._last_fired = 0.0
+
+    def dispatch(self, event) -> None:
+        self.on_modified(event)
 
     def on_modified(self, event) -> None:
         if event.is_directory or not event.src_path.endswith((".yaml", ".yml")):
@@ -512,7 +563,8 @@ class ConfigManager(QObject):
         self.icon_dir.mkdir(parents=True, exist_ok=True)
 
         self.action_executor = None
-        self._observer: Observer | None = None
+        # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
+        self._observer: Any | None = None
         self._quiet_until = 0.0  # ignores the watcher echo of our own writes
         self._icon_provider = QFileIconProvider()
         # 磁盘容量缓存：(取值时间, 数据)。
@@ -524,8 +576,8 @@ class ConfigManager(QObject):
         # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
         self._pending_settings_section: str = ""
         self._config = self._load()
-        # 启动就把任务计划状态预热到后台（设置页打开时零等待）。
-        self._start_startup_prefetch()
+        # 任务计划状态不再在构造时预热：schtasks 子进程会跟小窗抢启动资源，
+        # 等主界面稳定后由 main.py 延迟刷新（或第一次打开设置页时再查）。
         # 7 天一次的自动备份：启动先检查，之后每 6 小时再看一次。
         self._maybe_auto_backup()
         self._backup_timer = QTimer(self)
@@ -969,15 +1021,27 @@ class ConfigManager(QObject):
 
     @Slot(result="QVariantMap")
     def getStorageInfo(self) -> dict[str, Any]:
-        """第三行的存储卡片：路径与容量。结果带短缓存，避免反复问系统。"""
+        """第三行的存储卡片：路径、显示名与容量。结果带短缓存，避免反复问系统。
+
+        盘根显示卷标（如 ``课件``），普通文件夹显示目录名 —— 两者都不显示盘符。
+        配置的路径不可用时只标记 ``available=False``，不再偷偷换成主目录，免得
+        用户以为自己在看另一块盘。
+        """
         now = time.monotonic()
         if self._storage_cache and now - self._storage_cache[0] < STORAGE_TTL:
             return self._storage_cache[1]
 
         path = self._storagePath()
+        drive = _drive_details(path)
+        label = (drive.get("label") or drive.get("kindLabel") or "磁盘") if drive \
+            else (path.name or str(path))
         info: dict[str, Any] = {
             "path": str(path),
-            "label": path.name or str(path),
+            "label": label,
+            "isDrive": bool(drive),
+            "drive": drive.get("root", ""),
+            "kind": drive.get("kind", ""),
+            "kindLabel": drive.get("kindLabel", ""),
             "free": "",
             "total": "",
             "percent": 0,
@@ -1003,10 +1067,9 @@ class ConfigManager(QObject):
         return self.getStorageInfo()
 
     def _storagePath(self) -> Path:
+        """存储卡片配置的路径；留空表示用户主目录。"""
         raw = str(self._config["launcher"].get("storagePath") or "").strip()
-        candidate = Path(raw).expanduser() if raw else Path.home()
-        # 配置里写了个已经不存在的路径时退回主目录，别让小窗显示一片空白。
-        return candidate if candidate.exists() else Path.home()
+        return Path(raw).expanduser() if raw else Path.home()
 
     @Slot(result=str)
     def pickFolder(self) -> str:
@@ -1081,7 +1144,7 @@ class ConfigManager(QObject):
         """图标在配置里的写法：``file:<绝对路径>``。"""
         return f"file:{path}"
 
-    def _import_icon_file(self, path: str) -> str:
+    def _import_icon_file(self, path: str, notify: bool = True) -> str:
         """把一张图片（svg / png / ico / …）复制进图标库，返回它的 icon key。"""
         source = Path(path)
         if not source.is_file():
@@ -1091,9 +1154,11 @@ class ConfigManager(QObject):
             shutil.copy2(source, target)
         except OSError:
             logger.exception("Failed to copy icon %s", source)
-            self.showToast.emit("图标复制失败", "error")
+            if notify:
+                self.showToast.emit("图标复制失败", "error")
             return ""
-        self.showToast.emit(f"已添加图标：{source.name}", "success")
+        if notify:
+            self.showToast.emit(f"已添加图标：{source.name}", "success")
         return self._icon_key(target)
 
     @Slot(result=str)
@@ -1116,12 +1181,41 @@ class ConfigManager(QObject):
         candidate = Path(target)
         return candidate if candidate.exists() else None
 
-    def _extract_icon_file(self, path: str, notify: bool = True) -> str:
-        """从程序 / 快捷方式 / DLL 里抽出图标，落成 png 存进图标库。
+    def _icon_from_path(self, source: Path, notify: bool) -> str:
+        """从一个具体文件取图标；取不到返回空串。"""
+        if not source.is_file():
+            return ""
+        suffix = source.suffix.lower()
+        if suffix in IMAGE_ICON_SUFFIXES:
+            if suffix != ".ico":
+                return self._import_icon_file(str(source), notify=notify)
+            # .ico 可能是多尺寸的：转成 256 的 PNG 再入库，小窗放大时不糊。
+            icon = QIcon(str(source))
+            pixmap = icon.pixmap(256, 256) if not icon.isNull() else None
+            if pixmap is None or pixmap.isNull():
+                return ""
+            target = self.icon_dir / f"{_new_id()}.png"
+            return self._icon_key(target) if pixmap.save(str(target), "PNG") else ""
 
-        借用 Qt 的 QFileIconProvider：Windows 上它直接问系统外壳，能拿到 exe 内
-        嵌的图标；快捷方式优先跟随目标，拿到的是程序自己的图标而不是带小箭头
-        的那张；非 Windows 上会退化成一个通用图标，功能不至于报错消失。
+        icon = self._icon_provider.icon(QFileInfo(str(source)))
+        if icon.isNull():
+            return ""
+        # 取最大的一档，通常在 32~256 之间。
+        pixmap = icon.pixmap(256, 256)
+        if pixmap.isNull():
+            return ""
+        target = self.icon_dir / f"{_new_id()}.png"
+        if not pixmap.save(str(target), "PNG"):
+            return ""
+        return self._icon_key(target)
+
+    def _extract_icon_file(self, path: str, notify: bool = True) -> str:
+        """从程序 / 快捷方式 / DLL 里抽出图标，落成文件存进图标库。
+
+        快捷方式按「自己的 IconLocation → 快捷方式本身 → 目标」的顺序找：
+        WSA 安卓应用的正确图标只在 IconLocation 里（LocalState 下的 .ico），
+        直接跟随目标只会拿到 WsaClient.exe 的通用图标。普通程序没有
+        IconLocation 时再退回目标，行为与旧版一致。
 
         ``notify=False`` 用于保存槽位时的自动补图标：静默失败，不打扰用户。
         """
@@ -1130,28 +1224,29 @@ class ConfigManager(QObject):
         if QApplication.instance() is None:
             logger.warning("No QApplication instance, skipping icon extraction")
             return ""
-        source = self._shortcut_target(path) or Path(path)
-        icon = self._icon_provider.icon(QFileInfo(str(source)))
-        if icon.isNull():
-            if notify:
-                self.showToast.emit("这个文件里没有取到图标", "warning")
-            return ""
+        source = Path(path)
+        candidates: list[Path] = []
+        if source.suffix.lower() == ".lnk":
+            icon_path = start_menu.shortcut_icon_path(source)
+            if icon_path:
+                candidates.append(Path(icon_path))
+            # 快捷方式自身的 shell 图标；IconLocation 读不到时的兜底。
+            candidates.append(source)
+            target = self._shortcut_target(source)
+            if target is not None:
+                candidates.append(target)
+        else:
+            candidates.append(source)
 
-        # 取最大的一档，通常在 32~256 之间。
-        pixmap = icon.pixmap(256, 256)
-        if pixmap.isNull():
-            if notify:
-                self.showToast.emit("这个文件里没有取到图标", "warning")
-            return ""
-
-        target = self.icon_dir / f"{_new_id()}.png"
-        if not pixmap.save(str(target), "PNG"):
-            if notify:
-                self.showToast.emit("图标保存失败", "error")
-            return ""
+        for candidate in candidates:
+            key = self._icon_from_path(candidate, notify)
+            if key:
+                if notify:
+                    self.showToast.emit(f"已提取图标：{candidate.name}", "success")
+                return key
         if notify:
-            self.showToast.emit(f"已提取图标：{source.name}", "success")
-        return self._icon_key(target)
+            self.showToast.emit("这个文件里没有取到图标", "warning")
+        return ""
 
     @Slot(str, result=str)
     def acquireIcon(self, path: str) -> str:
@@ -1414,7 +1509,11 @@ class ConfigManager(QObject):
         }
 
     def _start_startup_prefetch(self) -> None:
-        """启动时后台预热任务计划状态：设置页打开时就不用起子进程了。"""
+        """后台预热任务计划状态（由 main.py 在小窗稳定后延迟调用）。
+
+        保留成独立方法，方便设置页 / 启动阶段按需复用；内部仍是异步线程，
+        不会阻塞界面。
+        """
         if sys.platform != "win32":
             return
         autostart.refresh_task_exists_async(self._startup_refresh_callback())
@@ -1609,8 +1708,11 @@ class ConfigManager(QObject):
                       "working_dir": str(app.get("working_dir") or ""),
                       "run_as": "user", "keyboard_steps": []}
         icon = ""
-        if kind == "lnk":
-            icon = self._extract_icon_file(target, notify=False)
+        if kind in ("lnk", "wsa"):
+            # 用快捷方式本身抽图标：WSA 的正确图标在 .lnk 的 IconLocation 里，
+            # 传 target 只会拿到 WsaClient.exe 的通用图标。
+            icon = self._extract_icon_file(
+                str(app.get("source") or target), notify=False)
         payload = {"kind": SLOT_ACTION, "label": name, "icon": icon, "action": action}
         return self.addLauncherSlot(int(row), payload)
 
@@ -1715,6 +1817,11 @@ class ConfigManager(QObject):
     # ------------------------------------------------------------------
     def startWatching(self) -> None:
         if self._observer is not None:
+            return
+        try:
+            from watchdog.observers import Observer
+        except Exception:
+            logger.exception("watchdog is unavailable; config hot reload is disabled")
             return
         self._observer = Observer()
         self._observer.schedule(

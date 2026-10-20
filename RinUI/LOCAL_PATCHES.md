@@ -1,7 +1,7 @@
 # RinUI 本地补丁清单
 
 本目录是内联的 RinUI（MIT，上游：<https://github.com/RinLit-233-shiroko/Rin-UI>）。
-同步上游时，下面三处本地补丁必须手工保留（或移植后再同步），本文件也一并保留。
+同步上游时，下面几处本地补丁必须手工保留（或移植后再同步），本文件也一并保留。
 
 ## 1. ComboBox 手动补发 `activated`
 
@@ -49,6 +49,19 @@ Binding {
 加一个亮度下限 / 上限（深色主题提亮、浅色主题压暗），供图标与强调文字着色。
 
 - 症状（丢掉补丁）：系统主题色偏暗时，启动台里的小图标几乎糊在深色卡片上。
+
+## 5. 平台探测缓存与配置路径
+
+`core/config.py`：
+
+- `is_windows` / `is_win11` / `is_win11_22h2` / `is_win10` 加 `lru_cache`。
+  首次导入时这几个函数会被反复调用，`platform.version()` 在 Windows 上每次
+  要几十毫秒，缓存后冷启动明显更快。
+- `PATH` 从 `Path.cwd() / "RinUI" / "config"` 改为 `RINUI_PATH / "RinUI" / "config"`。
+  从开始菜单或计划任务启动时 cwd 可能是 `System32`，旧写法会在那里新建一份
+  `rin_ui.json`，读不到随包配置。
+
+- 症状（丢掉补丁）：冷启动多几十毫秒；从快捷方式启动时配置文件「不见了」。
 
 ## 同步建议
 

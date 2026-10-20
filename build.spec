@@ -110,9 +110,12 @@ a = Analysis(
     # plain-Python dependencies have to be listed here.
     hiddenimports=[
         "yaml", "pynput", "watchdog", "ctypes.wintypes",
-        # 小窗系统控制：音量（pycaw）与 WinRT 投影。
-        "pycaw", "comtypes", "comtypes.client",
-        "winrt",
+        # watchdog 在 startWatching() 里才导入，显式列出子模块更稳。
+        "watchdog.events", "watchdog.observers",
+        # 小窗系统控制：音量（pycaw）与 WinRT 投影。这些导入都在函数里延迟加载，
+        # 静态分析可能漏掉子模块，这里逐个点名。
+        "pycaw", "pycaw.pycaw", "comtypes", "comtypes.client",
+        "winrt", "winrt.runtime",
         "winrt.windows.devices.radios",
         "winrt.windows.foundation",
         "winrt.windows.foundation.collections",

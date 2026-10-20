@@ -26,6 +26,32 @@ _START_MENU_DIRS = (
     / "Microsoft" / "Windows" / "Start Menu" / "Programs",
 )
 _SKIP_WORDS = ("uninstall", "卸载", "unins")
+# 快捷方式自己的 IconLocation 是图片时可以直接拿来预览（WSA 的安卓应用就是
+# 这样：一个普通的 .lnk，图标放在 LocalState 里的 .ico）。
+_IMAGE_ICON_SUFFIXES = (".ico", ".png", ".svg", ".jpg", ".jpeg", ".bmp")
+
+
+def _clean_icon_location(raw: str) -> str:
+    """``"C:\\x\\app.ico,0"`` / ``"%windir%\\system32\\imageres.dll,-114"`` → 文件路径。
+
+    只认真实存在的文件；``,0`` 这种资源索引会被丢掉（Qt 这边不按索引取图标）。
+    """
+    text = str(raw or "").strip()
+    if not text:
+        return ""
+    if "," in text:
+        text = text.rsplit(",", 1)[0]
+    text = os.path.expandvars(text.strip().strip('"'))
+    return text if text and Path(text).is_file() else ""
+
+
+def _is_wsa(target: str, arguments: str) -> bool:
+    """WSA 安卓应用的快捷方式，目标都是 WsaClient.exe + wsa:// 参数。"""
+    lowered = f"{target} {arguments}".lower()
+    return ("wsaclient.exe" in lowered
+            or "windowssubsystemforandroid" in lowered
+            or "wsa://" in lowered)
+
 
 
 def _decode(raw: bytes) -> str:
@@ -69,13 +95,25 @@ def _parse_lnk(shell: Any, path: Path) -> dict[str, Any] | None:
         name = str(shortcut.Description or "").strip() or path.stem
         if _should_skip(name, target):
             return None
+        # WSA 安卓应用不是 UWP：它们只是普通的 .lnk（目标 WsaClient.exe），
+        # 正确的应用图标写在快捷方式自己的 IconLocation 里。跟随 target 去抽
+        # 只会拿到 WsaClient 的通用图标，所以这里把 IconLocation 一起带出去。
+        try:
+            icon_location = _clean_icon_location(str(shortcut.IconLocation or ""))
+        except Exception:
+            icon_location = ""
+        icon = ""
+        if (icon_location
+                and Path(icon_location).suffix.lower() in _IMAGE_ICON_SUFFIXES):
+            icon = f"file:{icon_location}"
         return {
-            "kind": "lnk",
+            "kind": "wsa" if _is_wsa(target, arguments) else "lnk",
             "name": name,
             "target": target,
             "arguments": arguments,
             "working_dir": working_dir,
-            "icon": "",
+            "icon": icon,
+            "icon_location": icon_location,
             "source": str(path),
         }
     except Exception:
@@ -190,3 +228,26 @@ def parse_shortcut(path: str) -> dict[str, Any] | None:
     except Exception:
         return None
     return _parse_lnk(shell, Path(path))
+
+
+def shortcut_icon_path(path: str | Path) -> str:
+    """只读快捷方式自己的 IconLocation；不存在或不是 .lnk 时返回空串。
+
+    WSA 安卓应用把正确的应用图标写在这里（LocalState 目录下的 .ico），目标
+    ``WsaClient.exe`` 只有一张通用图标 —— 抽图标时要先看这里。
+    """
+    if sys.platform != "win32":
+        return ""
+    source = Path(path)
+    if source.suffix.lower() != ".lnk":
+        return ""
+    try:
+        import pythoncom
+        import win32com.client
+
+        pythoncom.CoInitialize()
+        shortcut = win32com.client.Dispatch("WScript.Shell").CreateShortcut(str(source))
+        return _clean_icon_location(str(shortcut.IconLocation or ""))
+    except Exception:
+        logger.debug("Cannot read the icon location of %s", source, exc_info=True)
+        return ""

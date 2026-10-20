@@ -2,9 +2,13 @@ import json
 import platform
 import sys
 from enum import Enum
+from functools import lru_cache
 from pathlib import Path
 
 
+# 本地补丁：平台探测一次就够。platform.release()/version() 首次调用在 Windows
+# 上要几十毫秒，模块导入时 is_win11() + is_win10() 会重复问好几遍。
+@lru_cache(maxsize=1)
 def is_win11():
     return bool(
         is_windows()
@@ -15,6 +19,7 @@ def is_win11():
     )
 
 
+@lru_cache(maxsize=1)
 def is_win11_22h2():
     """Win11 22H2 (Build 22621) 及以上——支持 DWMWA_SYSTEMBACKDROP_TYPE 现代 API"""
     return bool(
@@ -26,6 +31,7 @@ def is_win11_22h2():
     )
 
 
+@lru_cache(maxsize=1)
 def is_win10():
     return bool(
         is_windows()
@@ -36,6 +42,7 @@ def is_win10():
     )
 
 
+@lru_cache(maxsize=1)
 def is_windows():
     return platform.system() == "Windows"
 
@@ -48,12 +55,14 @@ def resource_path(relative_path):
 
 
 rinui_core_path = Path(__file__).resolve().parent  # RinUI/core 目录
-
-BASE_DIR = Path.cwd().resolve()
-PATH = BASE_DIR / "RinUI" / "config"
 RINUI_PATH = resource_path(
     rinui_core_path.parent.parent
 )  # 使用 resource_path 处理路径，等同 ../../
+
+# 本地补丁：配置跟着 RinUI 目录走，不再依赖进程的当前工作目录。从开始菜单 /
+# 计划任务启动时 cwd 可能是 System32，旧写法会在那里新建一份 rin_ui.json。
+BASE_DIR = Path.cwd().resolve()
+PATH = RINUI_PATH / "RinUI" / "config"
 
 DEFAULT_CONFIG = {
     "theme": {

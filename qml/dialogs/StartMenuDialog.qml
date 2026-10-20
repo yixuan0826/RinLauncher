@@ -23,15 +23,13 @@ AppDialog {
     closeOnScrim: false
 
     readonly property int selectedCount: Object.keys(selected).length
+    // 普通快捷方式 / UWP / WSA / WSL 合并成一张列表：都按名字排序，搜索框
+    // 一视同仁；类型只作为右侧的小标签，不再用分页把用户切来切去。
     readonly property var visibleApps: apps.filter(function (app) {
-        var tab = tabs.currentIndex
-        if (tab === 0 && app.kind !== "lnk") return false
-        if (tab === 1 && app.kind !== "uwp") return false
-        if (tab === 2 && app.kind !== "wsl") return false
         var query = searchField.text.trim().toLowerCase()
         if (query.length === 0) return true
-        return (app.name + " " + app.target + " " + app.arguments)
-            .toLowerCase().indexOf(query) >= 0
+        return (app.name + " " + app.target + " " + app.arguments + " "
+                + (app.source || "")).toLowerCase().indexOf(query) >= 0
     })
 
     onAboutToShow: reload()
@@ -61,12 +59,14 @@ AppDialog {
 
     function kindIcon(kind) {
         if (kind === "uwp") return "ic_fluent_window_20_regular"
+        if (kind === "wsa") return "ic_fluent_phone_20_regular"
         if (kind === "wsl") return "ic_fluent_code_20_regular"
         return "ic_fluent_apps_20_regular"
     }
 
     function kindLabel(kind) {
-        if (kind === "uwp") return qsTr("UWP / WSA")
+        if (kind === "uwp") return qsTr("UWP")
+        if (kind === "wsa") return qsTr("WSA")
         if (kind === "wsl") return qsTr("WSL")
         return qsTr("快捷方式")
     }
@@ -74,6 +74,8 @@ AppDialog {
     function detailOf(app) {
         if (app.kind === "uwp") return app.target
         if (app.kind === "wsl") return app.arguments
+        // WSA 的 target 是 WsaClient.exe，对用户没意义；显示快捷方式自己的路径。
+        if (app.kind === "wsa") return app.source || app.target
         return app.target + (app.arguments.length > 0 ? " " + app.arguments : "")
     }
 
@@ -136,14 +138,6 @@ AppDialog {
                 ToolTip.text: qsTr("重新扫描")
                 onClicked: dialog.reload()
             }
-        }
-
-        Segmented {
-            id: tabs
-            Layout.alignment: Qt.AlignLeft
-            SegmentedItem { text: qsTr("开始菜单") }
-            SegmentedItem { text: qsTr("UWP / WSA") }
-            SegmentedItem { text: qsTr("WSL") }
         }
 
         Frame {
@@ -240,17 +234,8 @@ AppDialog {
                 wrapMode: Text.Wrap
                 typography: Typography.Caption
                 color: Theme.currentTheme.colors.textSecondaryColor
-                text: qsTr("没有找到应用。可以换个分页，或手动选择 .lnk。")
+                text: qsTr("没有找到应用。换个关键词，或手动选择 .lnk。")
             }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            visible: tabs.currentIndex === 2
-            wrapMode: Text.Wrap
-            typography: Typography.Caption
-            color: Theme.currentTheme.colors.textSecondaryColor
-            text: qsTr("WSL 条目会打开对应发行版的默认 shell，保存后可在编辑里补充命令。")
         }
     }
 
