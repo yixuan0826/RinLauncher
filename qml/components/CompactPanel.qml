@@ -12,7 +12,8 @@ Item {
     property var slots: []
     // 最多显示的格数（配置里多出来的上不了小窗，由设置页提醒）。
     property int capacity: 10
-    property int gap: 10
+    // Fluent 2 的 8px 间距节奏：两排之间、格子之间都取 8。
+    property int gap: 8
 
     signal activated(var slot)
     signal menuRequested(var slot, real sceneX, real sceneY)

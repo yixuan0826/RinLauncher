@@ -221,8 +221,7 @@ Item {
                 spacing: 2
 
                 Text {
-                    font.bold: true
-                    font.pixelSize: 20
+                    typography: Typography.Title
                     color: Theme.currentTheme.colors.textColor
                     text: settingsPage.activeSection.title
                 }

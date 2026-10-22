@@ -23,8 +23,7 @@ RowLayout {
 
     Text {
         Layout.alignment: Qt.AlignVCenter
-        font.bold: true
-        font.pixelSize: Theme.currentTheme.typography.bodySize + 1
+        typography: Typography.BodyStrong
         color: Theme.currentTheme.colors.textColor
         text: header.title
     }

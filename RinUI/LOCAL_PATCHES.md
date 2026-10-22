@@ -63,6 +63,15 @@ Binding {
 
 - 症状（丢掉补丁）：冷启动多几十毫秒；从快捷方式启动时配置文件「不见了」。
 
+## 6. 窗口圆角对齐 Win11
+
+`themes/light.qml` / `themes/dark.qml` 的 `appearance.windowRadius` 由 7 改为 8。
+
+Windows 11 的窗口圆角是 8px，DWM 按 8px 裁切窗口；QML 背景画 7px 时，
+弧边会和系统的裁切差 1px，浅色背景下能看到一圈毛边。改成 8 之后两者重合。
+
+- 症状（丢掉补丁）：窗口四角的描边和系统圆角错位，放大后有一圈细齿。
+
 ## 同步建议
 
 1. 用上游 release 全目录对比 `RinUI/`，逐个文件过 diff；

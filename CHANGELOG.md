@@ -3,6 +3,53 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.1.5 — 2026-10-22
+
+### 修复
+
+- UWP 应用在开始菜单选择器里只显示通用占位图标。现在直接读包目录里的
+  `AppxManifest.xml`，按 AUMID 找到对应 `Application`，再取
+  `Square44x44Logo` / `Square150x150Logo`，并在 `targetsize-*` / `scale-*`
+  变体里挑最大的普通版本；添加槽位时同步存入图标库。
+- 开始菜单选择器里的长名称会折行，把条目撑高、上下行距参差；名称与详情都
+  锁定单行，超出部分用省略号。
+
+### 改进
+
+- 界面统一以 **RinUI 官方 Gallery** 为视觉基线：页面标题使用 `Typography.Title`，
+  分组卡片使用 `Frame` + `windowRadius` + 16px 内边距，悬停态使用 `subtleSecondaryColor`，
+  控件圆角保持 RinUI 自带的 `buttonRadius` / `smallRadius`，不再另写一套数值。
+- 小窗补上 Win11 的 8px 窗口圆角（`DWMWA_WINDOW_CORNER_PREFERENCE`）：云母背景与
+  自绘卡片一起被 DWM 裁切，不再露直角；RinUI 的 `windowRadius` 同步为 8，消除
+  四角 1px 错位。
+- 小窗排版：标题条 48px + 发丝分隔线；字号改用 `Theme.currentTheme.typography`
+  的 Body Strong / Caption 令牌；`Frame` 内边距归零后重新分配内容留白；系统控制
+  卡片设定 100px 最小宽度，`Wi-Fi` 不再被省略成 `Wi...`。
+- 编辑 / 设置窗口：分组卡片补 16px 内边距与 8px 圆角，页面标题改为 28px；槽位行、
+  类型胶囊与图标底板统一使用 `windowRadius` / `smallRadius`，列表悬停与选中态
+  改用 Fluent 的 subtle fill。
+- 新增 `scripts/verify_ui.py`：在真实桌面上创建三个窗口、压到底层后抓图，同时
+  校验窗口样式、Win11 圆角偏好、存储卷标、开始菜单数据与 UWP 图标。
+
+### 升级说明
+
+- 配置格式不变（`version: 3`），无需迁移。
+- 已经添加到启动台的 UWP 槽位若仍是占位图标，重新从开始菜单导入一次即可
+  拿到真实图标。
+
+### 验证
+
+- `ruff check rin_launcher tests scripts`：通过。
+- 全部 QML 经 `pyside6-qmllint` 检查，无 `Error:`。
+- 真机验证（Windows 11，150% 缩放，系统深色主题；测试窗口全部置底、不抢焦点）：
+  - 小窗 `WS_EX_NOACTIVATE` / `WS_EX_TOOLWINDOW` 生效，非置顶，DWM 圆角偏好 = 2；
+  - 存储卡片读取卷标「课件」；
+  - 开始菜单 148 项（112 快捷方式 / 30 UWP / 6 WSA），UWP **30/30** 解析到图标，
+    UWP 图标可正常入库；
+  - 开始菜单对话框打开后显示 148 项，编辑器 / 设置窗口与对话框均正常渲染；
+  - 动作执行器运行 `cmd.exe /c exit 0` 返回成功；
+  - 抓图保存在 `build/verify-ui/`，用于目检排版与图标。
+
 ## 1.1.3 — 2026-10-20
 
 ### 修复

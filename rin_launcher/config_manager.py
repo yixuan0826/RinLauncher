@@ -1689,7 +1689,7 @@ class ConfigManager(QObject):
 
     @Slot("QVariantMap", int, result=bool)
     def addAppSlot(self, app: dict, row: int) -> bool:
-        """把开始菜单条目直接建成一格；传统应用顺手抽取图标。"""
+        """把开始菜单条目直接建成一格；扫描阶段拿到的图标会一并入库。"""
         kind = str(app.get("kind") or "lnk")
         name = str(app.get("name") or "").strip()
         target = str(app.get("target") or "").strip()
@@ -1708,9 +1708,15 @@ class ConfigManager(QObject):
                       "working_dir": str(app.get("working_dir") or ""),
                       "run_as": "user", "keyboard_steps": []}
         icon = ""
-        if kind in ("lnk", "wsa"):
-            # 用快捷方式本身抽图标：WSA 的正确图标在 .lnk 的 IconLocation 里，
-            # 传 target 只会拿到 WsaClient.exe 的通用图标。
+        source_icon = str(app.get("icon") or "")
+        if source_icon.startswith("file:"):
+            # 扫描阶段已经定位到真实图片：UWP 的包清单图标、WSA 的 LocalState .ico。
+            # 直接入库，不再从 target 里瞎猜。
+            icon = self._icon_from_path(
+                Path(source_icon[len("file:"):]), notify=False)
+        elif kind in ("lnk", "wsa"):
+            # 没有现成图片时退回快捷方式：WSA 的正确图标在 .lnk 的 IconLocation
+            # 里，传 target 只会拿到 WsaClient.exe 的通用图标。
             icon = self._extract_icon_file(
                 str(app.get("source") or target), notify=False)
         payload = {"kind": SLOT_ACTION, "label": name, "icon": icon, "action": action}

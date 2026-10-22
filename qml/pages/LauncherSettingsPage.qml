@@ -67,7 +67,7 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 Layout.preferredWidth: 46
                 Layout.preferredHeight: 46
-                radius: 12
+                radius: Theme.currentTheme.appearance.windowRadius
                 color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
                                Theme.currentTheme.colors.primaryColor.g,
                                Theme.currentTheme.colors.primaryColor.b,
@@ -86,8 +86,7 @@ Item {
                 spacing: 2
 
                 Text {
-                    font.bold: true
-                    font.pixelSize: 22
+                    typography: Typography.Title
                     color: Theme.currentTheme.colors.textColor
                     text: qsTr("启动台")
                 }

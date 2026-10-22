@@ -72,3 +72,30 @@ def apply_bottom_layer(window: Any) -> None:
             hwnd, HWND_BOTTOM, 0, 0, 0, 0, SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE)
     except Exception:
         logger.debug("Failed to push window to the bottom layer", exc_info=True)
+
+
+def apply_win11_round_corners(window: Any) -> None:
+    """给无边框窗口套上 Win11 的 8px 圆角。
+
+    小窗是自绘卡片 + 云母背景：窗口本身没有标题栏 / 边框，DWM 不会自动圆角，
+    云母就会按矩形铺满整个窗口，QML 卡片画得再圆，外面还是露着直角。
+    ``DWMWA_WINDOW_CORNER_PREFERENCE``（33）设为 ``DWMWCP_ROUND``（2）后，
+    窗口表面与背景材质一起被裁成圆角。Win10 没有这个属性，调用失败即忽略。
+    """
+    if sys.platform != "win32":
+        return
+    hwnd = _hwnd(window)
+    if not hwnd:
+        return
+    try:
+        DWMWA_WINDOW_CORNER_PREFERENCE = 33
+        DWMWCP_ROUND = 2
+        preference = ctypes.c_int(DWMWCP_ROUND)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(preference),
+            ctypes.sizeof(preference),
+        )
+    except Exception:
+        logger.debug("Failed to apply Win11 round corners", exc_info=True)

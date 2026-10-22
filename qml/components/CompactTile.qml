@@ -21,10 +21,11 @@ Item {
     readonly property bool disabled: slot ? slot.enabled === false : false
     // 小格子只有 50px 上下，字号得再收一点，否则「启动台设置」这种五字标题
     // 会折成 4+1 两行，第二行孤零零一个字很难看。
-    readonly property int labelSize: mini ? 9 : 11
-    // 标题最多两行。行高必须按像素给：RinUI 的 Text 是 FixedHeight 语义的
-    // lineHeight，以前写 0.95 实际就是「两行只隔 0.95 像素」，字全叠在一起。
-    readonly property int labelLineHeight: labelSize + 4
+    readonly property int labelSize: mini
+        ? Theme.currentTheme.typography.captionSize - 2
+        : Theme.currentTheme.typography.captionSize
+    // 标题最多两行。行高用 RinUI 的 Caption 行高（16px），别自己估。
+    readonly property int labelLineHeight: Theme.currentTheme.typography.captionLineHeight
     readonly property int labelBlock: labelLineHeight * 2
     // 图标给两行标题让位：剩下的空间里取大（但不超过原来的比例），至少 14。
     readonly property real iconSize: Math.max(14, Math.min(
@@ -43,10 +44,12 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 10
-        color: pointer.pressed || pointer.hovered
-            ? Theme.currentTheme.colors.controlSecondaryColor
-            : "transparent"
+        radius: Theme.currentTheme.appearance.windowRadius
+        // Fluent 2：悬停用 subtle fill secondary，按下再暗一档。
+        color: pointer.pressed
+            ? Theme.currentTheme.colors.subtleTertiaryColor
+            : (pointer.hovered
+               ? Theme.currentTheme.colors.subtleSecondaryColor : "transparent")
         border.width: pointer.hovered || tile.empty ? 1 : 0
         border.color: tile.empty
             ? Theme.currentTheme.colors.cardBorderColor

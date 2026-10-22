@@ -35,8 +35,7 @@ ColumnLayout {
 
         Text {
             Layout.alignment: Qt.AlignVCenter
-            font.pixelSize: Theme.currentTheme.typography.bodySize + 1
-            font.bold: true
+            typography: Typography.BodyStrong
             color: list.full
                 ? Theme.currentTheme.colors.systemCautionColor
                 : Theme.currentTheme.colors.textColor
@@ -88,7 +87,7 @@ ColumnLayout {
         Layout.fillWidth: true
         visible: list.slots.length === 0
         implicitHeight: 124
-        radius: 8
+        radius: Theme.currentTheme.appearance.windowRadius
         color: "transparent"
         border.width: 1
         border.color: Theme.currentTheme.colors.cardBorderColor
@@ -101,7 +100,7 @@ ColumnLayout {
             AppIcon {
                 Layout.alignment: Qt.AlignHCenter
                 iconKey: "ic_fluent_add_circle_20_regular"
-                iconSize: 26
+                iconSize: 24
                 tint: Utils.accentIconColor
             }
 
@@ -133,7 +132,8 @@ ColumnLayout {
             Layout.fillWidth: true
             implicitHeight: 66
             hoverable: true
-            radius: 8
+            padding: 0
+            radius: Theme.currentTheme.appearance.windowRadius
 
             MouseArea {
                 id: rowMouse
@@ -164,7 +164,7 @@ ColumnLayout {
                     Layout.alignment: Qt.AlignVCenter
                     Layout.preferredWidth: 38
                     Layout.preferredHeight: 38
-                    radius: 8
+                    radius: Theme.currentTheme.appearance.windowRadius
                     color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
                                    Theme.currentTheme.colors.primaryColor.g,
                                    Theme.currentTheme.colors.primaryColor.b,
@@ -199,15 +199,15 @@ ColumnLayout {
                         // 类型胶囊：不用读副标题也能一眼看出这是哪种格子。
                         Rectangle {
                             Layout.alignment: Qt.AlignVCenter
-                            implicitWidth: kindLabelText.implicitWidth + 12
-                            implicitHeight: 18
-                            radius: 9
-                            color: Theme.currentTheme.colors.controlSecondaryColor
+                            implicitWidth: kindLabelText.implicitWidth + 14
+                            implicitHeight: 20
+                            radius: height / 2
+                            color: Theme.currentTheme.colors.subtleSecondaryColor
 
                             Text {
                                 id: kindLabelText
                                 anchors.centerIn: parent
-                                font.pixelSize: 10
+                                typography: Typography.Caption
                                 color: Theme.currentTheme.colors.textSecondaryColor
                                 text: modelData.kindLabel || qsTr("格子")
                             }

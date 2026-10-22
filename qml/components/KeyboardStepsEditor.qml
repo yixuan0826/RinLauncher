@@ -302,11 +302,14 @@ ColumnLayout {
 
                 width: stepsList.width
                 height: 30
-                radius: 6
+                radius: Theme.currentTheme.appearance.smallRadius
                 color: row.index === root.selectedIndex
-                       ? Theme.currentTheme.colors.subtleSecondaryColor
-                       : (rowMouse.containsMouse ? Theme.currentTheme.colors.controlSecondaryColor
-                                                 : "transparent")
+                       ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                                  Theme.currentTheme.colors.primaryColor.g,
+                                  Theme.currentTheme.colors.primaryColor.b, 0.10)
+                       : (rowMouse.containsMouse
+                          ? Theme.currentTheme.colors.subtleSecondaryColor
+                          : "transparent")
 
                 Rectangle {
                     // 选中行的左侧强调条

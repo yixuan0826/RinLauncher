@@ -290,7 +290,7 @@ Item {
                                     anchors.top: parent.top
                                     anchors.topMargin: modelData.spaceBefore || 0
                                     height: blockText.implicitHeight + 12
-                                    radius: 4
+                                    radius: Theme.currentTheme.appearance.smallRadius
                                     color: Theme.currentTheme.isDark
                                         ? Qt.rgba(1, 1, 1, 0.06)
                                         : Qt.rgba(0, 0, 0, 0.04)

@@ -147,8 +147,7 @@ AppDialog {
 
             Text {
                 Layout.fillWidth: true
-                font.bold: true
-                font.pixelSize: Theme.currentTheme.typography.bodySize + 1
+                typography: Typography.BodyStrong
                 color: Theme.currentTheme.colors.textColor
                 text: qsTr("这一格用来做什么？")
             }
@@ -176,13 +175,17 @@ AppDialog {
 
                     Layout.fillWidth: true
                     Layout.preferredHeight: 58
-                    radius: 8
+                    padding: 0
+                    radius: Theme.currentTheme.appearance.windowRadius
+                    border.color: selected
+                        ? Theme.currentTheme.colors.primaryColor
+                        : Theme.currentTheme.colors.cardBorderColor
                     color: selected
                         ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
                                   Theme.currentTheme.colors.primaryColor.g,
                                   Theme.currentTheme.colors.primaryColor.b, 0.16)
                         : (kindMouse.containsMouse
-                            ? Theme.currentTheme.colors.controlSecondaryColor
+                            ? Theme.currentTheme.colors.subtleSecondaryColor
                             : Theme.currentTheme.colors.cardColor)
 
                     RowLayout {
@@ -206,7 +209,7 @@ AppDialog {
                             wrapMode: Text.WordWrap
                             maximumLineCount: 2
                             elide: Text.ElideRight
-                            font.pixelSize: Theme.currentTheme.typography.bodySize - 1
+                            typography: Typography.Caption
                             font.bold: kindTile.selected
                             color: kindTile.selected
                                 ? Theme.currentTheme.colors.primaryColor

@@ -26,8 +26,9 @@ Window {
     // 窗口与卡片同尺寸：系统材质与圆角直接作用在窗口上，外面不套透明边，
     // 也就没有那一圈「玻璃边框」。投影交给系统，QML 不再自绘。
     readonly property int edgeMargin: 16      // 贴边时与桌面边缘的距离
-    readonly property int contentMargin: 14   // 卡片内的内容留白
-    readonly property int cardRadius: 8       // 与 DWM 的窗口圆角保持一致
+    readonly property int contentMargin: 16   // 卡片内的内容留白
+    // 圆角直接用 RinUI 主题令牌（Win11 默认 8px），不另起一套数值。
+    readonly property int cardRadius: Theme.currentTheme.appearance.windowRadius
 
     width: 400
     height: Math.max(400, Math.round(Screen.desktopAvailableHeight / 2))
@@ -116,42 +117,44 @@ Window {
             anchors.fill: parent
             radius: compact.cardRadius
             // 上了云母就走「几乎全透」，让系统的材质透上来；否则退回半透明纯色。
-            // 不描边：窗口的圆角与材质归 DWM 管，卡片只负责填色，边界由材质自己
-            // 的明暗变化表达。
+            // 描边很淡，只在浅色壁纸上给卡片定个界；深色主题下几乎看不见。
             color: Qt.rgba(Theme.currentTheme.colors.backgroundColor.r,
                            Theme.currentTheme.colors.backgroundColor.g,
                            Theme.currentTheme.colors.backgroundColor.b,
                            compact.backdropActive ? 0.18 : 0.94)
+            border.width: 1
+            border.color: Theme.currentTheme.colors.windowBorderColor
         }
 
         ColumnLayout {
             anchors.fill: card
             anchors.margins: compact.contentMargin
-            spacing: 10
+            spacing: 12
 
             // ── 标题条 ──
             Item {
                 id: titleBar
                 Layout.fillWidth: true
-                Layout.preferredHeight: 44
+                Layout.preferredHeight: 48
 
                 RowLayout {
                     anchors.fill: parent
-                    spacing: 10
+                    spacing: 8
 
                     // 应用自己的图标，不加底板；右边跟着「启动台」三个字。
                     AppIcon {
                         Layout.alignment: Qt.AlignVCenter
                         iconKey: "url:" + Qt.resolvedUrl("../assets/icon.png")
-                        iconSize: 28
+                        iconSize: 24
                     }
 
                     Text {
                         Layout.alignment: Qt.AlignVCenter
                         // objectName 给无头验收脚本定位用。
                         objectName: "compactTitle"
-                        font.pixelSize: 17
-                        font.bold: true
+                        // 用 RinUI 的 Body Strong 尺寸，标题不靠大字号撑场面。
+                        font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                        font.weight: Font.DemiBold
                         color: Theme.currentTheme.colors.textColor
                         text: qsTr("启动台")
                     }
@@ -160,8 +163,8 @@ Window {
 
                     ToolButton {
                         id: editButton
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 30
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
                         icon.name: "ic_fluent_edit_20_regular"
                         ToolTip.text: qsTr("编辑启动台")
                         ToolTip.visible: hovered
@@ -172,14 +175,23 @@ Window {
                     ToolButton {
                         id: moreButton
                         objectName: "compactMoreButton"
-                        Layout.preferredWidth: 30
-                        Layout.preferredHeight: 30
+                        Layout.preferredWidth: 32
+                        Layout.preferredHeight: 32
                         icon.name: "ic_fluent_more_vertical_20_regular"
                         ToolTip.text: qsTr("更多")
                         ToolTip.visible: hovered
                         ToolTip.delay: 500
                         onClicked: compact.popupMoreMenu()
                     }
+                }
+
+                // 标题与内容之间的发丝线：Win11 的标题区就是靠一条 1px 分隔线定界。
+                Rectangle {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    height: 1
+                    color: Theme.currentTheme.colors.dividerBorderColor
                 }
             }
 
@@ -203,7 +215,6 @@ Window {
                 Flickable {
                     id: storageRow
                     objectName: "storageRow"
-
                     anchors.fill: parent
                     clip: true
                     contentWidth: storageContent.implicitWidth
@@ -218,11 +229,12 @@ Window {
                         y: Math.max(0, (storageRow.height - implicitHeight) / 2)
                         spacing: 8
 
-                        // 固定的存储卡片（不是槽位，第三行的头一张）。宽度按行宽留出
-                        // 一个磁盘卡的位置，两个 132 的卡片加间距刚好不溢出。
+                        // 固定的存储卡片（不是槽位，第三行的头一张）。
                         Frame {
                             width: 202
                             height: 66
+                            padding: 0
+                            radius: Theme.currentTheme.appearance.windowRadius
 
                             MouseArea {
                                 anchors.fill: parent
@@ -257,14 +269,14 @@ Window {
                                         Text {
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
-                                            font.pixelSize: 12
-                                            font.bold: true
+                                            font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                                            font.weight: Font.DemiBold
                                             color: Theme.currentTheme.colors.textColor
                                             text: compact.storage.label || qsTr("存储位置")
                                         }
 
                                         Text {
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.currentTheme.typography.captionSize
                                             color: Theme.currentTheme.colors.textSecondaryColor
                                             // 这一行很窄：带上总量会把左边的目录名挤成
                                             // 「w...e」，总量留给提示气泡，进度条本身也表达了占比。
@@ -276,8 +288,8 @@ Window {
 
                                     Rectangle {
                                         Layout.fillWidth: true
-                                        Layout.preferredHeight: 4
-                                        radius: 2
+                                        Layout.preferredHeight: 6
+                                        radius: 3
                                         color: Theme.currentTheme.colors.controlSecondaryColor
 
                                         Rectangle {
@@ -306,8 +318,10 @@ Window {
                             delegate: Frame {
                                 id: diskCard
 
-                                width: Math.min(214, Math.max(132, diskLabel.implicitWidth + 76))
+                                width: 202
                                 height: 66
+                                padding: 0
+                                radius: Theme.currentTheme.appearance.windowRadius
                                 opacity: modelData.exists === false ? 0.55 : 1
 
                                 MouseArea {
@@ -342,7 +356,7 @@ Window {
                                     AppIcon {
                                         Layout.alignment: Qt.AlignVCenter
                                         iconKey: modelData.icon || ""
-                                        iconSize: 22
+                                        iconSize: 24
                                         tint: modelData.exists === false
                                             ? Theme.currentTheme.colors.textSecondaryColor
                                             : Utils.accentIconColor
@@ -351,21 +365,21 @@ Window {
                                     ColumnLayout {
                                         Layout.fillWidth: true
                                         Layout.alignment: Qt.AlignVCenter
-                                        spacing: 1
+                                        spacing: 2
 
                                         Text {
                                             id: diskLabel
                                             Layout.fillWidth: true
                                             elide: Text.ElideRight
-                                            font.pixelSize: 12
-                                            font.bold: true
+                                            font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                                            font.weight: Font.DemiBold
                                             color: Theme.currentTheme.colors.textColor
                                             text: modelData.name || qsTr("磁盘")
                                         }
                                         Text {
                                             Layout.fillWidth: true
                                             elide: Text.ElideMiddle
-                                            font.pixelSize: 10
+                                            font.pixelSize: Theme.currentTheme.typography.captionSize
                                             color: Theme.currentTheme.colors.textSecondaryColor
                                             text: modelData.exists === false
                                                 ? (modelData.kind === "usb"
@@ -400,7 +414,7 @@ Window {
             z: 900
             width: Math.min(toastText.implicitWidth + 24, card.width - 32)
             height: 32
-            radius: 8
+            radius: Theme.currentTheme.appearance.windowRadius
             color: Theme.currentTheme.colors.primaryColor
             opacity: 0
             visible: opacity > 0
@@ -416,7 +430,7 @@ Window {
                 horizontalAlignment: Text.AlignHCenter
                 elide: Text.ElideRight
                 color: "white"
-                font.pixelSize: 12
+                font.pixelSize: Theme.currentTheme.typography.captionSize
                 text: ""
             }
 
@@ -464,7 +478,7 @@ Window {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: Theme.currentTheme.colors.textColor
-                        font.pixelSize: 13
+                        font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
                         text: qsTr("以管理员身份运行：")
                     }
                     Text {
@@ -472,15 +486,15 @@ Window {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: Theme.currentTheme.colors.textColor
-                        font.pixelSize: 13
-                        font.bold: true
+                        font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                        font.weight: Font.DemiBold
                         text: ""
                     }
                     Text {
                         Layout.fillWidth: true
                         wrapMode: Text.Wrap
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        font.pixelSize: 11
+                        font.pixelSize: Theme.currentTheme.typography.captionSize
                         text: qsTr("会弹出 UAC 授权窗口。")
                     }
                     RowLayout {

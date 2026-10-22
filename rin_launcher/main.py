@@ -192,9 +192,10 @@ class Launcher:
         # 之后才能用和完整窗口同一套云母 / 增强云母。
         window.theme_manager.set_window(root)
 
-        # 桌面挂件：沉底、不抢焦点。
+        # 桌面挂件：沉底、不抢焦点，窗口本体按 Win11 的 8px 圆角裁切。
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
+        effects.apply_win11_round_corners(root)
         self.apply_material(str(self.config_manager.config["settings"].get(
             "material", DEFAULT_MATERIAL)), window)
         return True

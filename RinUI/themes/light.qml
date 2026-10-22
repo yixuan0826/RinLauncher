@@ -97,7 +97,7 @@ QtObject {
 
         property int dialogTitleBarHeight: 32
         property int windowTitleBarHeight: 48
-        property int windowRadius: 7
+        property int windowRadius: 8
         property int windowButtonWidth: 46
 
         property int scrollBarMinWidth: 2

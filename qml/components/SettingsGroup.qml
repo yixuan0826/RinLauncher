@@ -12,7 +12,7 @@ ColumnLayout {
     default property alias content: inner.data
 
     Layout.fillWidth: true
-    spacing: 10
+    spacing: 12
 
     ZoneHeader {
         Layout.fillWidth: true
@@ -22,11 +22,13 @@ ColumnLayout {
 
     Frame {
         Layout.fillWidth: true
+        padding: 16
+        radius: Theme.currentTheme.appearance.windowRadius
 
         ColumnLayout {
             id: inner
             anchors.fill: parent
-            spacing: 10
+            spacing: 12
         }
     }
 }

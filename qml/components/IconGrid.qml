@@ -43,9 +43,11 @@ GridView {
             anchors.centerIn: parent
             width: grid.cellSize
             height: grid.cellSize
-            radius: 8
+            radius: Theme.currentTheme.appearance.windowRadius
             color: cell.selected
-                ? Theme.currentTheme.colors.controlSecondaryColor
+                ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
+                          Theme.currentTheme.colors.primaryColor.g,
+                          Theme.currentTheme.colors.primaryColor.b, 0.12)
                 : pointer.containsMouse
                     ? Theme.currentTheme.colors.subtleSecondaryColor
                     : "transparent"

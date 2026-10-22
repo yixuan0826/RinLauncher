@@ -160,27 +160,28 @@ AppDialog {
                     readonly property bool checked: dialog.isSelected(app)
 
                     width: appList.width
-                    height: 54
-                    radius: 6
+                    height: 56
+                    radius: Theme.currentTheme.appearance.windowRadius
                     color: checked
                         ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
                                   Theme.currentTheme.colors.primaryColor.g,
                                   Theme.currentTheme.colors.primaryColor.b, 0.14)
                         : (rowMouse.containsMouse
-                           ? Theme.currentTheme.colors.controlSecondaryColor : "transparent")
+                           ? Theme.currentTheme.colors.subtleSecondaryColor : "transparent")
 
                     MouseArea {
                         id: rowMouse
                         anchors.fill: parent
                         hoverEnabled: true
+                        cursorShape: Qt.PointingHandCursor
                         onClicked: dialog.toggle(row.app)
                     }
 
                     RowLayout {
                         anchors.fill: parent
-                        anchors.leftMargin: 8
+                        anchors.leftMargin: 12
                         anchors.rightMargin: 12
-                        spacing: 10
+                        spacing: 12
 
                         CheckBox {
                             checked: row.checked
@@ -199,17 +200,24 @@ AppDialog {
                         ColumnLayout {
                             Layout.fillWidth: true
                             Layout.alignment: Qt.AlignVCenter
-                            spacing: 0
+                            spacing: 2
 
                             Text {
                                 Layout.fillWidth: true
+                                // 名称只占一行：高度用 RinUI 的 Body 行高，长名字统一走省略号，
+                                // 不会把下面一行挤歪、也不会把行距撑成参差不齐。
+                                Layout.preferredHeight: Theme.currentTheme.typography.bodyLineHeight
+                                wrapMode: Text.NoWrap
+                                maximumLineCount: 1
                                 elide: Text.ElideRight
                                 color: Theme.currentTheme.colors.textColor
                                 text: row.app.name
                             }
                             Text {
                                 Layout.fillWidth: true
+                                Layout.preferredHeight: Theme.currentTheme.typography.captionLineHeight
                                 wrapMode: Text.NoWrap
+                                maximumLineCount: 1
                                 elide: Text.ElideMiddle
                                 typography: Typography.Caption
                                 color: Theme.currentTheme.colors.textSecondaryColor
@@ -217,10 +225,21 @@ AppDialog {
                             }
                         }
 
-                        Text {
-                            typography: Typography.Caption
-                            color: Theme.currentTheme.colors.textSecondaryColor
-                            text: dialog.kindLabel(row.app.kind)
+                        // 类型标签：Fluent 的浅底小胶囊，比裸文字更好认，也不抢名称的宽度。
+                        Rectangle {
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.preferredWidth: kindText.implicitWidth + 14
+                            Layout.preferredHeight: 20
+                            radius: Theme.currentTheme.appearance.smallRadius
+                            color: Theme.currentTheme.colors.subtleSecondaryColor
+
+                            Text {
+                                id: kindText
+                                anchors.centerIn: parent
+                                typography: Typography.Caption
+                                color: Theme.currentTheme.colors.textSecondaryColor
+                                text: dialog.kindLabel(row.app.kind)
+                            }
                         }
                     }
                 }

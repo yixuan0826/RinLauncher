@@ -34,7 +34,9 @@ RowLayout {
         Theme.currentTheme.colors.primaryColor.b,
         0.20)
     readonly property color tileColor: Theme.currentTheme.colors.cardColor
-    readonly property color hoverColor: Theme.currentTheme.colors.controlSecondaryColor
+    // 悬停用更亮一层的卡片色（浅色主题是纯白，深色主题是 7% 白），
+    // 比同样是半透明白的 controlSecondaryColor 明显得多。
+    readonly property color hoverColor: Theme.currentTheme.colors.cardTertiaryColor
     readonly property color textMain: Theme.currentTheme.colors.textColor
     readonly property color textSub: Theme.currentTheme.colors.textSecondaryColor
     readonly property color accentText: Utils.accentIconColor
@@ -85,11 +87,12 @@ RowLayout {
         objectName: "systemVolumeCard"
 
         Layout.fillWidth: true
-        Layout.minimumWidth: 150
-        Layout.preferredWidth: 168
+        Layout.minimumWidth: 144
+        Layout.preferredWidth: 160
         Layout.preferredHeight: 66
         hoverable: true
-        radius: 8
+        padding: 0
+        radius: Theme.currentTheme.appearance.windowRadius
 
         ColumnLayout {
             anchors.fill: parent
@@ -104,13 +107,13 @@ RowLayout {
                 spacing: 6
 
                 Item {
-                    Layout.preferredWidth: 18
-                    Layout.preferredHeight: 18
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
 
                     AppIcon {
                         anchors.fill: parent
                         iconKey: root.volumeIcon()
-                        iconSize: 18
+                        iconSize: 20
                         tint: root.mutedValue ? root.textSub : root.accentText
                     }
 
@@ -126,8 +129,8 @@ RowLayout {
                 Label {
                     text: qsTr("音量")
                     color: root.textMain
-                    font.pixelSize: 12
-                    font.bold: true
+                    font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                    font.weight: Font.DemiBold
                 }
 
                 Item { Layout.fillWidth: true }
@@ -135,7 +138,7 @@ RowLayout {
                 Label {
                     text: Math.round(root.volumeValue * 100) + "%"
                     color: root.textSub
-                    font.pixelSize: 10
+                    font.pixelSize: Theme.currentTheme.typography.captionSize
                 }
             }
 
@@ -176,10 +179,12 @@ RowLayout {
         id: wifiCard
         objectName: "systemWifiCard"
 
-        Layout.preferredWidth: 94
+        Layout.preferredWidth: 100
         Layout.preferredHeight: 66
+        Layout.minimumWidth: 100
         hoverable: true
-        radius: 8
+        padding: 0
+        radius: Theme.currentTheme.appearance.windowRadius
         color: root.background(root.wifiEnabledValue, wifiMouse.containsMouse)
 
         ColumnLayout {
@@ -195,22 +200,23 @@ RowLayout {
                 spacing: 5
 
                 AppIcon {
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
                     iconKey: root.wifiEnabledValue
                         ? "ic_fluent_wifi_1_20_regular"
                         : "ic_fluent_wifi_off_20_regular"
-                    iconSize: 16
+                    iconSize: 20
                     tint: root.wifiEnabledValue ? root.accentText : root.textSub
                     opacity: root.wifiAvailableValue ? 1 : 0.55
                 }
 
                 Label {
                     Layout.fillWidth: true
+                    objectName: "wifiTitleLabel"
                     text: qsTr("Wi-Fi")
                     color: root.wifiEnabledValue ? root.accentText : root.textMain
-                    font.pixelSize: 11
-                    font.bold: true
+                    font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                    font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
             }
@@ -221,7 +227,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: root.wifiStatus()
                 color: root.textSub
-                font.pixelSize: 10
+                font.pixelSize: Theme.currentTheme.typography.captionSize
                 elide: Text.ElideRight
             }
         }
@@ -246,10 +252,12 @@ RowLayout {
         id: hotspotCard
         objectName: "systemHotspotCard"
 
-        Layout.preferredWidth: 94
+        Layout.preferredWidth: 100
         Layout.preferredHeight: 66
+        Layout.minimumWidth: 100
         hoverable: true
-        radius: 8
+        padding: 0
+        radius: Theme.currentTheme.appearance.windowRadius
         color: root.background(root.hotspotEnabledValue, hotspotMouse.containsMouse)
 
         ColumnLayout {
@@ -265,20 +273,21 @@ RowLayout {
                 spacing: 5
 
                 AppIcon {
-                    Layout.preferredWidth: 16
-                    Layout.preferredHeight: 16
+                    Layout.preferredWidth: 20
+                    Layout.preferredHeight: 20
                     iconKey: "ic_fluent_router_20_regular"
-                    iconSize: 16
+                    iconSize: 20
                     tint: root.hotspotEnabledValue ? root.accentText : root.textSub
                     opacity: root.hotspotAvailableValue ? 1 : 0.55
                 }
 
                 Label {
                     Layout.fillWidth: true
+                    objectName: "hotspotTitleLabel"
                     text: qsTr("热点")
                     color: root.hotspotEnabledValue ? root.accentText : root.textMain
-                    font.pixelSize: 11
-                    font.bold: true
+                    font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                    font.weight: Font.DemiBold
                     elide: Text.ElideRight
                 }
             }
@@ -289,7 +298,7 @@ RowLayout {
                 Layout.fillWidth: true
                 text: root.hotspotStatus()
                 color: root.textSub
-                font.pixelSize: 10
+                font.pixelSize: Theme.currentTheme.typography.captionSize
                 elide: Text.ElideRight
             }
         }

@@ -23,9 +23,9 @@ Item {
 
     Rectangle {
         anchors.fill: parent
-        radius: 6
+        radius: Theme.currentTheme.appearance.smallRadius
         color: pointer.containsMouse && button.enabled
-            ? Theme.currentTheme.colors.controlSecondaryColor
+            ? Theme.currentTheme.colors.subtleSecondaryColor
             : "transparent"
 
         Behavior on color {
