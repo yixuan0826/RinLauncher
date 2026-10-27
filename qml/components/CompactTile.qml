@@ -72,7 +72,7 @@ Item {
             placeholder: "ic_fluent_add_20_regular"
             tint: tile.empty || tile.disabled
                 ? Theme.currentTheme.colors.textSecondaryColor
-                : Utils.accentIconColor
+                : Theme.currentTheme.colors.textColor
         }
 
         Text {
@@ -100,7 +100,7 @@ Item {
         visible: !!tile.slot && tile.slot.admin === true
         iconKey: "ic_fluent_shield_20_regular"
         iconSize: 11
-        tint: Utils.accentIconColor
+        tint: Theme.currentTheme.colors.textSecondaryColor
     }
 
     MouseArea {
@@ -110,6 +110,7 @@ Item {
         acceptedButtons: Qt.LeftButton | Qt.RightButton
 
         onReleased: {
+            // 只在左键按下、且释放仍在格子内时算一次点击；拖出去再松手不启动。
             if (mouse.button === Qt.LeftButton && containsMouse && !tile.empty) {
                 tile.activated(tile.slot)
             }

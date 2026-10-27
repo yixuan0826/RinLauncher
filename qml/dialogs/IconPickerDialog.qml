@@ -364,7 +364,7 @@ AppDialog {
         }
 
         Button {
-            text: qsTr("取消")
+            text: qsTr("先别……")
             onClicked: picker.reject()
         }
 

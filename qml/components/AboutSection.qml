@@ -91,6 +91,13 @@ ColumnLayout {
         title: qsTr("运行环境")
 
         FormRow {
+            label: qsTr("构建通道")
+            Text {
+                color: Theme.currentTheme.colors.textColor
+                text: aboutSection.runtime.branch || "Release"
+            }
+        }
+        FormRow {
             label: qsTr("Python")
             Text {
                 color: Theme.currentTheme.colors.textColor
@@ -111,6 +118,22 @@ ColumnLayout {
             Text {
                 color: Theme.currentTheme.colors.textColor
                 text: aboutSection.runtime.system || "-"
+            }
+        }
+        FormRow {
+            label: qsTr("Windows Build")
+            Text {
+                color: Theme.currentTheme.colors.textColor
+                text: aboutSection.runtime.windowsBuild || "-"
+            }
+        }
+        FormRow {
+            label: qsTr("诊断信息")
+            description: qsTr("复制版本、运行时和路径，方便反馈问题")
+            Button {
+                text: qsTr("复制")
+                icon.name: "ic_fluent_copy_20_regular"
+                onClicked: ConfigManager.copyDiagnostics()
             }
         }
         FormRow {

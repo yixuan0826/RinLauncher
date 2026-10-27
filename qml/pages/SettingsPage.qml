@@ -18,6 +18,8 @@ Item {
     property var model: ({})
     property var pending: ({})
     property var backupInfo: ({})
+    property var backups: []
+    property var storageInfo: ({})
 
     // 读取配置时控件会跟着变。这个标记把「程序赋值」和「用户操作」区分开，
     // 免得一次重读把所有值又当成用户改动写回磁盘。
@@ -32,6 +34,8 @@ Item {
           icon: "ic_fluent_arrow_download_20_regular" },
         { key: "backup", title: qsTr("备份"),
           icon: "ic_fluent_save_20_regular" },
+        { key: "storage", title: qsTr("存储"),
+          icon: "ic_fluent_database_20_regular" },
         { key: "about", title: qsTr("关于与鸣谢"),
           icon: "ic_fluent_info_20_regular" }
     ]
@@ -249,6 +253,10 @@ Item {
                     id: backupPage
                     page: settingsPage
                 }
+                StorageSettingsPage {
+                    id: storagePage
+                    page: settingsPage
+                }
                 AboutSettingsPage {
                     id: aboutPage
                 }
@@ -305,7 +313,8 @@ Item {
             "personalization": 1, "appearanceGroup": 1,
             "update": 2, "updateGroup": 2,
             "backup": 3, "backupGroup": 3,
-            "about": 4, "aboutGroup": 4
+            "storage": 4, "storageGroup": 4,
+            "about": 5, "aboutGroup": 5
         }
         var index = map[String(name || "")]
         if (index !== undefined) {
@@ -326,7 +335,14 @@ Item {
 
     function reloadBackupInfo() {
         backupInfo = ConfigManager.getBackupInfo()
+        backups = ConfigManager.listBackups()
         backupPage.reload()
+        reloadStorageInfo()
+    }
+
+    function reloadStorageInfo() {
+        storageInfo = ConfigManager.getStorageUsage()
+        storagePage.reload()
     }
 
     // 先攒进 pending，再由定时器合并写盘；主题这类要立刻看到效果的顺手就应用。

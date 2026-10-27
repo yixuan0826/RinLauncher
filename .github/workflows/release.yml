@@ -26,6 +26,12 @@ jobs:
       - name: Build (onedir)
         run: pyinstaller build.spec
 
+      - name: Mark build channel
+        shell: pwsh
+        run: |
+          $channel = if ("${{ github.ref_name }}" -match '-') { "Pre-Release" } else { "Release" }
+          Set-Content -Path dist/RinLauncher/channel.txt -Value $channel -Encoding utf8
+
       - name: Package (zip)
         run: Compress-Archive -Path dist/RinLauncher/* -DestinationPath RinLauncher.zip
 
@@ -50,5 +56,5 @@ jobs:
           files: RinLauncher.zip
           body_path: release-notes.md
           draft: false
-          prerelease: false
-          make_latest: true
+          prerelease: ${{ contains(github.ref_name, '-') }}
+          make_latest: ${{ !contains(github.ref_name, '-') }}

@@ -98,20 +98,6 @@ Item {
                 }
 
                 FormRow {
-                    label: qsTr("窗口材质")
-                    description: qsTr("云母需要 Windows 11")
-                    ComboBox {
-                        id: materialCombo
-                        Layout.preferredWidth: 180
-                        model: [qsTr("增强云母"), qsTr("云母"), qsTr("不透明")]
-                        onActivated: function (index) {
-                            pageRoot.page.apply("material",
-                                ["tabbed", "mica", "none"][index])
-                        }
-                    }
-                }
-
-                FormRow {
                     label: qsTr("动画效果")
                     Switch {
                         id: animationSwitch

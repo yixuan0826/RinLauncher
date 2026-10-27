@@ -502,7 +502,7 @@ Window {
                         spacing: 8
                         Item { Layout.fillWidth: true }
                         Button {
-                            text: qsTr("取消")
+                            text: qsTr("先别……")
                             onClicked: compact.cancelAdminRun()
                         }
                         Button {
@@ -510,6 +510,63 @@ Window {
                             highlighted: true
                             onClicked: compact.confirmAdminRun()
                         }
+                    }
+                }
+            }
+        }
+    }
+
+    // 退出前确认：小窗不接受键盘焦点，同样用自绘卡片。
+    Rectangle {
+        id: quitConfirmScrim
+
+        objectName: "quitConfirmScrim"
+        anchors.fill: parent
+        z: 960
+        color: Qt.rgba(0, 0, 0, 0.35)
+        opacity: 0
+        visible: opacity > 0
+        Behavior on opacity {
+            NumberAnimation { duration: 140 }
+        }
+
+        MouseArea {
+            anchors.fill: parent
+            onClicked: compact.cancelQuit()
+        }
+
+        Frame {
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.verticalCenter: parent.verticalCenter
+            width: Math.min(parent.width - 48, 320)
+            implicitHeight: quitColumn.implicitHeight + 24
+            hoverable: false
+
+            ColumnLayout {
+                id: quitColumn
+                anchors.fill: parent
+                anchors.margins: 12
+                spacing: 8
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    color: Theme.currentTheme.colors.textColor
+                    font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                    text: qsTr("确认退出？查理会想你的。")
+                }
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 8
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: qsTr("先别……")
+                        onClicked: compact.cancelQuit()
+                    }
+                    Button {
+                        text: qsTr("动手！")
+                        highlighted: true
+                        onClicked: compact.confirmQuit()
                     }
                 }
             }
@@ -589,12 +646,20 @@ Window {
         MenuItem {
             text: qsTr("退出")
             icon.name: "ic_fluent_power_20_regular"
-            onTriggered: compact.quitRequested()
+            onTriggered: compact.askQuit()
         }
     }
 
     // 右键那一刻的场景坐标，供菜单定位。
     property point pendingPoint: Qt.point(0, 0)
+
+    // 磁盘 / U 盘是热插拔的：小窗可见时每 2.5 秒重读一次（隐藏时停掉）。
+    Timer {
+        interval: 2500
+        repeat: true
+        running: compact.visible
+        onTriggered: compact.refreshLive()
+    }
 
     Component.onCompleted: {
         snapToCorner()
@@ -636,6 +701,37 @@ Window {
         panelSlots = filterRow(slots, 0)
         storageSlots = filterRow(slots, 1)
         storage = ConfigManager.getStorageInfo()
+    }
+
+    // 老数组和新数组的「可显示信息」一致时就不重建格子，避免每 2.5 秒闪烁。
+    function slotSignature(slots) {
+        return slots.map(function (slot) {
+            return [slot.kind, slot.name, slot.path, slot.icon,
+                    slot.enabled === false ? 0 : 1,
+                    slot.available === false ? 0 : 1].join("|")
+        }).sort().join("\n")
+    }
+
+    function refreshLive() {
+        storage = ConfigManager.refreshStorageInfo()
+        var slots = ConfigManager.getLauncherSlots()
+        if (slotSignature(slots) !== slotSignature(panelSlots.concat(storageSlots))) {
+            panelSlots = filterRow(slots, 0)
+            storageSlots = filterRow(slots, 1)
+        }
+    }
+
+    function askQuit() {
+        quitConfirmScrim.opacity = 1
+    }
+
+    function cancelQuit() {
+        quitConfirmScrim.opacity = 0
+    }
+
+    function confirmQuit() {
+        quitConfirmScrim.opacity = 0
+        compact.quitRequested()
     }
 
     function filterRow(slots, row) {

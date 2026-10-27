@@ -35,13 +35,13 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QIcon
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon
 
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
 
 from rin_launcher import __version__ as APP_VERSION
-from rin_launcher import autostart, start_menu
+from rin_launcher import autostart, logging_setup, start_menu
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
@@ -108,8 +108,9 @@ IMAGE_ICON_SUFFIXES: tuple = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
 
 # 用户自建图标的落盘目录（导入的 svg/png/ico、从程序里抽出来的图标都放这儿）。
 ICON_STORE_NAME = "icons"
-# 磁盘容量这种系统调用有成本，缓存一小段时间，同一轮刷新里不重复问系统。
-STORAGE_TTL = 20.0
+# 磁盘容量这种系统调用有成本；小窗每 2 秒轮询一次，缓存留 1.5 秒就够
+# （同一次刷新里不重复问系统，又不会让插拔 U 盘等上半分钟）。
+STORAGE_TTL = 1.5
 
 # ── 备份 ────────────────────────────────────────────────────────
 # 自动备份 7 天一次，保留最近 8 份；手动备份不自动删。
@@ -337,8 +338,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "startMinimized": False,
     "startupMode": "off",
     "globalHotkey": "Ctrl+Space",
-    # 窗口材质。RinUI 的取值：tabbed(增强云母) | mica(云母) | none(不透明)
-    "material": "tabbed",
     "animationEnabled": True,
     "accentColor": "#0078d4",
     # system = 跟随 Windows 强调色；custom = 使用 accentColor。
@@ -346,6 +345,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "adminAutoElevate": True,
     "confirmAdminActions": True,
     "logLevel": "INFO",
+    "autoBackupEnabled": True,
+    "autoBackupIntervalDays": 7,
+    "autoBackupKeep": 8,
     "updateChannel": "stable",
     "autoCheckUpdates": True,
     "updateMirror": "github",
@@ -559,8 +561,10 @@ class ConfigManager(QObject):
         self.config_file = self.config_dir / "config.yaml"
         self.backup_dir = self.config_dir / "backups"
         self.icon_dir = self.config_dir / ICON_STORE_NAME
+        self.log_dir = logging_setup.log_dir(self.config_dir)
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.icon_dir.mkdir(parents=True, exist_ok=True)
+        self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self.action_executor = None
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
@@ -830,7 +834,12 @@ class ConfigManager(QObject):
             return ""
 
         if not manual:
-            for stale in self._backup_files(BACKUP_AUTO_PREFIX)[:-AUTO_BACKUP_KEEP]:
+            try:
+                keep = max(1, int(self._config["settings"].get(
+                    "autoBackupKeep", AUTO_BACKUP_KEEP)))
+            except (TypeError, ValueError):
+                keep = AUTO_BACKUP_KEEP
+            for stale in self._backup_files(BACKUP_AUTO_PREFIX)[:-keep]:
                 stale.unlink(missing_ok=True)
         self.backupChanged.emit()
         if not silent:
@@ -839,13 +848,21 @@ class ConfigManager(QObject):
         logger.info("Created %s backup: %s", "manual" if manual else "auto", target)
         return str(target)
 
+    def _backup_interval_days(self) -> int:
+        try:
+            return max(1, int(self._config["settings"].get("autoBackupIntervalDays", 7)))
+        except (TypeError, ValueError):
+            return 7
+
     def _maybe_auto_backup(self) -> None:
-        """距离上一份自动备份超过 7 天就补一份；启动与每 6 小时各检查一次。"""
+        """按设置里的间隔补一份自动备份；启动与每 6 小时各检查一次。"""
+        if not bool(self._config["settings"].get("autoBackupEnabled", True)):
+            return
         existing = self._backup_files(BACKUP_AUTO_PREFIX)
         if existing:
             try:
                 age = time.time() - existing[-1].stat().st_mtime
-                if age < AUTO_BACKUP_INTERVAL:
+                if age < self._backup_interval_days() * 24 * 60 * 60:
                     return
             except OSError:
                 pass
@@ -882,11 +899,209 @@ class ConfigManager(QObject):
             "autoName": auto_name,
             "manualName": manual_name,
             "autoKeep": AUTO_BACKUP_KEEP,
+            "autoEnabled": bool(self._config["settings"].get("autoBackupEnabled", True)),
+            "intervalDays": self._backup_interval_days(),
+            "keepCount": int(self._config["settings"].get("autoBackupKeep", AUTO_BACKUP_KEEP)),
         }
 
     @Slot()
     def openBackupFolder(self) -> None:
         self._reveal(self.backup_dir)
+
+    # ── 备份恢复 ──────────────────────────────────────────────────────
+    @Slot(result="QVariantList")
+    def listBackups(self) -> list[dict[str, Any]]:
+        """最近的备份（手动 + 自动），按时间倒序，供设置页列表用。"""
+        entries: list[dict[str, Any]] = []
+        for path in self._backup_files("config-"):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            entries.append({
+                "name": path.name,
+                "manual": path.name.startswith(BACKUP_MANUAL_PREFIX),
+                "size": _human_size(stat.st_size),
+                "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
+            })
+        entries.sort(key=lambda item: item["time"], reverse=True)
+        return entries
+
+    @Slot(str, result=bool)
+    def restoreBackup(self, name: str) -> bool:
+        """用指定备份覆盖配置。只认 backups 目录里的 .yaml，恢复前先兜底一份。"""
+        file_name = Path(str(name or "")).name
+        target = self.backup_dir / file_name
+        if not file_name or target.suffix != ".yaml" or not target.is_file():
+            self.showToast.emit("找不到这份备份", "warning")
+            return False
+        try:
+            with open(target, encoding="utf-8") as handle:
+                data = yaml.safe_load(handle) or {}
+        except (OSError, yaml.YAMLError):
+            logger.exception("备份无法解析: %s", target)
+            self.showToast.emit("这份备份读不出来，原配置没有改动", "error")
+            return False
+        if not isinstance(data, dict) or "launcher" not in data:
+            self.showToast.emit("这不是 Rin Launcher 的配置备份", "warning")
+            return False
+        # 先把当前配置存一份手动备份：恢复错了还能退回来。
+        self._create_backup(manual=True, silent=True)
+        self._config = self._normalize(dict(data))
+        if not self.save(changed="all"):
+            self.showToast.emit("恢复失败，原配置未改动", "error")
+            return False
+        self.accentColorChanged.emit(self.accentColor)
+        logger.info("Restored backup %s", target.name)
+        self.showToast.emit("已恢复备份", "success")
+        return True
+
+    @Slot(str, result=bool)
+    def deleteBackup(self, name: str) -> bool:
+        file_name = Path(str(name or "")).name
+        target = self.backup_dir / file_name
+        if not file_name or target.suffix != ".yaml" or not target.is_file():
+            return False
+        try:
+            target.unlink()
+        except OSError:
+            logger.exception("Failed to delete backup %s", target)
+            self.showToast.emit("备份删不掉，可能正在被占用", "error")
+            return False
+        self.backupChanged.emit()
+        self.showToast.emit("已删除备份", "success")
+        return True
+
+    @Slot(result="QVariantMap")
+    def clearBackups(self) -> dict[str, Any]:
+        """清空全部备份；返回最新的存储占用。"""
+        removed = 0
+        for path in self._backup_files("config-"):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                logger.debug("无法删除备份 %s", path, exc_info=True)
+        self.backupChanged.emit()
+        self.showToast.emit(f"已删除 {removed} 份备份", "success" if removed else "info")
+        return self.getStorageUsage()
+
+    # ── 日志 ──────────────────────────────────────────────────────────
+    @Slot(result="QVariantMap")
+    def getLogInfo(self) -> dict[str, Any]:
+        files = logging_setup.collect(self.config_dir, logging_setup.KEEP_DAYS)
+        size = 0
+        for path in files:
+            try:
+                size += path.stat().st_size
+            except OSError:
+                pass
+        return {
+            "dir": str(self.log_dir),
+            "count": len(files),
+            "size": _human_size(size),
+            "files": [path.name for path in files],
+        }
+
+    @Slot(result=str)
+    def exportLogs(self) -> str:
+        """把最近 30 天日志打包成 zip；返回路径（没有日志时为空串）。"""
+        target = logging_setup.export(self.config_dir, logging_setup.KEEP_DAYS)
+        if target is None:
+            self.showToast.emit("还没有日志可以打包", "warning")
+            return ""
+        self.showToast.emit(f"日志已打包：{target.name}", "success")
+        self._reveal(target)
+        return str(target)
+
+    @Slot()
+    def openLogFolder(self) -> None:
+        self._reveal(self.log_dir)
+
+    @Slot(result=bool)
+    def clearLogs(self) -> bool:
+        """删除历史日志（当前正在写的文件会被跳过）。"""
+        removed = 0
+        for path in self.log_dir.glob(logging_setup.FILE_GLOB):
+            try:
+                path.unlink()
+                removed += 1
+            except OSError:
+                logger.debug("无法删除日志 %s", path, exc_info=True)
+        self.showToast.emit(
+            f"已清理 {removed} 个日志文件" if removed else "没有可清理的日志",
+            "success" if removed else "info")
+        return True
+
+    # ── 存储占用 / 旧版本 / 诊断 ──────────────────────────────────────
+    def _app_root(self) -> Path:
+        """安装目录：打包后是 exe 同级，源码是仓库根目录。"""
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+
+    def _old_version_file(self) -> Path:
+        return self._app_root() / "old.zip"
+
+    @Slot(result="QVariantMap")
+    def getStorageUsage(self) -> dict[str, Any]:
+        def usage(directory: Path, pattern: str) -> tuple[int, int]:
+            count = size = 0
+            for path in directory.glob(pattern):
+                if not path.is_file():
+                    continue
+                count += 1
+                try:
+                    size += path.stat().st_size
+                except OSError:
+                    pass
+            return count, size
+
+        log_count, log_size = usage(self.log_dir, logging_setup.FILE_GLOB)
+        backup_count, backup_size = usage(self.backup_dir, "config-*.yaml")
+        old_file = self._old_version_file()
+        try:
+            old_size = old_file.stat().st_size if old_file.is_file() else 0
+        except OSError:
+            old_size = 0
+        return {
+            "configDir": str(self.config_dir),
+            "logDir": str(self.log_dir),
+            "logCount": log_count,
+            "logSize": _human_size(log_size),
+            "backupCount": backup_count,
+            "backupSize": _human_size(backup_size),
+            "oldVersionPath": str(old_file),
+            "oldVersionExists": old_file.is_file(),
+            "oldVersionSize": _human_size(old_size),
+        }
+
+    @Slot(result=bool)
+    def deleteOldVersion(self) -> bool:
+        target = self._old_version_file()
+        if not target.is_file():
+            return False
+        try:
+            target.unlink()
+        except OSError:
+            logger.exception("Failed to delete old version %s", target)
+            self.showToast.emit("旧版本文件删不掉，可能正在被占用", "error")
+            return False
+        self.showToast.emit("已删除上一版本文件", "success")
+        return True
+
+    @Slot(result=bool)
+    def copyDiagnostics(self) -> bool:
+        """把关于页展示的诊断信息复制到剪贴板。"""
+        text = str(self.getRuntimeInfo().get("diagnostics") or "")
+        if not text:
+            return False
+        clipboard = QGuiApplication.clipboard()
+        if clipboard is None:
+            return False
+        clipboard.setText(text)
+        self.showToast.emit("诊断信息已复制", "success")
+        return True
 
     def _write_to(self, path: Path) -> bool:
         try:
@@ -1728,18 +1943,14 @@ class ConfigManager(QObject):
         if self.action_executor is None:
             self.showToast.emit("动作执行器未初始化", "error")
             return
-        # 键盘回放可能包含延时和系统注入；放后台线程，界面不跟着卡。
+        # 启动程序 / 打开网址也可能卡在 shell 解析或网络路径上；统一放后台线程，
+        # 小窗点击后立刻回收事件，不再等动作跑完。
         if action.get("type") in ("keyboard", "keymouse"):
             self.showToast.emit(f"按键序列已开始: {name}", "info")
-            threading.Thread(
-                target=self._execute_action_worker,
-                args=(dict(action), name), name="rin-keyboard-action", daemon=True,
-            ).start()
-            return
-        if self.action_executor.execute(dict(action)):
-            self.showToast.emit(f"已执行: {name}", "success")
-        else:
-            self.showToast.emit(f"执行失败: {name}", "error")
+        threading.Thread(
+            target=self._execute_action_worker,
+            args=(dict(action), name), name="rin-action", daemon=True,
+        ).start()
 
     def _execute_action_worker(self, action: dict, name: str) -> None:
         try:
@@ -1795,24 +2006,55 @@ class ConfigManager(QObject):
 
     @Slot(result="QVariantMap")
     def getRuntimeInfo(self) -> dict[str, Any]:
-        """关于页要显示的运行环境信息。"""
+        """关于页要显示的运行环境信息（含可一键复制的诊断文本）。"""
         import platform
 
         from PySide6 import __version__ as pyside_version
         from PySide6.QtCore import qVersion
 
-        return {
+        windows_build = ""
+        if sys.platform == "win32":
+            try:
+                windows_build = f"Build {sys.getwindowsversion().build}"
+            except Exception:
+                windows_build = ""
+        # 打包时由 CI 在安装目录写 channel.txt；源码运行默认 Release。
+        channel = "Release"
+        channel_file = self._app_root() / "channel.txt"
+        if channel_file.is_file():
+            try:
+                channel = channel_file.read_text(encoding="utf-8").strip() or "Release"
+            except OSError:
+                logger.debug("读取 channel.txt 失败", exc_info=True)
+
+        system = f"{platform.system()} {platform.release()}"
+        if windows_build:
+            system = f"{system} ({windows_build})"
+        log_file = logging_setup.file_for(self.log_dir)
+        info: dict[str, Any] = {
             "version": APP_VERSION,
+            "branch": channel,
             "python": platform.python_version(),
             "qt": qVersion(),
             "pyside": pyside_version,
-            "system": f"{platform.system()} {platform.release()}",
+            "system": system,
+            "windowsBuild": windows_build or platform.version(),
             "configDir": str(self.config_dir),
             "configFile": str(self.config_file),
             "iconDir": str(self.icon_dir),
-            "logFile": str(self.config_dir / "launcher.log"),
+            "logDir": str(self.log_dir),
+            "logFile": str(log_file),
             "backend": "RinUI（内联，MIT）",
         }
+        info["diagnostics"] = (
+            f"Rin Launcher {APP_VERSION} ({channel})\n"
+            f"Python {platform.python_version()}\n"
+            f"Qt {qVersion()} / PySide6 {pyside_version}\n"
+            f"Windows {platform.release()} {info['windowsBuild']}\n"
+            f"Config: {self.config_dir}\n"
+            f"Log: {log_file}"
+        )
+        return info
 
     @staticmethod
     def _reveal(path: Path) -> None:

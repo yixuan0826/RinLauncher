@@ -390,12 +390,12 @@ AppDialog {
         Item { Layout.fillWidth: true }
 
         Button {
-            text: qsTr("取消")
+            text: qsTr("先别……")
             onClicked: editor.reject()
         }
 
         Button {
-            text: qsTr("保存")
+            text: qsTr("动手！")
             highlighted: true
             onClicked: editor.commit()
         }

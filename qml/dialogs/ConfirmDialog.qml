@@ -13,8 +13,8 @@ AppDialog {
     id: confirmDialog
 
     property string message: ""
-    property string confirmText: qsTr("确定")
-    property string cancelText: qsTr("取消")
+    property string confirmText: qsTr("动手！")
+    property string cancelText: qsTr("先别……")
     property var callback: null
 
     title: qsTr("确认")
@@ -23,7 +23,7 @@ AppDialog {
     function ask(text, action, options) {
         message = text
         callback = action
-        confirmText = (options && options.confirmText) || qsTr("确定")
+        confirmText = (options && options.confirmText) || qsTr("动手！")
         open()
     }
 

@@ -271,7 +271,7 @@ AppDialog {
         Item { Layout.fillWidth: true }
 
         Button {
-            text: qsTr("取消")
+            text: qsTr("先别……")
             onClicked: dialog.reject()
         }
 

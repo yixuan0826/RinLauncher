@@ -43,7 +43,7 @@ from PySide6.QtWidgets import QApplication
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
 import RinUI  # noqa: F401
-from rin_launcher import __version__, effects
+from rin_launcher import __version__, effects, logging_setup
 from rin_launcher.action_executor import ActionExecutor
 from rin_launcher.config_manager import ConfigManager
 from rin_launcher.hotkey import GlobalHotkey
@@ -68,25 +68,15 @@ MATERIALS: dict[str, BackdropEffect] = {
     "mica": BackdropEffect.Mica,       # 云母
     "none": BackdropEffect.None_,
 }
-DEFAULT_MATERIAL = "tabbed"
-
+# 统一用云母；Win10 或调用失败时由 apply_material 回退到不透明。
+DEFAULT_MATERIAL = "mica"
 
 
 def _setup_logging(config_manager: ConfigManager) -> None:
     level_name = str(config_manager.config["settings"].get("logLevel", "INFO")).upper()
-    handlers: list[logging.Handler] = [
-        logging.FileHandler(config_manager.config_dir / "launcher.log", encoding="utf-8"),
-    ]
-    # 打包成无控制台的窗口程序后 stdout 是 None，加 StreamHandler 只会刷一堆
-    # "no attribute 'write'"。
-    if sys.stdout is not None:
-        handlers.append(logging.StreamHandler(sys.stdout))
-
-    logging.basicConfig(
-        level=getattr(logging, level_name, logging.INFO),
-        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-        handlers=handlers,
-    )
+    log_file = logging_setup.setup(
+        config_manager.config_dir, level_name, console=sys.stdout is not None)
+    logger.info("Log file: %s", log_file)
 
 
 class Launcher:
@@ -196,8 +186,7 @@ class Launcher:
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
         effects.apply_win11_round_corners(root)
-        self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)), window)
+        self.apply_material(DEFAULT_MATERIAL, window)
         return True
 
     def create_editor_window(self) -> bool:
@@ -207,8 +196,7 @@ class Launcher:
         self.editor = window
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
-        self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)), window)
+        self.apply_material(DEFAULT_MATERIAL, window)
         return True
 
     def create_settings_window(self) -> bool:
@@ -218,8 +206,7 @@ class Launcher:
         self.settings = window
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
-        self.apply_material(str(self.config_manager.config["settings"].get(
-            "material", DEFAULT_MATERIAL)), window)
+        self.apply_material(DEFAULT_MATERIAL, window)
         return True
 
     def ensure_editor_window(self) -> bool:
