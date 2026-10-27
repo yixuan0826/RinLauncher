@@ -40,8 +40,9 @@ from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon
 # QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
 
+from rin_launcher import __codename__ as APP_CODENAME
 from rin_launcher import __version__ as APP_VERSION
-from rin_launcher import autostart, logging_setup, start_menu
+from rin_launcher import autostart, logging_setup, risk_rules, search, start_menu, toast
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
@@ -345,6 +346,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "adminAutoElevate": True,
     "confirmAdminActions": True,
     "logLevel": "INFO",
+    # 面板磁贴尺寸：small / medium / large。档位只定「目标边长」，
+    # 每行放几格由小窗宽度自动算（见 qml/components/CompactPanel.qml）。
+    "tileSize": "medium",
     "autoBackupEnabled": True,
     "autoBackupIntervalDays": 7,
     "autoBackupKeep": 8,
@@ -353,6 +357,27 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "updateMirror": "github",
     "updateMirrorAuto": True,
 }
+
+# 通知分两级：功能类别 × 投递渠道。错误 / 警告永远补一条应用内提示，
+# 免得用户关掉全部渠道后什么都收不到。
+NOTIFY_CATEGORIES: dict[str, str] = {
+    "action": "动作执行",
+    "update": "更新提示",
+    "backup": "备份与恢复",
+    "system": "系统与设置",
+}
+
+NOTIFY_CHANNELS: dict[str, str] = {
+    "toast": "应用内提示",
+    "tray": "托盘气泡",
+    "native": "Windows 通知",
+}
+
+
+def _default_notifications() -> dict[str, dict[str, bool]]:
+    """默认只开应用内提示：托盘气泡与系统通知要用户自己勾。"""
+    return {key: {"toast": True, "tray": False, "native": False}
+            for key in NOTIFY_CATEGORIES}
 
 
 def _new_id() -> str:
@@ -500,6 +525,7 @@ def _default_config() -> dict[str, Any]:
             "storagePath": "",
         },
         "settings": dict(DEFAULT_SETTINGS),
+        "notifications": _default_notifications(),
     }
 
 
@@ -552,6 +578,8 @@ class ConfigManager(QObject):
     slotEditRequested = Signal(int, int)
     # 手动 / 自动备份完成后通知设置页刷新。
     backupChanged = Signal()
+    # 通知渠道开关被改动（设置页的「通知」分区）。
+    notificationsChanged = Signal()
 
     def __init__(self, config_dir: Path | None = None, parent: QObject | None = None):
         super().__init__(parent)
@@ -579,6 +607,8 @@ class ConfigManager(QObject):
         self._pending_slot_edit: tuple[int, int] | None = None
         # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
         self._pending_settings_section: str = ""
+        # 托盘气泡的投递出口：main.py 在托盘真正起来之后接进来。
+        self._tray_sink: Callable[[str, str], Any] | None = None
         self._config = self._load()
         # 任务计划状态不再在构造时预热：schtasks 子进程会跟小窗抢启动资源，
         # 等主界面稳定后由 main.py 延迟刷新（或第一次打开设置页时再查）。
@@ -626,6 +656,7 @@ class ConfigManager(QObject):
                 or old_version != CONFIG_VERSION
                 or "updateChannel" not in raw_settings
                 or "autoCheckUpdates" not in raw_settings
+                or "notifications" not in raw
                 or bool(set(raw_settings) - set(DEFAULT_SETTINGS))
             )
             config = self._normalize(raw)
@@ -675,8 +706,21 @@ class ConfigManager(QObject):
             settings["startupMode"] = "off"
         if settings.get("updateChannel") not in ("stable", "prerelease"):
             settings["updateChannel"] = "stable"
+        if settings.get("tileSize") not in ("small", "medium", "large"):
+            settings["tileSize"] = "medium"
         settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
         data["settings"] = settings
+        # 通知开关：按类别补齐渠道，写坏的键直接忽略（旧配置没有这一段）。
+        raw_notifications = data.get("notifications")
+        notifications = _default_notifications()
+        if isinstance(raw_notifications, dict):
+            for category, channels in raw_notifications.items():
+                if category not in notifications or not isinstance(channels, dict):
+                    continue
+                for channel in NOTIFY_CHANNELS:
+                    if channel in channels:
+                        notifications[category][channel] = bool(channels[channel])
+        data["notifications"] = notifications
         # launcher 段必须一起规范化：旧格式迁移、坏槽位剔除、内联动作清洗
         # 都靠这一句，漏掉它读回来的就是没洗过的原始字典。
         data["launcher"] = self._normalize_launcher(data, legacy_rows=version < CONFIG_VERSION)
@@ -1763,7 +1807,222 @@ class ConfigManager(QObject):
     @Slot(str, str)
     def notify(self, message: str, severity: str = "info") -> None:
         """Let QML raise a toast through the same path the backend uses."""
-        self.showToast.emit(message, severity)
+        self.notifyEvent("system", message, severity)
+
+    # ── 通知分类 × 渠道 ──────────────────────────────────────────────
+    def attachTraySink(self, sink: Callable[[str, str], Any] | None) -> None:
+        """登记托盘气泡的出口；托盘关掉时传 None 即可。"""
+        self._tray_sink = sink
+
+    def notifyEvent(self, category: str, message: str,
+                    severity: str = "info") -> None:
+        """按「类别 × 渠道」投递一条通知。
+
+        错误与警告强制补一条应用内提示：渠道全关时用户至少还能在界面上看到。
+        托盘 / 系统通知失败都不影响应用内提示。
+        """
+        text = str(message or "").strip()
+        if not text:
+            return
+        category = category if category in NOTIFY_CATEGORIES else "system"
+        channels = dict(self._notification_channels(category))
+        if severity in ("error", "warning"):
+            channels["toast"] = True
+        if channels.get("toast"):
+            self.showToast.emit(text, severity)
+        if channels.get("tray"):
+            sink = self._tray_sink
+            if sink is not None:
+                try:
+                    sink(text, severity)
+                except Exception:
+                    logger.debug("Tray notification failed", exc_info=True)
+        if channels.get("native"):
+            toast.show("Rin Launcher", text)
+
+    def _notification_channels(self, category: str) -> dict[str, bool]:
+        section = self._config.get("notifications")
+        if not isinstance(section, dict):
+            return {"toast": True, "tray": False, "native": False}
+        channels = section.get(category)
+        if not isinstance(channels, dict):
+            return {"toast": True, "tray": False, "native": False}
+        return {
+            "toast": bool(channels.get("toast", True)),
+            "tray": bool(channels.get("tray", False)),
+            "native": bool(channels.get("native", False)),
+        }
+
+    @Slot(result="QVariantMap")
+    def getNotificationSettings(self) -> dict[str, Any]:
+        """通知设置页的数据：类别列表、渠道列表，以及每个格子的当前值。"""
+        section = self._config.get("notifications")
+        values = section if isinstance(section, dict) else {}
+        categories: list[dict[str, Any]] = []
+        for key, label in NOTIFY_CATEGORIES.items():
+            channels = values.get(key) if isinstance(values.get(key), dict) else {}
+            categories.append({
+                "key": key,
+                "label": label,
+                "channels": {name: bool(channels.get(name, name == "toast"))
+                             for name in NOTIFY_CHANNELS},
+            })
+        return {
+            "categories": categories,
+            "channels": [{"key": key, "label": label}
+                         for key, label in NOTIFY_CHANNELS.items()],
+            "nativeAvailable": sys.platform == "win32",
+        }
+
+    @Slot(str, str, bool, result=bool)
+    def setNotificationChannel(self, category: str, channel: str,
+                               enabled: bool) -> bool:
+        if category not in NOTIFY_CATEGORIES or channel not in NOTIFY_CHANNELS:
+            return False
+        section = self._config.setdefault("notifications", _default_notifications())
+        if not isinstance(section, dict):
+            section = _default_notifications()
+            self._config["notifications"] = section
+        entry = section.setdefault(category, {"toast": True, "tray": False,
+                                              "native": False})
+        entry[channel] = bool(enabled)
+        saved = self.save(changed="settings")
+        if saved:
+            self.notificationsChanged.emit()
+        return saved
+
+    # ── 风险提示 ─────────────────────────────────────────────────────
+    @Slot("QVariantMap", result="QVariantMap")
+    def checkSlotRisk(self, slot: dict) -> dict[str, Any]:
+        """编辑器保存前问一句：这一格会不会动到系统要害。
+
+        只给提示，不拦截；命中后由界面弹二次确认。
+        """
+        try:
+            return risk_rules.check(dict(slot or {}))
+        except Exception:
+            logger.exception("Risk check failed")
+            return {"level": "", "reasons": []}
+
+    # ── 搜索（含拼音）───────────────────────────────────────────────
+    @Slot(str, result="QVariantList")
+    def searchSlots(self, query: str) -> list[dict]:
+        """按名称 / 路径 / 目标搜索启动台槽位，支持全拼与首字母。
+
+        ``index`` 是全局序号（界面排序用），``rowIndex`` 是「本行第几个」——
+        编辑 / 删除接口要的是后者。
+        """
+        needle = str(query or "").strip()
+        hits: list[dict] = []
+        row_counts: dict[int, int] = {}
+        for index, slot in enumerate(self._slots()):
+            row = int(slot.get("row", 0))
+            row_index = row_counts.get(row, 0)
+            row_counts[row] = row_index + 1
+            resolved = self._resolve_slot(slot)
+            if resolved is None:
+                continue
+            if not search.matches(
+                    needle,
+                    str(resolved.get("name") or ""),
+                    str(resolved.get("path") or ""),
+                    str(resolved.get("target") or ""),
+                    str(resolved.get("arguments") or ""),
+                    str(resolved.get("kindLabel") or "")):
+                continue
+            entry = dict(resolved)
+            entry["index"] = index
+            entry["rowIndex"] = row_index
+            hits.append(entry)
+        return hits
+
+    # ── 恢复模式 ─────────────────────────────────────────────────────
+    @Slot(result=str)
+    def getLaunchMode(self) -> str:
+        """本次启动的模式：normal / safe / diagnostic。"""
+        args = [str(item) for item in sys.argv[1:]]
+        if "--safe-mode" in args:
+            return "safe"
+        if "--diagnostic" in args:
+            return "diagnostic"
+        return "normal"
+
+    @Slot(result=bool)
+    def resetAppSettings(self) -> bool:
+        """只重置设置与通知开关，保留启动台槽位、图标与备份。"""
+        self._create_backup(manual=True, silent=True)
+        self._config["settings"] = dict(DEFAULT_SETTINGS)
+        self._config["notifications"] = _default_notifications()
+        saved = self.save(changed="settings")
+        if saved:
+            self.accentColorChanged.emit(self.accentColor)
+            self.notificationsChanged.emit()
+            self.hotkeyChanged.emit(str(DEFAULT_SETTINGS["globalHotkey"]))
+            self.trayEnabledChanged.emit(bool(DEFAULT_SETTINGS["showTray"]))
+            self.showToast.emit("应用设置已重置", "success")
+        return saved
+
+    @Slot(result="QVariantMap")
+    def cleanTempFiles(self) -> dict[str, Any]:
+        """清掉 updates/ 里的下载包与解包残留，返回删了几个、腾出多少。"""
+        updates_dir = self.config_dir / "updates"
+        removed = 0
+        freed = 0
+        if updates_dir.is_dir():
+            for path in sorted(updates_dir.iterdir()):
+                try:
+                    if path.is_dir():
+                        size = sum(item.stat().st_size
+                                   for item in path.rglob("*") if item.is_file())
+                        shutil.rmtree(path, ignore_errors=True)
+                    else:
+                        size = path.stat().st_size
+                        path.unlink()
+                except OSError:
+                    logger.debug("无法清理临时文件 %s", path, exc_info=True)
+                    continue
+                removed += 1
+                freed += size
+        message = (f"已清理 {removed} 个临时文件，释放 {_human_size(freed)}"
+                   if removed else "没有可清理的临时文件")
+        self.showToast.emit(message, "success" if removed else "info")
+        return {"removed": removed, "freed": _human_size(freed)}
+
+    @Slot(result="QVariantMap")
+    def getRecoveryInfo(self) -> dict[str, Any]:
+        """恢复模式窗口的首屏信息。"""
+        backups = self.listBackups()
+        old_file = self._old_version_file()
+        try:
+            old_size = old_file.stat().st_size if old_file.is_file() else 0
+        except OSError:
+            old_size = 0
+        usage = self.getStorageUsage()
+        return {
+            "version": APP_VERSION,
+            "launchMode": self.getLaunchMode(),
+            "configDir": str(self.config_dir),
+            "logDir": str(self.log_dir),
+            "backupDir": str(self.backup_dir),
+            "backupCount": len(backups),
+            "latestBackup": backups[0]["name"] if backups else "",
+            "latestBackupTime": backups[0]["time"] if backups else "",
+            "oldVersionExists": old_file.is_file(),
+            "oldVersionPath": str(old_file),
+            "oldVersionSize": _human_size(old_size),
+            "logSize": usage.get("logSize", ""),
+        }
+
+    @Slot(str, result=bool)
+    def restartWithMode(self, mode: str) -> bool:
+        """带启动模式参数重启：safe / diagnostic / normal。"""
+        flag = {"safe": "--safe-mode", "diagnostic": "--diagnostic"}.get(str(mode), "")
+        extra = [flag] if flag else []
+        if not restart_application(extra):
+            self.showToast.emit("重启失败，可以看看日志", "error")
+            return False
+        QCoreApplication.quit()
+        return True
 
     @Slot(str)
     def requestPage(self, page: str) -> None:
@@ -2033,6 +2292,7 @@ class ConfigManager(QObject):
         log_file = logging_setup.file_for(self.log_dir)
         info: dict[str, Any] = {
             "version": APP_VERSION,
+            "codename": APP_CODENAME,
             "branch": channel,
             "python": platform.python_version(),
             "qt": qVersion(),
@@ -2047,7 +2307,7 @@ class ConfigManager(QObject):
             "backend": "RinUI（内联，MIT）",
         }
         info["diagnostics"] = (
-            f"Rin Launcher {APP_VERSION} ({channel})\n"
+            f"Rin Launcher {APP_VERSION} ({APP_CODENAME}, {channel})\n"
             f"Python {platform.python_version()}\n"
             f"Qt {qVersion()} / PySide6 {pyside_version}\n"
             f"Windows {platform.release()} {info['windowsBuild']}\n"

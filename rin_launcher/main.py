@@ -22,6 +22,7 @@ PROJECT_ROOT = (
 COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
 EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
 SETTINGS_ENTRY = PROJECT_ROOT / "qml" / "SettingsWindow.qml"
+RECOVERY_ENTRY = PROJECT_ROOT / "qml" / "RecoveryWindow.qml"
 ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
 
 # RinUI 启动时会 print 一个带 emoji 的横幅。老终端（cmd.exe 的 GBK 代码页）编码
@@ -74,6 +75,9 @@ DEFAULT_MATERIAL = "mica"
 
 def _setup_logging(config_manager: ConfigManager) -> None:
     level_name = str(config_manager.config["settings"].get("logLevel", "INFO")).upper()
+    # 诊断模式：临时把级别拉到 DEBUG，控制台输出也跟着打开。
+    if "--diagnostic" in sys.argv[1:]:
+        level_name = "DEBUG"
     log_file = logging_setup.setup(
         config_manager.config_dir, level_name, console=sys.stdout is not None)
     logger.info("Log file: %s", log_file)
@@ -91,6 +95,7 @@ class Launcher:
         self.compact: RinUIWindow | None = None
         self.editor: RinUIWindow | None = None
         self.settings: RinUIWindow | None = None
+        self.recovery: RinUIWindow | None = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
         # 系统控制（音量 / Wi-Fi / 移动热点），小窗底部那排卡片用。
@@ -102,6 +107,8 @@ class Launcher:
         # 单实例消息服务端（见 start_single_instance_server）。
         self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
+        # 安全模式：不装全局热键钩子、不跑系统状态轮询与配置监听。
+        self.launch_mode = self.config_manager.getLaunchMode()
 
         self._wire_config()
 
@@ -116,18 +123,35 @@ class Launcher:
         self.config_manager.materialChanged.connect(self.apply_material)
         # QML 里的页面够不到窗口对象，页面级请求统一从后端转上来。
         self.config_manager.pageRequested.connect(self.show_page)
-        self.config_manager.showToast.connect(
+        # 托盘气泡是「通知」的一个渠道，由 ConfigManager 按类别分发；
+        # 直接把 showToast 转发给托盘会让每条提示都多出一份气泡。
+        self.config_manager.attachTraySink(
             lambda message, _severity: self.tray.show_message("Rin Launcher", message))
-        # 系统控制与更新器的提示走和小窗同一条 toast 链路。
-        self.system_controls.notify.connect(self.config_manager.notify)
-        self.update_manager.notify.connect(self.config_manager.notify)
+        # 系统控制与更新器的提示走各自的通知类别。
+        self.system_controls.notify.connect(
+            lambda message, severity: self.config_manager.notifyEvent(
+                "system", message, severity))
+        self.update_manager.notify.connect(
+            lambda message, severity: self.config_manager.notifyEvent(
+                "update", message, severity))
 
         # 热键与托盘放到小窗首帧之后：pynput 的全局键盘钩子和 QSystemTrayIcon
         # 都要跟系统打交道，没必要挡在「小窗可见」这条关键路径上。
-        QTimer.singleShot(120, lambda: self.apply_hotkey(
-            str(settings.get("globalHotkey", ""))))
+        if self.safe_mode:
+            logger.warning("安全模式：跳过热键注册与系统状态轮询")
+        else:
+            QTimer.singleShot(120, lambda: self.apply_hotkey(
+                str(settings.get("globalHotkey", ""))))
         QTimer.singleShot(120, lambda: self.apply_tray(
             bool(settings.get("showTray", True))))
+
+    @property
+    def safe_mode(self) -> bool:
+        return self.launch_mode == "safe"
+
+    @property
+    def diagnostic_mode(self) -> bool:
+        return self.launch_mode == "diagnostic"
 
     def _wire_tray(self) -> None:
         # 托盘可以在设置里反复开关，重复连接会让一次点击触发多次。
@@ -225,6 +249,35 @@ class Launcher:
             return False
         return True
 
+    def create_recovery_window(self) -> bool:
+        window = self._create_window(RECOVERY_ENTRY)
+        if window is None:
+            return False
+        self.recovery = window
+        if window.root_window is not None:
+            window.root_window.closeRequested.connect(
+                lambda: self._close_window(window))
+        self.apply_material(DEFAULT_MATERIAL, window)
+        return True
+
+    def ensure_recovery_window(self) -> bool:
+        if self.recovery is not None:
+            return True
+        if not self.create_recovery_window():
+            self.tray.show_message("Rin Launcher", "恢复模式窗口加载失败，可以看看日志")
+            return False
+        return True
+
+    def show_recovery(self) -> None:
+        if not self.ensure_recovery_window():
+            return
+        root = self.recovery.root_window
+        if root is None:
+            return
+        root.show()
+        root.raise_()
+        root.requestActivate()
+
     def start_single_instance_server(self) -> None:
         """守着单实例的本地套接字：第二个进程请求「亮出小窗」时照办。"""
         self._single_server = SingleInstanceServer(self.app)
@@ -287,7 +340,8 @@ class Launcher:
         root = self.compact.root_window
         root.show()
         # 小窗可见时才需要系统状态轮询；隐藏期间不碰 WinRT。
-        self.system_controls.setActive(True)
+        if not self.safe_mode:
+            self.system_controls.setActive(True)
         # 小窗带 WindowDoesNotAcceptFocus，requestActivate() 是无效调用（Qt 会打一条
         # 警告）。置底窗口不能 raise_()（那会把它翻到别的窗口上面），显示完再向
         # 系统兜一次底，防止刚显示时被抬到前台。
@@ -332,6 +386,10 @@ class Launcher:
         """兼容旧路由：launcher 开编辑窗口，about 进设置分类，其余都进设置窗口。"""
         if page == "launcher":
             self.show_editor()
+        elif page == "compact":
+            self.show_compact()
+        elif page == "recovery":
+            self.show_recovery()
         elif page == "about":
             self.show_settings("about")
         else:
@@ -346,7 +404,8 @@ class Launcher:
         if window.root_window is not None:
             window.root_window.hide()
         if (not self.tray.started and not self._visible(self.compact)
-                and not self._visible(self.editor) and not self._visible(self.settings)):
+                and not self._visible(self.editor) and not self._visible(self.settings)
+                and not self._visible(self.recovery)):
             self.quit()
 
     def _auto_check_updates(self) -> None:
@@ -362,15 +421,19 @@ class Launcher:
         self.app.quit()
 
     def run(self) -> int:
-        if not self.config_manager.config["settings"].get("startMinimized", False):
+        # 安全模式 / 诊断模式直接开恢复窗口，让小窗先靠边站。
+        if self.launch_mode in ("safe", "diagnostic"):
+            self.show_recovery()
+        elif not self.config_manager.config["settings"].get("startMinimized", False):
             self.show_compact()
         # 这些都不是「小窗可见」的必要条件，推迟到首帧之后：
         #   * watchdog 的导入与文件监听（几十毫秒）；
         #   * schtasks 子进程查任务计划状态；
         #   * 静默更新检查（本来就在 5 秒后）。
-        QTimer.singleShot(1200, self.config_manager.startWatching)
-        QTimer.singleShot(4000, self.config_manager._start_startup_prefetch)
-        QTimer.singleShot(5000, self._auto_check_updates)
+        if not self.safe_mode:
+            QTimer.singleShot(1200, self.config_manager.startWatching)
+            QTimer.singleShot(4000, self.config_manager._start_startup_prefetch)
+            QTimer.singleShot(5000, self._auto_check_updates)
 
         try:
             return self.app.exec()
@@ -395,19 +458,24 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)  # the tray keeps the app alive
 
     # 单实例：已经有实例在跑就把「亮出小窗」交给它，本进程直接退出。
-    guard = acquire_single_instance()
-    if guard is None:
-        notify_running_instance()
-        return 0
+    # 安全 / 诊断模式是救命通道，不抢锁也不被旧实例拦截。
+    recovery_mode = any(arg in ("--safe-mode", "--diagnostic") for arg in sys.argv[1:])
+    if not recovery_mode:
+        guard = acquire_single_instance()
+        if guard is None:
+            notify_running_instance()
+            return 0
 
     launcher = Launcher(app)
     _setup_logging(launcher.config_manager)
 
-    # 启动只出小窗；完整窗口第一次要打开时才建（懒建，启动更快）。
+    # 小窗总是先建好（恢复模式下只建不显示）：恢复窗口的「继续使用」要直接
+    # 把小窗亮出来，不能到了那儿才发现它根本没建。
     if not launcher.create_compact_window():
         return 1
-    launcher.start_single_instance_server()
-    launcher.hotkey.activated.connect(launcher.toggle_compact)
+    if not recovery_mode:
+        launcher.start_single_instance_server()
+        launcher.hotkey.activated.connect(launcher.toggle_compact)
     return launcher.run()
 
 

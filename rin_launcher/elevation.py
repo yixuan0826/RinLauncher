@@ -84,15 +84,21 @@ def restart_elevated() -> bool:
 
 
 def _restart_target() -> tuple[str, list[str], str]:
-    """返回 (可执行文件, 参数, 工作目录)；打包与源码模式都适用。"""
+    """返回 (可执行文件, 参数, 工作目录)；打包与源码模式都适用。
+
+    ``--safe-mode`` / ``--diagnostic`` 是一次的启动模式，不能跟着下一次重启走进
+    去 —— 否则从安全模式里「正常重启」永远退不出安全模式。
+    """
+    args = [arg for arg in sys.argv[1:]
+            if arg not in ("--safe-mode", "--diagnostic")]
     if getattr(sys, "frozen", False):
         exe = sys.executable
-        return exe, list(sys.argv[1:]), str(Path(exe).resolve().parent)
+        return exe, args, str(Path(exe).resolve().parent)
     entry = str(Path(sys.argv[0]).resolve())
-    return sys.executable, [entry, *sys.argv[1:]], str(Path(entry).parent)
+    return sys.executable, [entry, *args], str(Path(entry).parent)
 
 
-def _spawn_restart_helper(*, elevated: bool) -> bool:
+def _spawn_restart_helper(*, elevated: bool, extra: Iterable[str] = ()) -> bool:
     """先让当前进程退出，再由一个隐藏的 PowerShell 脚本在 2 秒后拉起新进程。
 
     直接 ``Popen`` 会和单实例锁撞车：新进程看到旧进程还在，就会把「显示小窗」
@@ -103,6 +109,7 @@ def _spawn_restart_helper(*, elevated: bool) -> bool:
         return False
 
     exe, args, cwd = _restart_target()
+    args = [*args, *extra]
 
     def quote(value: str) -> str:
         return "'" + value.replace("'", "''") + "'"
@@ -131,14 +138,14 @@ def _spawn_restart_helper(*, elevated: bool) -> bool:
         return False
 
 
-def restart_application() -> bool:
+def restart_application(extra: Iterable[str] = ()) -> bool:
     """延迟 2 秒后以普通权限重新启动自身。"""
-    return _spawn_restart_helper(elevated=False)
+    return _spawn_restart_helper(elevated=False, extra=extra)
 
 
-def restart_elevated_delayed() -> bool:
+def restart_elevated_delayed(extra: Iterable[str] = ()) -> bool:
     """延迟 2 秒后以管理员权限重新启动自身（会弹 UAC）。"""
-    return _spawn_restart_helper(elevated=True)
+    return _spawn_restart_helper(elevated=True, extra=extra)
 
 
 def set_run_on_startup(enable: bool) -> bool:

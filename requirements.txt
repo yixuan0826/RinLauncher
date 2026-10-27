@@ -3,6 +3,8 @@ PyYAML>=6.0.1
 darkdetect~=0.8.0
 pynput>=1.7.6
 watchdog>=3.0.0
+# 启动台搜索的拼音全拼 / 首字母匹配；缺了会自动退化为普通子串
+pypinyin>=0.51.0
 pywin32; sys_platform == "win32"
 # 小窗底部的系统控制
 pycaw>=20240215; sys_platform == "win32"
@@ -12,3 +14,6 @@ winrt-Windows.Foundation>=3.2.1; sys_platform == "win32"
 winrt-Windows.Foundation.Collections>=3.2.1; sys_platform == "win32"
 winrt-Windows.Networking.Connectivity>=3.2.1; sys_platform == "win32"
 winrt-Windows.Networking.NetworkOperators>=3.2.1; sys_platform == "win32"
+# Windows 原生 Toast
+winrt-Windows.Data.Xml.Dom>=3.2.1; sys_platform == "win32"
+winrt-Windows.UI.Notifications>=3.2.1; sys_platform == "win32"

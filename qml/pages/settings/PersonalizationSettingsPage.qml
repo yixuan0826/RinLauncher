@@ -5,7 +5,7 @@ import RinUI
 
 import "../../components"
 
-// 设置 → 个性化：主题模式、强调色（可提取系统色）、窗口材质、动画。
+// 设置 → 个性化：主题模式、强调色（可提取系统色）、磁贴尺寸、动画。
 Item {
     id: pageRoot
 
@@ -98,6 +98,21 @@ Item {
                 }
 
                 FormRow {
+                    label: qsTr("磁贴尺寸")
+                    description: qsTr("小窗面板的目标边长；每行放几格由面板宽度自动算")
+                    ComboBox {
+                        id: tileSizeCombo
+                        Layout.preferredWidth: 180
+                        model: [qsTr("小"), qsTr("中"), qsTr("大")]
+                        onActivated: function (index) {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("tileSize",
+                                ["small", "medium", "large"][index])
+                        }
+                    }
+                }
+
+                FormRow {
                     label: qsTr("动画效果")
                     Switch {
                         id: animationSwitch
@@ -142,8 +157,8 @@ Item {
             ["system", "light", "dark"].indexOf(model.theme))
         followAccentSwitch.checked = (model.accentColorMode || "custom") === "system"
         accentPicker.color = model.accentColor || "#0078d4"
-        materialCombo.currentIndex = Math.max(0,
-            ["tabbed", "mica", "none"].indexOf(model.material || "tabbed"))
+        tileSizeCombo.currentIndex = Math.max(0,
+            ["small", "medium", "large"].indexOf(model.tileSize || "medium"))
         animationSwitch.checked = model.animationEnabled !== false
         Qt.callLater(function () { pageRoot.accentReady = true })
     }

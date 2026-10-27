@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import shutil
 import subprocess
 import sys
 import threading
@@ -240,7 +241,7 @@ class UpdateManager(QObject):
     _releaseReady = Signal(str, str, str)
     _downloadStart = Signal(str, str, str)
     _progressReady = Signal(float)
-    _downloadFinished = Signal(bool, str)
+    _downloadFinished = Signal(bool, str, bool)
     _speedReady = Signal(list)
 
     def __init__(self, config_manager: ConfigManager, parent: QObject | None = None):
@@ -254,6 +255,7 @@ class UpdateManager(QObject):
         self._download_url = ""
         self._progress = 0.0
         self._silent = False
+        self._digest_verified = False
         self._thread: threading.Thread | None = None
         self._mirror_speeds: list[dict[str, Any]] = []
         self._speed_testing = False
@@ -303,6 +305,36 @@ class UpdateManager(QObject):
     @Property(bool, notify=changed)
     def canInstall(self) -> bool:
         return self._state == STATE_READY and bool(getattr(sys, "frozen", False))
+
+    @Property(bool, notify=changed)
+    def digestVerified(self) -> bool:
+        """下载包是否通过 GitHub API 提供的 sha256 校验（未提供值时为 False）。"""
+        return self._digest_verified
+
+    @Property(bool, notify=changed)
+    def canRollback(self) -> bool:
+        """上一版本（old.zip）存在且当前是打包运行。"""
+        return bool(getattr(sys, "frozen", False)) and self._old_version_path().is_file()
+
+    @Property("QVariantMap", notify=changed)
+    def oldVersion(self) -> dict[str, Any]:
+        path = self._old_version_path()
+        try:
+            stat = path.stat()
+        except OSError:
+            return {"exists": False, "path": str(path), "size": "", "time": ""}
+        return {
+            "exists": True,
+            "path": str(path),
+            "size": f"{stat.st_size / (1024 * 1024):.1f} MB",
+            "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
+        }
+
+    @staticmethod
+    def _old_version_path() -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent / "old.zip"
+        return Path(__file__).resolve().parent.parent / "old.zip"
 
     @Property(str, notify=changed)
     def channel(self) -> str:
@@ -561,21 +593,27 @@ class UpdateManager(QObject):
                     read += len(chunk)
                     if total > 0:
                         self._progressReady.emit(read / total)
+            verified = False
             if digest.startswith("sha256:"):
                 expected = digest.split(":", 1)[1].strip().lower()
-                if expected and digest_hash.hexdigest().lower() != expected:
-                    target.unlink(missing_ok=True)
-                    self._downloadFinished.emit(False, "更新包校验失败，请重试")
-                    return
-            self._downloadFinished.emit(True, str(target))
+                if expected:
+                    if digest_hash.hexdigest().lower() != expected:
+                        target.unlink(missing_ok=True)
+                        self._downloadFinished.emit(False, "更新包校验失败，请重试", False)
+                        return
+                    verified = True
+            self._downloadFinished.emit(True, str(target), verified)
         except Exception as exc:
             logger.exception("Update download failed")
-            self._downloadFinished.emit(False, f"下载更新失败：{exc}")
+            self._downloadFinished.emit(False, f"下载更新失败：{exc}", False)
 
-    def _apply_download(self, ok: bool, detail: str) -> None:
+    def _apply_download(self, ok: bool, detail: str, verified: bool = False) -> None:
+        self._digest_verified = bool(ok and verified)
         if ok:
             self._state = STATE_READY
-            self._message = f"v{self._latest_version} 已下载，点击安装并重启"
+            suffix = "已校验" if verified else "未提供校验值"
+            self._message = (
+                f"v{self._latest_version} 已下载（{suffix}），可在本页手动安装")
             self._progress = 1.0
             self.changed.emit()
             self.notify.emit(
@@ -666,6 +704,13 @@ class UpdateManager(QObject):
             ")",
             "try { Wait-Process -Id $TargetPid -Timeout 60 -ErrorAction SilentlyContinue } catch {}",
             "Start-Sleep -Milliseconds 1200",
+            "# 先把当前程序文件打包成 old.zip（数据目录除外），给回滚留一手。",
+            "$oldZip = Join-Path $Target 'old.zip'",
+            "try {",
+            "  if (Test-Path -LiteralPath $oldZip) { Remove-Item -LiteralPath $oldZip -Force -ErrorAction SilentlyContinue }",
+            "  $keep = Get-ChildItem -LiteralPath $Target -Force | Where-Object { $_.Name -ne 'data' -and $_.Name -ne 'old.zip' }",
+            "  if ($keep) { Compress-Archive -Path $keep.FullName -DestinationPath $oldZip -CompressionLevel Optimal -Force }",
+            "} catch {}",
             "# 数据目录（配置、日志、图标）永远保留，不跟随更新包覆盖。",
             "$data = Join-Path $Payload 'data'",
             "if (Test-Path -LiteralPath $data) {",
@@ -675,6 +720,35 @@ class UpdateManager(QObject):
             "Start-Process -FilePath (Join-Path $Target $Exe)",
             "Remove-Item -LiteralPath $Payload -Recurse -Force -ErrorAction SilentlyContinue",
         ])
+
+    @Slot(result=bool)
+    def rollbackUpdate(self) -> bool:
+        """回滚到上一版本：把 old.zip 装回去，同时把当前版本另存为新的 old.zip。
+
+        old.zip 必须先拷出来再用 —— 安装脚本会重新生成它，不拷的话就自己
+        把自己覆盖了。
+        """
+        if not getattr(sys, "frozen", False):
+            self.notify.emit("源码模式不支持回滚", "warning")
+            return False
+        old = self._old_version_path()
+        if not old.is_file():
+            self.notify.emit("还没有可回滚的上一版本", "warning")
+            return False
+        folder = self._config.config_dir / "updates"
+        try:
+            folder.mkdir(parents=True, exist_ok=True)
+            staged = folder / f"rollback-{int(time.time())}.zip"
+            shutil.copy2(old, staged)
+        except OSError as exc:
+            logger.exception("Cannot stage the rollback archive")
+            self.notify.emit(f"回滚包准备失败：{exc}", "error")
+            return False
+        self._state = STATE_INSTALLING
+        self._message = "正在回滚到上一版本…"
+        self.changed.emit()
+        self._install_archive(staged)
+        return True
 
     @Slot()
     def openReleasePage(self) -> None:
@@ -701,6 +775,7 @@ class UpdateManager(QObject):
         self._release_url = ""
         self._download_url = ""
         self._progress = 0.0
+        self._digest_verified = False
 
     def stop(self) -> None:
         """占位：线程都是 daemon，退出时不需要额外等待。"""

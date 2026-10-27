@@ -12,6 +12,7 @@ import "../dialogs"
 // 系统控制条（音量 / Wi-Fi / 热点）。面板上的每一格都是独立编辑的。
 Item {
     id: launcherSettings
+    objectName: "launcherSettingsPage"
 
     readonly property int rowPanel: 0
     readonly property int rowStorage: 1
@@ -29,6 +30,10 @@ Item {
     property int panelSlotCount: 0
     property string storagePath: ""
     property var storage: ({})
+    // 搜索面板：非空时把两块列表换成搜索结果（支持拼音与首字母）。
+    property string searchQuery: ""
+    readonly property bool searching: searchQuery.trim().length > 0
+    property var searchResults: []
     // 「磁盘」下拉：文件夹用上面的浏览按钮，盘根可以直接在这里选。
     property var storageDrives: []
     readonly property var storageDriveLabels: [qsTr("选择一块磁盘…")].concat(
@@ -94,6 +99,18 @@ Item {
 
             Item { Layout.fillWidth: true }
 
+            TextField {
+                id: searchField
+                objectName: "slotSearchField"
+                Layout.preferredWidth: 220
+                placeholderText: qsTr("搜索（支持拼音首字母）")
+                text: launcherSettings.searchQuery
+                onTextChanged: {
+                    launcherSettings.searchQuery = text
+                    launcherSettings.refreshSearch()
+                }
+            }
+
             Button {
                 text: qsTr("从开始菜单添加")
                 icon.name: "ic_fluent_add_20_regular"
@@ -125,8 +142,38 @@ Item {
                 width: Math.min(scroller.width - 48, 920)
                 spacing: 18
 
+                // ── 搜索结果 ──
+                SettingsGroup {
+                    visible: launcherSettings.searching
+                    iconKey: "ic_fluent_search_20_regular"
+                    title: qsTr("搜索结果（%1）").arg(launcherSettings.searchResults.length)
+
+                    Text {
+                        Layout.fillWidth: true
+                        visible: launcherSettings.searchResults.length === 0
+                        wrapMode: Text.Wrap
+                        typography: Typography.Caption
+                        color: Theme.currentTheme.colors.textSecondaryColor
+                        text: qsTr("没有匹配的格子。可以试试全拼（如 qidongtai）或首字母（qdt）。")
+                    }
+
+                    SlotSearchResults {
+                        slots: launcherSettings.searchResults
+                        onRunRequested: function (slot) {
+                            ConfigManager.runLauncherSlot(slot)
+                        }
+                        onEditRequested: function (slot) {
+                            var raw = launcherSettings.filterRaw(slot.row)[slot.rowIndex]
+                            if (raw) {
+                                slotEditor.openFor(slot.row, slot.rowIndex, raw)
+                            }
+                        }
+                    }
+                }
+
                 // ── 面板 ──
                 SettingsGroup {
+                    visible: !launcherSettings.searching
                     iconKey: "ic_fluent_dock_row_20_regular"
                     title: qsTr("应用面板")
 
@@ -158,6 +205,7 @@ Item {
 
                 // ── 存储与磁盘 ──
                 SettingsGroup {
+                    visible: !launcherSettings.searching
                     iconKey: "ic_fluent_hard_drive_20_regular"
                     title: qsTr("存储与磁盘")
 
@@ -265,6 +313,11 @@ Item {
         storage = ConfigManager.getStorageInfo()
         storageDrives = ConfigManager.getDrives()
         syncStorageField()
+        refreshSearch()
+    }
+
+    function refreshSearch() {
+        searchResults = searching ? ConfigManager.searchSlots(searchQuery) : []
     }
 
     function filterRow(slots, row) {

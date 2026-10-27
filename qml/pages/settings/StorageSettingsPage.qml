@@ -90,6 +90,22 @@ Item {
             }
 
             SettingsGroup {
+                title: qsTr("恢复")
+                iconKey: "ic_fluent_shield_20_regular"
+
+                FormRow {
+                    label: qsTr("恢复模式")
+                    description: qsTr("安全 / 诊断模式重启、恢复备份、重置配置都在这里")
+                    Item { Layout.fillWidth: true }
+                    Button {
+                        text: qsTr("打开恢复模式")
+                        icon.name: "ic_fluent_open_20_regular"
+                        onClicked: ConfigManager.requestPage("recovery")
+                    }
+                }
+            }
+
+            SettingsGroup {
                 title: qsTr("上一版本")
                 iconKey: "ic_fluent_history_20_regular"
 

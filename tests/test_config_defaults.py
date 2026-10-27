@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_single_source():
     import rin_launcher.config_manager as cm
 
-    assert __version__ == "1.1.6"
+    assert __version__ == "1.1.7"
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__
 

@@ -30,6 +30,8 @@ Item {
           icon: "ic_fluent_settings_20_regular" },
         { key: "personalization", title: qsTr("个性化"),
           icon: "ic_fluent_paint_brush_20_regular" },
+        { key: "notification", title: qsTr("通知"),
+          icon: "ic_fluent_alert_20_regular" },
         { key: "update", title: qsTr("更新"),
           icon: "ic_fluent_arrow_download_20_regular" },
         { key: "backup", title: qsTr("备份"),
@@ -245,6 +247,10 @@ Item {
                     id: personalizationPage
                     page: settingsPage
                 }
+                NotificationSettingsPage {
+                    id: notificationPage
+                    page: settingsPage
+                }
                 UpdateSettingsPage {
                     id: updatePage
                     page: settingsPage
@@ -311,10 +317,11 @@ Item {
             "general": 0, "generalGroup": 0, "launcherGroup": 0,
             "hotkeyGroup": 0, "advancedGroup": 0,
             "personalization": 1, "appearanceGroup": 1,
-            "update": 2, "updateGroup": 2,
-            "backup": 3, "backupGroup": 3,
-            "storage": 4, "storageGroup": 4,
-            "about": 5, "aboutGroup": 5
+            "notification": 2, "notificationGroup": 2,
+            "update": 3, "updateGroup": 3,
+            "backup": 4, "backupGroup": 4,
+            "storage": 5, "storageGroup": 5,
+            "about": 6, "aboutGroup": 6
         }
         var index = map[String(name || "")]
         if (index !== undefined) {
@@ -327,6 +334,7 @@ Item {
         model = ConfigManager.getSettings()
         generalPage.reload()
         personalizationPage.reload()
+        notificationPage.reload()
         updatePage.reload()
         backupPage.reload()
         aboutPage.reload()

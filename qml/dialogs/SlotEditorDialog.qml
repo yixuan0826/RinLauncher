@@ -18,6 +18,9 @@ AppDialog {
     property int row: 0
     property int index: -1          // -1 表示新增
     property var slot: ({})
+    // 命中了风险规则、用户已经确认过一次：不再重复弹窗。
+    property bool riskConfirmed: false
+    property var riskInfo: ({})
 
     // ── 表单状态 ──
     property string kind: "action"
@@ -45,6 +48,12 @@ AppDialog {
         id: iconPicker
         parent: editor
         onPicked: editor.iconKey = iconKey
+    }
+
+    // 风险行为的二次确认。同目录组件可以直接实例化。
+    ConfirmDialog {
+        id: riskDialog
+        parent: editor
     }
 
     StartMenuDialog {
@@ -508,6 +517,8 @@ AppDialog {
         row = targetRow
         index = targetIndex
         slot = existing || {}
+        riskConfirmed = false
+        riskInfo = ({})
 
         kind = slot.kind || "action"
         toolKey = slot.key || ""
@@ -560,6 +571,30 @@ AppDialog {
             "path": kind === "path" ? path.trim() : "",
             "action": kind === "action" ? inlineAction.read() : null
         }
+
+        // 风险行为库：只警告不拦截，确认后照写。
+        if (!riskConfirmed) {
+            var risk = ConfigManager.checkSlotRisk(payload)
+            if (risk && risk.level && risk.level.length > 0) {
+                riskInfo = risk
+                riskDialog.ask(riskMessage(risk), function () {
+                    editor.riskConfirmed = true
+                    editor.commit()
+                }, { confirmText: qsTr("仍然保存") })
+                return
+            }
+        }
+        savePayload(payload)
+    }
+
+    function riskMessage(risk) {
+        var reasons = (risk.reasons || []).join(qsTr("、"))
+        return risk.level === "high"
+            ? qsTr("这一格会执行高风险操作：%1。\n\n真的要让它在面板上一键就能点击吗？").arg(reasons)
+            : qsTr("这一格会动到系统敏感位置：%1。\n\n确认后仍然可以添加。").arg(reasons)
+    }
+
+    function savePayload(payload) {
         var ok = index < 0
             ? ConfigManager.addLauncherSlot(row, payload)
             : ConfigManager.updateLauncherSlot(row, index, payload)

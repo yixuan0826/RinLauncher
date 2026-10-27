@@ -9,7 +9,9 @@ HotkeyField 1.0 HotkeyField.qml
 IconGrid 1.0 IconGrid.qml
 KeyboardStepsEditor 1.0 KeyboardStepsEditor.qml
 MiniIconButton 1.0 MiniIconButton.qml
+RecoveryGroup 1.0 RecoveryGroup.qml
 SettingsGroup 1.0 SettingsGroup.qml
 SlotListEditor 1.0 SlotListEditor.qml
+SlotSearchResults 1.0 SlotSearchResults.qml
 SystemControlBar 1.0 SystemControlBar.qml
 ZoneHeader 1.0 ZoneHeader.qml

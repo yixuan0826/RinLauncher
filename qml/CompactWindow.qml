@@ -60,6 +60,17 @@ Window {
     property var panelSlots: []
     property var storageSlots: []
     property var storage: ({})
+    // 全局磁贴尺寸档位：small / medium / large。
+    property string tileSizeMode: "medium"
+
+    function applyTileSize() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var value = String(ConfigManager.getSettings().tileSize || "medium")
+        tileSizeMode = ["small", "medium", "large"].indexOf(value) >= 0
+            ? value : "medium"
+    }
 
     // 小窗只发信号，窗口切换 / 退出这类跨窗口的活儿统一交给 Python 决定。
     signal openMainRequested(string page)
@@ -203,6 +214,7 @@ Window {
                 Layout.fillHeight: true
                 Layout.minimumHeight: 104
                 slots: compact.panelSlots
+                sizeMode: compact.tileSizeMode
                 onActivated: compact.runSlot(slot)
                 onMenuRequested: compact.showSlotMenu(slot, sceneX, sceneY)
             }
@@ -666,6 +678,7 @@ Window {
         reload()
         applyAnimationSetting()
         applyAccentColor()
+        applyTileSize()
     }
 
     Connections {
@@ -677,8 +690,9 @@ Window {
         }
 
         function onSettingsChanged() {
-            // 动画总开关变化即时生效。
+            // 动画总开关与磁贴尺寸即时生效。
             compact.applyAnimationSetting()
+            compact.applyTileSize()
         }
 
         // 强调色 / 整份配置变化：每个窗口是独立 QML 引擎，都要各自更新。

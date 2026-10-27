@@ -148,6 +148,32 @@ Item {
                         }
                     }
                 }
+
+                // 回滚：安装更新前会把当前程序文件打成 old.zip，这里可以再装回去。
+                FormRow {
+                    label: qsTr("上一版本")
+                    description: {
+                        var old = pageRoot.page.updater
+                            ? pageRoot.page.updater.oldVersion : null
+                        return old && old.exists
+                            ? qsTr("old.zip · %1 · %2").arg(old.size).arg(old.time)
+                            : qsTr("还没有上一版本（安装一次更新后才会生成）")
+                    }
+                    Button {
+                        text: qsTr("回滚")
+                        icon.name: "ic_fluent_arrow_reset_20_regular"
+                        enabled: pageRoot.page.updater && pageRoot.page.updater.canRollback
+                                 && !pageRoot.page.updateBusy
+                        onClicked: pageRoot.page.openConfirm(
+                            qsTr("回滚到上一版本？程序会退出并把 old.zip 中的文件装回候选位置。"),
+                            function () { pageRoot.page.updater.rollbackUpdate() })
+                    }
+                    Button {
+                        text: qsTr("恢复模式")
+                        icon.name: "ic_fluent_shield_20_regular"
+                        onClicked: ConfigManager.requestPage("recovery")
+                    }
+                }
             }
 
             SettingsGroup {
@@ -194,6 +220,22 @@ Item {
                     }
                 }
 
+                // 安装包校验：GitHub API 给了 digest 才能比，没给就直说。
+                FormRow {
+                    label: qsTr("安装包校验")
+                    visible: pageRoot.page.updateState === "ready"
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: pageRoot.page.updater && pageRoot.page.updater.digestVerified
+                            ? Theme.currentTheme.colors.textColor
+                            : Theme.currentTheme.colors.systemCautionColor
+                        text: pageRoot.page.updater && pageRoot.page.updater.digestVerified
+                            ? qsTr("sha256 校验通过")
+                            : qsTr("Release 未提供 digest，本次只能靠 HTTPS 与解包校验")
+                    }
+                }
+
                 FormRow {
                     label: qsTr("操作")
                     RowLayout {
@@ -220,7 +262,6 @@ Item {
                             icon.name: "ic_fluent_folder_open_20_regular"
                             onClicked: pageRoot.openDownloadFolder()
                         }
-
                         Button {
                             text: qsTr("打开 Release")
                             icon.name: "ic_fluent_open_20_regular"

@@ -66,6 +66,13 @@ ColumnLayout {
                     }
                 }
 
+                Text {
+                    visible: String(aboutSection.runtime.codename || "").length > 0
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.textSecondaryColor
+                    text: qsTr("开发代号 %1").arg(aboutSection.runtime.codename || "")
+                }
+
                 RowLayout {
                     Layout.fillWidth: true
                     spacing: 8

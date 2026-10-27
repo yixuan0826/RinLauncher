@@ -121,6 +121,11 @@ a = Analysis(
         "winrt.windows.foundation.collections",
         "winrt.windows.networking.connectivity",
         "winrt.windows.networking.networkoperators",
+        # Windows 原生通知（rin_launcher/toast.py）。
+        "winrt.windows.data.xml.dom",
+        "winrt.windows.ui.notifications",
+        # 启动台搜索的拼音匹配（rin_launcher/search.py，缺失时自动退化）。
+        "pypinyin",
     ],
     hookspath=[],
     hooksconfig={},

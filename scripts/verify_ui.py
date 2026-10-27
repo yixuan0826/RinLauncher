@@ -140,6 +140,22 @@ def main() -> int:
         "storage": len([slot for slot in slots if slot.get("row") == 1]),
     }
 
+    # ── 磁贴三档：切换档位后看面板算出来的每行格数与行数 ──
+    panel = compact.findChild(QObject, "panel")
+    if panel is not None:
+        tiles: dict[str, Any] = {}
+        for mode in ("small", "medium", "large"):
+            compact.setProperty("tileSizeMode", mode)
+            wait(120)
+            tiles[mode] = {
+                "perLine": panel.property("perLine"),
+                "rows": panel.property("rows"),
+                "tile": round(float(panel.property("tileSize") or 0), 1),
+            }
+        compact.setProperty("tileSizeMode", "medium")
+        wait(120)
+        report["tiles"] = tiles
+
     # ── 开始菜单数据 + UWP 图标入库 ──
     apps = launcher.config_manager.listStartMenuApps()
     kinds: dict[str, int] = {}
@@ -185,6 +201,21 @@ def main() -> int:
                 editor.root_window, "start-menu-dialog", backdrop)
             QMetaObject.invokeMethod(dialog, "reject")
             wait(150)
+
+        # ── 拼音搜索：输入首字母看结果条数 ──
+        search_field = editor.root_window.findChild(QObject, "slotSearchField")
+        page = editor.root_window.findChild(QObject, "launcherSettingsPage")
+        report["search_field_found"] = search_field is not None
+        if search_field is not None and page is not None:
+            # pz = 「配置」；首字母能命中「配置目录」「重载配置」之类的槽位。
+            search_field.setProperty("text", "pz")
+            wait(250)
+            report["search"] = {
+                "query": "pz",
+                "hits": len(page.property("searchResults") or []),
+            }
+            search_field.setProperty("text", "")
+            wait(150)
         editor.root_window.hide()
     else:
         report["editor_error"] = True
@@ -197,9 +228,35 @@ def main() -> int:
         report["settings"] = window_info(settings.root_window)
         report["screenshots"]["settings"] = grab(
             settings.root_window, "settings", backdrop)
+
+        page = settings.root_window.findChild(QObject, "settingsPage")
+        report["notifications"] = launcher.config_manager.getNotificationSettings()[
+            "categories"]
+        if page is not None:
+            for index, name in ((2, "settings-notification"), (5, "settings-storage")):
+                page.setProperty("currentIndex", index)
+                wait(400)
+                report["screenshots"][name] = grab(
+                    settings.root_window, name, backdrop)
+            page.setProperty("currentIndex", 0)
         settings.root_window.hide()
     else:
         report["settings_error"] = True
+
+    # ── 恢复模式窗口 ──
+    if launcher.create_recovery_window():
+        recovery = launcher.recovery
+        pin_to_bottom(recovery.root_window)
+        wait(700)
+        report["recovery"] = {
+            "window": window_info(recovery.root_window),
+            "info": launcher.config_manager.getRecoveryInfo(),
+        }
+        report["screenshots"]["recovery"] = grab(
+            recovery.root_window, "recovery", backdrop)
+        recovery.root_window.hide()
+    else:
+        report["recovery_error"] = True
 
     # ── 动作执行（不弹窗的安全命令） ──
     report["action_exec"] = launcher.config_manager.action_executor.execute({
