@@ -42,7 +42,15 @@ from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
 
 from rin_launcher import __codename__ as APP_CODENAME
 from rin_launcher import __version__ as APP_VERSION
-from rin_launcher import autostart, logging_setup, risk_rules, search, start_menu, toast
+from rin_launcher import (
+    autostart,
+    logging_setup,
+    notifications,
+    risk_rules,
+    search,
+    start_menu,
+    toast,
+)
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
@@ -358,26 +366,10 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "updateMirrorAuto": True,
 }
 
-# 通知分两级：功能类别 × 投递渠道。错误 / 警告永远补一条应用内提示，
-# 免得用户关掉全部渠道后什么都收不到。
-NOTIFY_CATEGORIES: dict[str, str] = {
-    "action": "动作执行",
-    "update": "更新提示",
-    "backup": "备份与恢复",
-    "system": "系统与设置",
-}
-
-NOTIFY_CHANNELS: dict[str, str] = {
-    "toast": "应用内提示",
-    "tray": "托盘气泡",
-    "native": "Windows 通知",
-}
-
-
-def _default_notifications() -> dict[str, dict[str, bool]]:
-    """默认只开应用内提示：托盘气泡与系统通知要用户自己勾。"""
-    return {key: {"toast": True, "tray": False, "native": False}
-            for key in NOTIFY_CATEGORIES}
+# 通知分两级：功能类别 × 投递渠道。表的定义与归一化在 notifications 模块里，
+# 这里只保留同名引用，避免调用方到处改 import。
+NOTIFY_CATEGORIES = notifications.CATEGORIES
+NOTIFY_CHANNELS = notifications.CHANNELS
 
 
 def _new_id() -> str:
@@ -525,7 +517,7 @@ def _default_config() -> dict[str, Any]:
             "storagePath": "",
         },
         "settings": dict(DEFAULT_SETTINGS),
-        "notifications": _default_notifications(),
+        "notifications": notifications.defaults(),
     }
 
 
@@ -565,7 +557,6 @@ class ConfigManager(QObject):
     # The window / tray / hotkey owner listens to these and applies the change.
     hotkeyChanged = Signal(str)
     trayEnabledChanged = Signal(bool)
-    materialChanged = Signal(str)
     # 强调色：三个窗口是独立 QML 引擎，靠这个信号让每个引擎各自更新 Theme。
     accentColorChanged = Signal(str)
     # 页面 / 窗口级的请求：QML 侧的页面够不到窗口对象，统一从这里转给 main.py。
@@ -711,16 +702,7 @@ class ConfigManager(QObject):
         settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
         data["settings"] = settings
         # 通知开关：按类别补齐渠道，写坏的键直接忽略（旧配置没有这一段）。
-        raw_notifications = data.get("notifications")
-        notifications = _default_notifications()
-        if isinstance(raw_notifications, dict):
-            for category, channels in raw_notifications.items():
-                if category not in notifications or not isinstance(channels, dict):
-                    continue
-                for channel in NOTIFY_CHANNELS:
-                    if channel in channels:
-                        notifications[category][channel] = bool(channels[channel])
-        data["notifications"] = notifications
+        data["notifications"] = notifications.normalize(data.get("notifications"))
         # launcher 段必须一起规范化：旧格式迁移、坏槽位剔除、内联动作清洗
         # 都靠这一句，漏掉它读回来的就是没洗过的原始字典。
         data["launcher"] = self._normalize_launcher(data, legacy_rows=version < CONFIG_VERSION)
@@ -1717,8 +1699,6 @@ class ConfigManager(QObject):
                 self.hotkeyChanged.emit(str(previous["globalHotkey"]))
             if "showTray" in settings:
                 self.trayEnabledChanged.emit(bool(previous["showTray"]))
-            if "material" in settings:
-                self.materialChanged.emit(str(previous["material"]))
             mode_changed = ("accentColorMode" in settings
                             and self._config["settings"].get("accentColorMode") != old_mode)
             if mode_changed or ("accentColor" in settings
@@ -1841,17 +1821,7 @@ class ConfigManager(QObject):
             toast.show("Rin Launcher", text)
 
     def _notification_channels(self, category: str) -> dict[str, bool]:
-        section = self._config.get("notifications")
-        if not isinstance(section, dict):
-            return {"toast": True, "tray": False, "native": False}
-        channels = section.get(category)
-        if not isinstance(channels, dict):
-            return {"toast": True, "tray": False, "native": False}
-        return {
-            "toast": bool(channels.get("toast", True)),
-            "tray": bool(channels.get("tray", False)),
-            "native": bool(channels.get("native", False)),
-        }
+        return notifications.channels_for(self._config, category)
 
     @Slot(result="QVariantMap")
     def getNotificationSettings(self) -> dict[str, Any]:
@@ -1879,9 +1849,9 @@ class ConfigManager(QObject):
                                enabled: bool) -> bool:
         if category not in NOTIFY_CATEGORIES or channel not in NOTIFY_CHANNELS:
             return False
-        section = self._config.setdefault("notifications", _default_notifications())
+        section = self._config.setdefault("notifications", notifications.defaults())
         if not isinstance(section, dict):
-            section = _default_notifications()
+            section = notifications.defaults()
             self._config["notifications"] = section
         entry = section.setdefault(category, {"toast": True, "tray": False,
                                               "native": False})
@@ -1952,7 +1922,7 @@ class ConfigManager(QObject):
         """只重置设置与通知开关，保留启动台槽位、图标与备份。"""
         self._create_backup(manual=True, silent=True)
         self._config["settings"] = dict(DEFAULT_SETTINGS)
-        self._config["notifications"] = _default_notifications()
+        self._config["notifications"] = notifications.defaults()
         saved = self.save(changed="settings")
         if saved:
             self.accentColorChanged.emit(self.accentColor)

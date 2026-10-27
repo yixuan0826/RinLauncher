@@ -194,7 +194,7 @@ AppDialog {
                             iconKey: row.app.icon.length > 0
                                 ? row.app.icon : dialog.kindIcon(row.app.kind)
                             iconSize: 24
-                            tint: Utils.accentIconColor
+                            tint: Theme.currentTheme.colors.textColor
                         }
 
                         ColumnLayout {

@@ -395,8 +395,6 @@ Item {
                 }
             }
             break
-        // 材质由后端应用：材质要碰原生窗口句柄，QML 这边碰不到，
-        // 统一走 settingsChanged → main.apply_material。
         }
     }
 }

@@ -121,7 +121,7 @@ AppDialog {
                     Layout.alignment: Qt.AlignVCenter
                     iconKey: editor.iconKey.length > 0 ? editor.iconKey : editor.previewIcon
                     iconSize: 40
-                    tint: Utils.accentIconColor
+                    tint: Theme.currentTheme.colors.textColor
                 }
 
                 ColumnLayout {
@@ -207,9 +207,8 @@ AppDialog {
                             Layout.alignment: Qt.AlignVCenter
                             iconKey: modelData.icon
                             iconSize: 18
-                            tint: kindTile.selected
-                                ? Utils.accentIconColor
-                                : Theme.currentTheme.colors.textColor
+                            // 选中态由边框 / 底色 / 加粗文字表达，图标本身保持单色。
+                            tint: Theme.currentTheme.colors.textColor
                         }
 
                         Text {

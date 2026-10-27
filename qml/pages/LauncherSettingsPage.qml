@@ -73,16 +73,13 @@ Item {
                 Layout.preferredWidth: 46
                 Layout.preferredHeight: 46
                 radius: Theme.currentTheme.appearance.windowRadius
-                color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
-                               Theme.currentTheme.colors.primaryColor.g,
-                               Theme.currentTheme.colors.primaryColor.b,
-                               0.12)
+                color: Theme.currentTheme.colors.controlSecondaryColor
 
                 AppIcon {
                     anchors.centerIn: parent
                     iconKey: "ic_fluent_apps_20_regular"
                     iconSize: 24
-                    tint: Utils.accentIconColor
+                    tint: Theme.currentTheme.colors.textColor
                 }
             }
 

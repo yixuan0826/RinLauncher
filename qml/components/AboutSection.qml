@@ -29,11 +29,14 @@ ColumnLayout {
     spacing: 16
 
     // ── 主卡片 ──
+    // 高度跟着内容走：写死 112 时，「名称 + 版本」「开发代号」「两个按钮」三行
+    // 会被卡片底边裁掉一截（1.1.7 加代号那一行之后就露出来了）。
     Frame {
         Layout.fillWidth: true
-        Layout.preferredHeight: 112
+        Layout.preferredHeight: mainRow.implicitHeight + 36
 
         RowLayout {
+            id: mainRow
             anchors.fill: parent
             anchors.margins: 18
             spacing: 18

@@ -266,7 +266,7 @@ Window {
                                     Layout.alignment: Qt.AlignVCenter
                                     iconKey: "ic_fluent_storage_20_regular"
                                     iconSize: 24
-                                    tint: Utils.accentIconColor
+                                    tint: Theme.currentTheme.colors.textColor
                                 }
 
                                 ColumnLayout {
@@ -371,7 +371,7 @@ Window {
                                         iconSize: 24
                                         tint: modelData.exists === false
                                             ? Theme.currentTheme.colors.textSecondaryColor
-                                            : Utils.accentIconColor
+                                            : Theme.currentTheme.colors.textColor
                                     }
 
                                     ColumnLayout {

@@ -2,13 +2,14 @@ import QtQuick 2.15
 import QtQuick.Controls 2.15
 import RinUI
 
-// 小窗的面板：把槽位按「每行能放几格」自动排成若干行（最多 10 格）。
+// 小窗的两个面板行：最多 10 格，排成 2 × 5（6 格时 3 + 3）。
 //
-// 尺寸不再按「固定两行平分」，而是由全局档位（小 / 中 / 大）给出一个目标边长，
-// 再看面板宽度决定一行放几格、总共几行：
-//   * 档位只影响目标边长（56 / 76 / 88），不写死每行格数；
-//   * 实际边长会被宽度反推压小，保证永远不越界；
-//   * 每行塞满能放下的格数，最后一行自然短一截也居中。
+// 排版规则沿用 1.1.6：
+//   * ≤ 5 格：一行铺满；
+//   * 6–10 格：两行平分，避免「5 + 1」那种一头沉。
+//
+// 1.1.7 引入的三档尺寸（小 / 中 / 大）只决定**格子边长上限**，不再改变每行格数：
+// 实际边长 = min(档位目标, 按列数算出来的可用宽度)，所以永远不越界。
 Item {
     id: panel
 
@@ -24,17 +25,14 @@ Item {
     signal menuRequested(var slot, real sceneX, real sceneY)
 
     readonly property int shownCount: Math.min(slots.length, capacity)
-    // 档位对应的目标边长；与设置页的「小 / 中 / 大」一一对应。
-    // 「中」= 76，与 1.1.6 的默认观感一致，升级后不会突然变小。
+    // 一行最多 5 格：6 格以上按两行平分，10 格正好 5 + 5。
+    readonly property int perLine: shownCount === 0 ? 0
+        : shownCount <= 5 ? shownCount : Math.ceil(shownCount / 2)
+    readonly property int rows: shownCount === 0 ? 0
+        : Math.ceil(shownCount / perLine)
+    // 档位对应的目标边长；「中」= 76 与 1.1.6 的默认观感一致。
     readonly property real targetTile: sizeMode === "small" ? 56
                                      : sizeMode === "large" ? 88 : 76
-    // 宽度够放几格（至少 1 格）。
-    readonly property int fitPerLine: Math.max(
-        1, Math.floor((width + gap) / (targetTile + gap)))
-    readonly property int rows: shownCount === 0 ? 0
-        : Math.ceil(shownCount / fitPerLine)
-    // 每行直接塞满：最后一行的零头居中显示，不为了「平均」把前面的行也拆小。
-    readonly property int perLine: rows === 0 ? 0 : fitPerLine
     readonly property real tileSize: shownCount === 0 ? 0
         : Math.max(36, Math.min(targetTile,
                                 Math.floor((width - (perLine - 1) * gap) / perLine)))

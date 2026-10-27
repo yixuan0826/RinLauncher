@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import yaml
 
-from rin_launcher import risk_rules, search
+from rin_launcher import notifications, risk_rules, search
 from rin_launcher.config_manager import (
     NOTIFY_CATEGORIES,
     NOTIFY_CHANNELS,
@@ -19,6 +19,26 @@ def _manager(tmp_path) -> ConfigManager:
 # ----------------------------------------------------------------------
 # 通知
 # ----------------------------------------------------------------------
+def test_notification_module_normalizes_without_side_effects():
+    raw = {"update": {"tray": 1}, "ghost": {"toast": True}, "system": "bad"}
+    values = notifications.normalize(raw)
+    assert values["update"]["tray"] is True
+    assert values["update"]["toast"] is True   # 缺的渠道补默认值
+    assert "ghost" not in values
+    assert values["system"] == notifications.DEFAULT_CHANNELS
+    # 返回的必须是新字典：改它不能污染模块级默认值。
+    values["system"]["toast"] = False
+    assert notifications.defaults()["system"]["toast"] is True
+
+
+def test_channels_for_falls_back_to_defaults():
+    assert notifications.channels_for({}, "action") == notifications.DEFAULT_CHANNELS
+    config = {"notifications": {"action": {"native": True}}}
+    assert notifications.channels_for(config, "action")["native"] is True
+    assert notifications.channels_for(config, "action")["tray"] is False
+    assert notifications.channels_for("broken", "action") == notifications.DEFAULT_CHANNELS
+
+
 def test_default_notifications_cover_every_category(qapp, tmp_path):
     manager = _manager(tmp_path)
     info = manager.getNotificationSettings()

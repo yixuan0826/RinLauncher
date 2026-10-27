@@ -4,7 +4,7 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-就用」，启动台编辑与设置各自独立成窗。当前版本 **1.1.7**（开发代号 **Hoshimi Miyabi**，
+就用」，启动台编辑与设置各自独立成窗。当前版本 **1.1.8**（开发代号 **Hoshimi Miyabi**，
 1.2.0 的预览版），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
@@ -14,7 +14,7 @@
 | | |
 | --- | --- |
 | 🪟 **常驻小窗** | 云母桌面挂件，Win11 8px 圆角，固定右下角、沉底、不抢焦点 |
-| 🧩 **槽位** | 双行面板（最多 10 格）+ 存储区；每格可设文件 / 命令 / 网址 / 按键 / UWP |
+| 🧩 **槽位** | 2 × 5 双行面板（最多 10 格）+ 存储区；每格可设文件 / 命令 / 网址 / 按键 / UWP |
 | 💽 **存储卡片** | 固定到文件夹或整块磁盘；磁盘显示卷标，U 盘槽位自动检测 |
 | 🎛 **系统控制** | 音量、Wi-Fi、移动热点；状态每 2 秒与系统同步 |
 | 🚀 **开始菜单导入** | 普通 / UWP / WSA / WSL 合并列表；UWP 读包清单、WSA 读快捷方式图标 |
@@ -25,7 +25,7 @@
 | 🔔 **通知** | 按功能类别选择渠道：应用内提示 / 托盘气泡 / Windows 原生通知 |
 | 🔍 **搜索** | 启动台编辑页支持中文、全拼与首字母（`qidongtai` / `qdt`） |
 | ⌨️ **按键模拟** | 录制或手动编辑，支持组合键与长按，兼容中日韩输入法 |
-| 🎨 **图标** | Fluent / 随包 Lawnicons / 自定义图片 / 从 exe·dll·lnk·UWP 包清单提取 |
+| 🎨 **图标** | Fluent / 随包 Lawnicons / 自定义图片 / 从 exe·dll·lnk·UWP 包清单提取；界面图标一律单色 |
 | 🔐 **提权** | 条目级 UAC、提权前确认、任务计划管理员自启动 |
 
 ---
@@ -107,7 +107,7 @@ settings:
   theme: system            # system | light | dark
   accentColorMode: system  # system | custom
   accentColor: "#0078d4"   # accentColorMode=custom 时生效
-  material: tabbed         # tabbed | mica | none
+  tileSize: medium         # small | medium | large（只影响格子边长）
   globalHotkey: "Ctrl+Space"
   startupMode: off         # off | normal | admin
   updateChannel: stable    # stable | prerelease
@@ -161,9 +161,12 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.1.8**（Hoshimi Miyabi）：启动台恢复 2 × 5 排版（三档尺寸只改格子边长）；
+  界面指示性图标全部改为单色，强调色只用于选中态与进度条；修复关于页主卡片
+  把按钮裁掉一截；通知表与材质代码清理。详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.1.7**（Hoshimi Miyabi）：恢复模式窗口（安全 / 诊断模式、备份恢复、old.zip
   回滚、重置与清理）；通知按功能类别选渠道，可接 Windows 原生 Toast；风险行为
-  库在保存前二次确认；启动台编辑页支持拼音搜索；磁贴尺寸三档并自动改变每行格数。
+  库在保存前二次确认；启动台编辑页支持拼音搜索；磁贴尺寸三档。
   详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.1.6**：按天日志与 30 天 ZIP 导出；备份列表 / 恢复 / 删除与可配置策略；
   存储占用与清理；关于页诊断信息；材质固定云母；退出确认；图标改黑白灰。

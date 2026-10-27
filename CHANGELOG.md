@@ -3,6 +3,44 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.1.8-pre（Hoshimi Miyabi）— 2026-10-27
+
+> 1.1.8 与 1.1.7、1.2.0 共用开发代号 **Hoshimi Miyabi**，同样以 Pre-Release 发布。
+
+### 修复
+
+- **启动台恢复 2 × 5 排版**：1.1.7 让「磁贴尺寸」顺带改变了每行格数（6 格会排成
+  4 + 2 甚至 5 + 1），看起来比原来散。现在回到 1.1.6 的规则——5 格以内一行铺满，
+  6–10 格两行平分（10 格正好 5 + 5）；三档尺寸只决定格子边长上限。
+- **关于页裁切**：主卡片高度写死 112px，加上「开发代号」那一行之后，
+  「项目仓库 / RinUI 文档」两个按钮被卡片底边截掉一截。卡片改为按内容撑高。
+
+### 改进
+
+- **指示性图标全部去掉强调色**：分区标题、存储卡片、磁盘卡片、槽位列表、
+  编辑器预览、开始菜单选择器、图标网格、系统控制条（音量 / Wi-Fi / 热点）与
+  恢复模式标题的图标统一改为文字色，强调色只留给「选中态」与进度条。
+  托盘 / 小窗里的应用图标本来就是原图，不受影响。
+- **代码清理**：
+  - 通知的类别 / 渠道与配置归一化抽到 `rin_launcher/notifications.py`，
+    `config_manager` 不再内联这张表，也有了纯函数级测试。
+  - 删掉材质固定为云母之后遗留的 `materialChanged` 信号、`MATERIALS` 映射与
+    相关分支，窗口背景统一由 `Launcher.apply_backdrop()` 处理。
+  - README 的配置示例同步移除已下线的 `material` 键，补上 `tileSize`。
+
+### 升级说明
+
+- 配置格式不变（`version: 3`）。`settings.tileSize` 仍然有效，只是不再影响每行格数。
+- 本版以 Pre-Release 通道发布。
+
+### 验证
+
+- `ruff check rin_launcher tests scripts`：通过。
+- `pytest -q`：**121 passed**（新增通知模块纯函数测试 2 项）。
+- 全部 QML 经 `pyside6-qmllint` 检查，无 `Error:`。
+- 真机 `scripts/verify_ui.py`：小窗 6 格实测 3 + 3，关于页截图完整显示版本 / 代号 /
+  两个按钮；四窗口渲染正常。
+
 ## 1.1.7-pre（Hoshimi Miyabi）— 2026-10-27
 
 > 1.1.7 是 1.2.0 的开发预览版，与 1.2.0 共用开发代号 **Hoshimi Miyabi**。

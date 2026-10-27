@@ -63,14 +63,8 @@ from RinUI.core.config import is_win11
 
 logger = logging.getLogger(__name__)
 
-# 三个窗口共用的材质。RinUI 的取值：tabbed（增强云母）| mica（云母）| none。
-MATERIALS: dict[str, BackdropEffect] = {
-    "tabbed": BackdropEffect.Tabbed,   # 增强云母
-    "mica": BackdropEffect.Mica,       # 云母
-    "none": BackdropEffect.None_,
-}
-# 统一用云母；Win10 或调用失败时由 apply_material 回退到不透明。
-DEFAULT_MATERIAL = "mica"
+# 三个窗口统一用云母；Win10 或调用失败时由 apply_backdrop 回退到不透明。
+BACKDROP_EFFECT = BackdropEffect.Mica
 
 
 def _setup_logging(config_manager: ConfigManager) -> None:
@@ -120,7 +114,6 @@ class Launcher:
         settings = self.config_manager.config["settings"]
         self.config_manager.hotkeyChanged.connect(self.apply_hotkey)
         self.config_manager.trayEnabledChanged.connect(self.apply_tray)
-        self.config_manager.materialChanged.connect(self.apply_material)
         # QML 里的页面够不到窗口对象，页面级请求统一从后端转上来。
         self.config_manager.pageRequested.connect(self.show_page)
         # 托盘气泡是「通知」的一个渠道，由 ConfigManager 按类别分发；
@@ -210,7 +203,7 @@ class Launcher:
         effects.apply_no_focus_tool_window(root)
         effects.apply_bottom_layer(root)
         effects.apply_win11_round_corners(root)
-        self.apply_material(DEFAULT_MATERIAL, window)
+        self.apply_backdrop(window)
         return True
 
     def create_editor_window(self) -> bool:
@@ -220,7 +213,7 @@ class Launcher:
         self.editor = window
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
-        self.apply_material(DEFAULT_MATERIAL, window)
+        self.apply_backdrop(window)
         return True
 
     def create_settings_window(self) -> bool:
@@ -230,7 +223,7 @@ class Launcher:
         self.settings = window
         window.root_window.closeRequested.connect(
             lambda: self._close_window(window))
-        self.apply_material(DEFAULT_MATERIAL, window)
+        self.apply_backdrop(window)
         return True
 
     def ensure_editor_window(self) -> bool:
@@ -257,7 +250,7 @@ class Launcher:
         if window.root_window is not None:
             window.root_window.closeRequested.connect(
                 lambda: self._close_window(window))
-        self.apply_material(DEFAULT_MATERIAL, window)
+        self.apply_backdrop(window)
         return True
 
     def ensure_recovery_window(self) -> bool:
@@ -290,20 +283,18 @@ class Launcher:
         if not self.hotkey.register(sequence):
             logger.info("No global hotkey registered (configured value: %r)", sequence)
 
-    def apply_material(self, material: str,
-                       target: RinUIWindow | None = None) -> None:
-        """把全局「窗口材质」应用到指定窗口（默认三个窗口全部）。
+    def apply_backdrop(self, target: RinUIWindow | None = None) -> None:
+        """给窗口上云母背景（默认三个窗口全部）。
 
-        新建窗口时只给它自己上材质；同一份材质对已有窗口重复应用只是白跑
-        DwmSetWindowAttribute。
+        新建窗口时只给它自己上材质；对已有窗口重复调用只是白跑一次
+        DwmSetWindowAttribute，代价很低。Win10 没有云母，直接退回不透明，
+        而不是把文字铺在桌面上。
         """
         if not is_windows():
             return
-        effect = MATERIALS.get(str(material), MATERIALS[DEFAULT_MATERIAL])
-        # Win10 没有云母 / 增强云母；退回不透明背景，而不是把文字铺在桌面上。
-        if not is_win11() and effect != BackdropEffect.None_:
-            effect = BackdropEffect.None_
-        targets = (target,) if target is not None else (self.compact, self.editor, self.settings)
+        effect = BACKDROP_EFFECT if is_win11() else BackdropEffect.None_
+        targets = (target,) if target is not None else (
+            self.compact, self.editor, self.settings, self.recovery)
         for window in targets:
             if window is None or window.root_window is None:
                 continue
@@ -314,7 +305,7 @@ class Launcher:
                         "backdropActive",
                         status == 0 and effect != BackdropEffect.None_)
             except Exception:
-                logger.exception("Failed to apply backdrop effect %r", material)
+                logger.exception("Failed to apply backdrop effect")
 
     def apply_tray(self, enabled: bool) -> None:
         if enabled:

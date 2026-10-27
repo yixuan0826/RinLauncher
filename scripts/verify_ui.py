@@ -233,7 +233,8 @@ def main() -> int:
         report["notifications"] = launcher.config_manager.getNotificationSettings()[
             "categories"]
         if page is not None:
-            for index, name in ((2, "settings-notification"), (5, "settings-storage")):
+            for index, name in ((2, "settings-notification"), (5, "settings-storage"),
+                                (6, "settings-about")):
                 page.setProperty("currentIndex", index)
                 wait(400)
                 report["screenshots"][name] = grab(

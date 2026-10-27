@@ -16,7 +16,7 @@ GridView {
     property var icons: []
     property int cellSize: 52
     property string selectedKey: ""
-    property color tint: Utils.accentIconColor
+    property color tint: Theme.currentTheme.colors.textColor
     // 打开后每格右上角会多一个删除按钮（只对用户自己的图标有意义）。
     property bool deletable: false
 

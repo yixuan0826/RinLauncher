@@ -39,7 +39,8 @@ RowLayout {
     readonly property color hoverColor: Theme.currentTheme.colors.cardTertiaryColor
     readonly property color textMain: Theme.currentTheme.colors.textColor
     readonly property color textSub: Theme.currentTheme.colors.textSecondaryColor
-    readonly property color accentText: Utils.accentIconColor
+    // 开启状态的图标 / 文字不再上强调色：只靠背景高亮区分开与关。
+    readonly property color activeText: Theme.currentTheme.colors.textColor
 
     function background(active, hovered) {
         return active ? activeBackground : (hovered ? hoverColor : tileColor)
@@ -114,7 +115,7 @@ RowLayout {
                         anchors.fill: parent
                         iconKey: root.volumeIcon()
                         iconSize: 20
-                        tint: root.mutedValue ? root.textSub : root.accentText
+                        tint: root.mutedValue ? root.textSub : root.activeText
                     }
 
                     MouseArea {
@@ -206,7 +207,7 @@ RowLayout {
                         ? "ic_fluent_wifi_1_20_regular"
                         : "ic_fluent_wifi_off_20_regular"
                     iconSize: 20
-                    tint: root.wifiEnabledValue ? root.accentText : root.textSub
+                    tint: root.wifiEnabledValue ? root.activeText : root.textSub
                     opacity: root.wifiAvailableValue ? 1 : 0.55
                 }
 
@@ -214,7 +215,7 @@ RowLayout {
                     Layout.fillWidth: true
                     objectName: "wifiTitleLabel"
                     text: qsTr("Wi-Fi")
-                    color: root.wifiEnabledValue ? root.accentText : root.textMain
+                    color: root.wifiEnabledValue ? root.activeText : root.textMain
                     font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight
@@ -277,7 +278,7 @@ RowLayout {
                     Layout.preferredHeight: 20
                     iconKey: "ic_fluent_router_20_regular"
                     iconSize: 20
-                    tint: root.hotspotEnabledValue ? root.accentText : root.textSub
+                    tint: root.hotspotEnabledValue ? root.activeText : root.textSub
                     opacity: root.hotspotAvailableValue ? 1 : 0.55
                 }
 
@@ -285,7 +286,7 @@ RowLayout {
                     Layout.fillWidth: true
                     objectName: "hotspotTitleLabel"
                     text: qsTr("热点")
-                    color: root.hotspotEnabledValue ? root.accentText : root.textMain
+                    color: root.hotspotEnabledValue ? root.activeText : root.textMain
                     font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
                     font.weight: Font.DemiBold
                     elide: Text.ElideRight

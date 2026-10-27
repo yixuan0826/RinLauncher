@@ -218,7 +218,7 @@ FluentWindowBase {
                     Layout.alignment: Qt.AlignVCenter
                     iconKey: "ic_fluent_shield_20_regular"
                     iconSize: 28
-                    tint: Utils.accentIconColor
+                    tint: Theme.currentTheme.colors.textColor
                 }
 
                 ColumnLayout {

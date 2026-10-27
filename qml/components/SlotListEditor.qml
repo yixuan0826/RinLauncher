@@ -101,7 +101,7 @@ ColumnLayout {
                 Layout.alignment: Qt.AlignHCenter
                 iconKey: "ic_fluent_add_circle_20_regular"
                 iconSize: 24
-                tint: Utils.accentIconColor
+                tint: Theme.currentTheme.colors.textSecondaryColor
             }
 
             Text {
@@ -165,16 +165,13 @@ ColumnLayout {
                     Layout.preferredWidth: 38
                     Layout.preferredHeight: 38
                     radius: Theme.currentTheme.appearance.windowRadius
-                    color: Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
-                                   Theme.currentTheme.colors.primaryColor.g,
-                                   Theme.currentTheme.colors.primaryColor.b,
-                                   0.12)
+                    color: Theme.currentTheme.colors.controlSecondaryColor
 
                     AppIcon {
                         anchors.centerIn: parent
                         iconKey: modelData.icon || ""
                         iconSize: 22
-                        tint: Utils.accentIconColor
+                        tint: Theme.currentTheme.colors.textColor
                     }
                 }
 

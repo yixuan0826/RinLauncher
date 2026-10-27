@@ -18,7 +18,8 @@ RowLayout {
         Layout.alignment: Qt.AlignVCenter
         iconKey: header.iconKey
         iconSize: 18
-        tint: Utils.accentIconColor
+        // 分区图标不再上强调色：全部图标保持单色，交给标题文字做重心。
+        tint: Theme.currentTheme.colors.textColor
     }
 
     Text {
