@@ -5,7 +5,7 @@ import RinUI
 
 import "../../components"
 
-// 设置 → 存储：日志、备份和上一版本文件的占用与清理入口。
+// 设置 → 存储：日志、备份的占用与清理入口。
 // 所有删除动作都先过 SettingsPage 的确认弹窗（page.openConfirm）。
 Item {
     id: pageRoot
@@ -101,35 +101,6 @@ Item {
                         text: qsTr("打开恢复模式")
                         icon.name: "ic_fluent_open_20_regular"
                         onClicked: ConfigManager.requestPage("recovery")
-                    }
-                }
-            }
-
-            SettingsGroup {
-                title: qsTr("上一版本")
-                iconKey: "ic_fluent_history_20_regular"
-
-                FormRow {
-                    label: qsTr("回滚包 old.zip")
-                    description: pageRoot.page.storageInfo.oldVersionExists
-                        ? qsTr("占用 %1").arg(pageRoot.page.storageInfo.oldVersionSize || "0B")
-                        : qsTr("还没有上一版本的安装包")
-                    Text {
-                        Layout.fillWidth: true
-                        wrapMode: Text.NoWrap
-                        elide: Text.ElideMiddle
-                        color: Theme.currentTheme.colors.textSecondaryColor
-                        text: pageRoot.page.storageInfo.oldVersionPath || "-"
-                    }
-                    Button {
-                        text: qsTr("删除")
-                        icon.name: "ic_fluent_delete_20_regular"
-                        enabled: pageRoot.page.storageInfo.oldVersionExists === true
-                        onClicked: pageRoot.page.openConfirm(
-                            qsTr("删除 old.zip？删除后就不能回滚到上一版本了。"), function () {
-                                ConfigManager.deleteOldVersion()
-                                pageRoot.page.reloadStorageInfo()
-                            })
                     }
                 }
             }

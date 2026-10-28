@@ -1,11 +1,18 @@
-"""GitHub Releases 更新检查与安装。
+"""GitHub Releases 更新检查、下载与安装。
 
-通道：
-* 稳定版 —— ``releases/latest``（即 GitHub 上的 Latest）
-* 测试版 —— 发布列表里第一个 ``prerelease == true`` 的 Release
+1.1.9 起不再是「自动挑一个最新版下载」，而是把 **Release 列表**整张交给界面：
+用户在下拉里选一个版本（可新可旧，回滚就是这么做的）→ 下载 → 手动点安装。
 
-更新包固定叫 ``RinLauncher.zip``。下载在后台线程完成；安装时写一个隐藏的
-PowerShell 脚本，等主进程退出后解压覆盖安装目录并重新启动。
+安装仍是：写一个隐藏的 PowerShell 脚本，等主进程退出后把解压好的文件覆盖
+到安装目录并重新启动。区别是：
+
+* 脚本用 ``powershell.write_script`` 落盘（绕开冻结包里的 ``utf-8-sig`` 编码
+  缺失）；
+* 脚本自己写结果文件（OK / FAIL + 原因），下次启动时读回来显示在更新页；
+* 复制带重试，失败也会把旧版本拉起来，不会把用户晾在那儿；
+* 只有确认辅助进程真的起来了，主进程才退出。
+
+**没有 old.zip 回滚了**：回滚 = 在列表里选一个旧版本重装。
 """
 
 from __future__ import annotations
@@ -17,7 +24,6 @@ import logging
 import os
 import re
 import shutil
-import subprocess
 import sys
 import threading
 import time
@@ -32,6 +38,7 @@ from PySide6.QtCore import Property, QCoreApplication, QObject, QTimer, Signal, 
 from PySide6.QtWidgets import QFileDialog
 
 from rin_launcher import __version__ as APP_VERSION
+from rin_launcher import powershell
 from rin_launcher.config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
@@ -76,6 +83,74 @@ def clean_release_notes(body: str) -> str:
     text = _HTML_COMMENT.sub("", str(body or ""))
     text = _HTML_BREAK.sub("\n", text)
     return text.strip()
+
+
+# ── Release 列表 ────────────────────────────────────────────────────
+#
+# 更新页不再是「有新版就自动下载」，而是把整张 Release 列表交给用户挑。
+# 这样「回滚」就是选一个旧版本重装，不需要 old.zip 那套备份/还原。
+
+RELEASE_LIST_LIMIT = 30
+
+
+def parse_releases(payload: Any, *,
+                   limit: int = RELEASE_LIST_LIMIT) -> list[dict[str, Any]]:
+    """把 GitHub ``/releases`` 的响应整理成界面能直接用的列表。
+
+    纯函数（不碰网络 / Qt），方便测试。跳过草稿与没有 tag 的条目，按版本号
+    从新到旧排序；每条带上下载地址、SHA-256 digest（GitHub 没给时为空串）
+    以及 ``current`` 标记（就是当前运行的版本）。
+    """
+    if not isinstance(payload, list):
+        return []
+    items: list[dict[str, Any]] = []
+    for raw in payload:
+        if not isinstance(raw, dict) or raw.get("draft"):
+            continue
+        tag = str(raw.get("tag_name") or "").strip()
+        if not tag:
+            continue
+        # 历史上的 tag 写法不统一（v1.1.0 / v.1.1.2），统一成纯版本号
+        version = tag.lstrip("vV").lstrip(".")
+        if not version:
+            continue
+        assets = raw.get("assets") if isinstance(raw.get("assets"), list) else []
+        asset = next(
+            (item for item in assets
+             if isinstance(item, dict)
+             and str(item.get("name") or "").lower() == ASSET_NAME),
+            None,
+        )
+        items.append({
+            "tag": tag,
+            "version": version,
+            "name": str(raw.get("name") or tag),
+            "prerelease": bool(raw.get("prerelease")),
+            "published": str(raw.get("published_at") or "")[:10],
+            "url": str(raw.get("html_url") or ""),
+            "downloadUrl": str((asset or {}).get("browser_download_url") or ""),
+            "digest": str((asset or {}).get("digest") or ""),
+            "assetName": str((asset or {}).get("name") or ""),
+            "current": version == APP_VERSION,
+            "notes": clean_release_notes(str(raw.get("body") or "")),
+        })
+    items.sort(key=lambda item: version_tuple(item["version"]), reverse=True)
+    return items[:max(1, limit)]
+
+
+def release_label(item: dict[str, Any]) -> str:
+    """下拉菜单里的一行文本，例如 ``v1.1.8-pre · 预发布 · 当前``。"""
+    parts = [f"v{item.get('version') or item.get('tag') or '?'}"]
+    if item.get("current"):
+        parts.append("当前")
+    if item.get("prerelease"):
+        parts.append("预发布")
+    if item.get("published"):
+        parts.append(str(item["published"]))
+    if not item.get("downloadUrl"):
+        parts.append("无更新包")
+    return " · ".join(parts)
+
 
 
 # ── Markdown → 结构化块 ──────────────────────────────────────────────
@@ -238,10 +313,10 @@ class UpdateManager(QObject):
     notify = Signal(str, str)
 
     _stateReady = Signal(str, str)
-    _releaseReady = Signal(str, str, str)
+    _releasesReady = Signal(list)
     _downloadStart = Signal(str, str, str)
     _progressReady = Signal(float)
-    _downloadFinished = Signal(bool, str, bool)
+    _downloadFinished = Signal(bool, str, bool, str)
     _speedReady = Signal(list)
 
     def __init__(self, config_manager: ConfigManager, parent: QObject | None = None):
@@ -250,22 +325,32 @@ class UpdateManager(QObject):
         self._state = STATE_IDLE
         self._message = "尚未检查更新"
         self._latest_version = ""
+        self._releases: list[dict[str, Any]] = []
+        self._selected = -1
+        self._downloaded_version = ""
         self._release_blocks: list[dict[str, Any]] = []
         self._release_url = ""
         self._download_url = ""
         self._progress = 0.0
         self._silent = False
         self._digest_verified = False
+        self._last_error = ""
+        self._startup_note = ""
+        self._stopped = False
+        self._pending_proc: Any = None
         self._thread: threading.Thread | None = None
         self._mirror_speeds: list[dict[str, Any]] = []
         self._speed_testing = False
 
         self._stateReady.connect(self._apply_state)
-        self._releaseReady.connect(self._apply_release)
+        self._releasesReady.connect(self._apply_releases)
         self._downloadStart.connect(self._apply_download_start)
         self._progressReady.connect(self._apply_progress)
         self._downloadFinished.connect(self._apply_download)
         self._speedReady.connect(self._apply_speed_results)
+
+        self._cleanup_legacy()
+        self._read_last_result()
 
     # ------------------------------------------------------------------
     # QML 属性
@@ -284,7 +369,38 @@ class UpdateManager(QObject):
 
     @Property(str, notify=changed)
     def latestVersion(self) -> str:
+        """列表里最新的版本号（不代表一定比当前新）。"""
         return self._latest_version
+
+    @Property(str, notify=changed)
+    def downloadedVersion(self) -> str:
+        return self._downloaded_version
+
+    @Property(str, notify=changed)
+    def lastError(self) -> str:
+        """最近一次失败的原因（下载 / 安装 / 上次更新遗留）。"""
+        return self._last_error
+
+    @Property("QVariantList", notify=changed)
+    def releases(self) -> list[dict[str, Any]]:
+        """Release 列表（不含正文，正文只在选中时解析）。"""
+        return [{key: value for key, value in item.items() if key != "notes"}
+                for item in self._releases]
+
+    @Property("QStringList", notify=changed)
+    def releaseLabels(self) -> list[str]:
+        return [release_label(item) for item in self._releases]
+
+    @Property(int, notify=changed)
+    def selectedIndex(self) -> int:
+        return self._selected
+
+    @Property("QVariantMap", notify=changed)
+    def selectedRelease(self) -> dict[str, Any]:
+        item = self._current_release()
+        if item is None:
+            return {}
+        return {key: value for key, value in item.items() if key != "notes"}
 
     @Property("QVariantList", notify=changed)
     def releaseNoteBlocks(self) -> list[dict[str, Any]]:
@@ -304,7 +420,11 @@ class UpdateManager(QObject):
 
     @Property(bool, notify=changed)
     def canInstall(self) -> bool:
-        return self._state == STATE_READY and bool(getattr(sys, "frozen", False))
+        """已下载好、且当前是打包运行，才允许点「安装」。"""
+        return (self._state == STATE_READY
+                and bool(getattr(sys, "frozen", False))
+                and bool(self._downloaded_version)
+                and self._archive_path(self._downloaded_version).is_file())
 
     @Property(bool, notify=changed)
     def digestVerified(self) -> bool:
@@ -312,29 +432,9 @@ class UpdateManager(QObject):
         return self._digest_verified
 
     @Property(bool, notify=changed)
-    def canRollback(self) -> bool:
-        """上一版本（old.zip）存在且当前是打包运行。"""
-        return bool(getattr(sys, "frozen", False)) and self._old_version_path().is_file()
-
-    @Property("QVariantMap", notify=changed)
-    def oldVersion(self) -> dict[str, Any]:
-        path = self._old_version_path()
-        try:
-            stat = path.stat()
-        except OSError:
-            return {"exists": False, "path": str(path), "size": "", "time": ""}
-        return {
-            "exists": True,
-            "path": str(path),
-            "size": f"{stat.st_size / (1024 * 1024):.1f} MB",
-            "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
-        }
-
-    @staticmethod
-    def _old_version_path() -> Path:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent / "old.zip"
-        return Path(__file__).resolve().parent.parent / "old.zip"
+    def canDownload(self) -> bool:
+        item = self._current_release()
+        return bool(item and item.get("downloadUrl")) and not self.busy
 
     @Property(str, notify=changed)
     def channel(self) -> str:
@@ -485,81 +585,114 @@ class UpdateManager(QObject):
 
     def _check_worker(self) -> None:
         try:
-            if self.channel == "prerelease":
-                releases = self._api_get(f"{API_ROOT}?per_page=30")
-                release = next(
-                    (item for item in releases
-                     if item.get("prerelease") and not item.get("draft")),
-                    None,
-                )
-                if release is None:
-                    self._stateReady.emit(
-                        STATE_UP_TO_DATE, "测试通道暂时没有预发布版本")
-                    return
-            else:
-                release = self._api_get(f"{API_ROOT}/latest")
-
-            tag = str(release.get("tag_name") or "")
-            latest = tag.lstrip("vV")
-            if not tag:
-                self._stateReady.emit(STATE_ERROR, "Release 缺少版本号")
+            payload = self._api_get(f"{API_ROOT}?per_page={RELEASE_LIST_LIMIT + 10}")
+            items = parse_releases(payload)
+            if not items:
+                self._safe_emit(self._stateReady, STATE_ERROR,
+                                "没有拿到任何 Release，请检查网络或仓库地址")
                 return
-
-            # 不管有没有新版本，都先把 Release 的版本号 / 更新说明 / 页面地址交给界面：
-            # 设置页要在「已是最新」时也能看到当前版本的发布说明。
-            self._releaseReady.emit(
-                latest,
-                clean_release_notes(str(release.get("body") or "")),
-                str(release.get("html_url") or ""),
-            )
-
-            if version_tuple(latest) <= version_tuple(APP_VERSION):
-                self._stateReady.emit(
-                    STATE_UP_TO_DATE, f"已是最新版本 v{APP_VERSION}")
-                return
-
-            assets = release.get("assets") or []
-            asset = next(
-                (item for item in assets
-                 if str(item.get("name") or "").lower() == ASSET_NAME),
-                None,
-            )
-            if asset is None:
-                self._stateReady.emit(
-                    STATE_ERROR,
-                    f"v{latest} 没有找到 {ASSET_NAME} 更新包",
-                )
-                return
-
-            digest = str(asset.get("digest") or "")
-            download_url = str(asset.get("browser_download_url") or "")
-            self._downloadStart.emit(
-                self._mirror_url(download_url) if download_url else "", latest, digest)
+            self._safe_emit(self._releasesReady, items)
         except urllib.error.HTTPError as exc:
-            self._stateReady.emit(STATE_ERROR, f"检查更新失败：HTTP {exc.code}")
+            self._safe_emit(self._stateReady, STATE_ERROR,
+                            f"检查更新失败：HTTP {exc.code}")
         except Exception as exc:
             logger.exception("Update check failed")
-            self._stateReady.emit(STATE_ERROR, f"检查更新失败：{exc}")
+            self._safe_emit(self._stateReady, STATE_ERROR, f"检查更新失败：{exc}")
+
+    # ------------------------------------------------------------------
+    # 版本列表
+    # ------------------------------------------------------------------
+    def _apply_releases(self, items: list) -> None:
+        self._releases = [dict(item) for item in items if isinstance(item, dict)]
+        if not self._releases:
+            self._state = STATE_ERROR
+            self._message = "没有拿到任何 Release"
+            self._last_error = self._message
+            self.changed.emit()
+            return
+
+        self._latest_version = str(self._releases[0].get("version") or "")
+        # 默认选中「比当前新的最新一个」；没有更新的就选最新那个（选旧版就是回滚）。
+        default_index = next(
+            (index for index, item in enumerate(self._releases)
+             if version_tuple(str(item.get("version") or ""))
+             > version_tuple(APP_VERSION)),
+            0,
+        )
+        self._select(default_index, announce=False)
+
+        # 自动检查只提醒、不下载；通道决定「预发布要不要提醒」。
+        candidate = next(
+            (item for item in self._releases
+             if self.channel == "prerelease" or not item.get("prerelease")),
+            None,
+        )
+        newer = (candidate is not None and version_tuple(
+            str(candidate.get("version") or "")) > version_tuple(APP_VERSION))
+        if newer:
+            self._state = STATE_IDLE
+            self._message = f"发现新版本 v{candidate['version']}，选择版本后点「下载」"
+            self.notify.emit(
+                f"发现新版本 v{candidate['version']}，可在设置 → 更新里下载", "info")
+        else:
+            self._state = STATE_UP_TO_DATE
+            self._message = f"已是最新版本 v{APP_VERSION}"
+        self.changed.emit()
+
+    def _select(self, index: int, *, announce: bool = True) -> None:
+        if not 0 <= index < len(self._releases):
+            return
+        self._selected = index
+        item = self._releases[index]
+        self._release_blocks = parse_release_notes(str(item.get("notes") or ""))
+        self._release_url = str(item.get("url") or "")
+        if announce and self._state not in (
+                STATE_CHECKING, STATE_DOWNLOADING, STATE_INSTALLING):
+            self._state = STATE_IDLE
+            self._message = f"已选择 v{item.get('version')}，点「下载」开始"
+        self.changed.emit()
+
+    def _current_release(self) -> dict[str, Any] | None:
+        if 0 <= self._selected < len(self._releases):
+            return self._releases[self._selected]
+        return None
+
+    @Slot(int)
+    def selectRelease(self, index: int) -> None:
+        self._select(int(index))
+
+    @Slot()
+    def downloadSelected(self) -> None:
+        """下载下拉里选中的版本；下载完停在「已下载」，等用户点安装。"""
+        if self.busy:
+            return
+        item = self._current_release()
+        if item is None:
+            self.notify.emit("版本列表还没加载，先点「检查更新」", "warning")
+            return
+        version = str(item.get("version") or "")
+        url = str(item.get("downloadUrl") or "")
+        if not url:
+            self.notify.emit(f"v{version} 没有 {ASSET_NAME} 更新包，请到 Release 页面手动下载",
+                             "warning")
+            return
+        if version == APP_VERSION:
+            self.notify.emit("这就是当前版本，不用重新下载", "info")
+            return
+        self._downloadStart.emit(self._mirror_url(url), version, str(item.get("digest") or ""))
 
     # ------------------------------------------------------------------
     # 下载
     # ------------------------------------------------------------------
-    def _apply_release(self, latest: str, notes: str, release_url: str) -> None:
-        """Release 元数据：版本号、更新说明、页面地址。不触发下载。"""
-        self._latest_version = latest
-        self._release_blocks = parse_release_notes(notes)
-        self._release_url = release_url
-        self.changed.emit()
-
-    def _apply_download_start(self, download_url: str, latest: str, digest: str) -> None:
+    def _apply_download_start(self, download_url: str, version: str, digest: str) -> None:
         self._download_url = download_url
         self._progress = 0.0
+        self._last_error = ""
         self._state = STATE_DOWNLOADING
-        self._message = f"正在下载 v{latest}…"
+        self._message = f"正在下载 v{version}…"
         self.changed.emit()
-        self.notify.emit(f"发现新版本 v{latest}，正在下载…", "info")
         threading.Thread(
-            target=self._download_worker, args=(download_url, latest, digest),
+            target=self._download_worker, args=(download_url, version, digest),
             name="rin-update-download", daemon=True).start()
 
     def _apply_state(self, state: str, message: str) -> None:
@@ -573,11 +706,11 @@ class UpdateManager(QObject):
         self._progress = max(0.0, min(1.0, progress))
         self.changed.emit()
 
-    def _download_worker(self, url: str, latest: str, digest: str) -> None:
-        target_dir = self._config.config_dir / "updates"
+    def _download_worker(self, url: str, version: str, digest: str) -> None:
         try:
+            target_dir = self._updates_dir()
             target_dir.mkdir(parents=True, exist_ok=True)
-            target = target_dir / f"RinLauncher-{latest}.zip"
+            target = self._archive_path(version)
             request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
             digest_hash = hashlib.sha256()
             with urllib.request.urlopen(request, timeout=60) as response, \
@@ -585,6 +718,8 @@ class UpdateManager(QObject):
                 total = int(response.headers.get("Content-Length") or 0)
                 read = 0
                 while True:
+                    if self._stopped:
+                        raise RuntimeError("应用正在退出，下载已中止")
                     chunk = response.read(256 * 1024)
                     if not chunk:
                         break
@@ -592,34 +727,37 @@ class UpdateManager(QObject):
                     digest_hash.update(chunk)
                     read += len(chunk)
                     if total > 0:
-                        self._progressReady.emit(read / total)
+                        self._safe_emit(self._progressReady, read / total)
             verified = False
             if digest.startswith("sha256:"):
                 expected = digest.split(":", 1)[1].strip().lower()
                 if expected:
                     if digest_hash.hexdigest().lower() != expected:
                         target.unlink(missing_ok=True)
-                        self._downloadFinished.emit(False, "更新包校验失败，请重试", False)
+                        self._safe_emit(self._downloadFinished, False,
+                                        "更新包校验失败，请重试", False, version)
                         return
                     verified = True
-            self._downloadFinished.emit(True, str(target), verified)
+            self._safe_emit(self._downloadFinished, True, str(target), verified, version)
         except Exception as exc:
             logger.exception("Update download failed")
-            self._downloadFinished.emit(False, f"下载更新失败：{exc}", False)
+            self._safe_emit(self._downloadFinished, False,
+                            f"下载更新失败：{exc}", False, version)
 
-    def _apply_download(self, ok: bool, detail: str, verified: bool = False) -> None:
+    def _apply_download(self, ok: bool, detail: str, verified: bool,
+                        version: str) -> None:
         self._digest_verified = bool(ok and verified)
         if ok:
+            self._downloaded_version = version
             self._state = STATE_READY
             suffix = "已校验" if verified else "未提供校验值"
-            self._message = (
-                f"v{self._latest_version} 已下载（{suffix}），可在本页手动安装")
+            self._message = f"v{version} 已下载（{suffix}），点「安装」退出并替换"
             self._progress = 1.0
             self.changed.emit()
-            self.notify.emit(
-                f"新版本 v{self._latest_version} 已下载，可在设置里安装", "success")
+            self.notify.emit(f"v{version} 已下载，可在更新页安装", "success")
         else:
             self._state = STATE_ERROR
+            self._last_error = detail
             self._message = detail
             self.changed.emit()
             self.notify.emit(detail, "error")
@@ -632,21 +770,21 @@ class UpdateManager(QObject):
         if not getattr(sys, "frozen", False):
             self.notify.emit("源码模式不支持自动安装更新", "warning")
             return
-        if self._state != STATE_READY:
+        if self._state != STATE_READY or not self._downloaded_version:
             return
-        archive = self._config.config_dir / "updates" / f"RinLauncher-{self._latest_version}.zip"
+        archive = self._archive_path(self._downloaded_version)
         if not archive.is_file():
-            self.notify.emit("更新包不存在，请重新检查更新", "error")
+            self._fail("更新包不存在，请重新下载")
             return
         self._install_archive(archive)
 
     @Slot()
     def installFromFile(self) -> None:
-        """离线更新：用户自己下载的 RinLauncher.zip。"""
+        """高级用法：手动选一个 RinLauncher.zip（不推荐，仅作备份手段）。"""
         if not getattr(sys, "frozen", False):
             self.notify.emit("源码模式不支持安装更新", "warning")
             return
-        folder = self._config.config_dir / "updates"
+        folder = self._updates_dir()
         folder.mkdir(parents=True, exist_ok=True)
         path, _ = QFileDialog.getOpenFileName(
             None, "选择更新包", str(folder), "更新包 (*.zip);;所有文件 (*)")
@@ -654,12 +792,12 @@ class UpdateManager(QObject):
             self._install_archive(Path(path))
 
     def _install_archive(self, archive: Path) -> None:
-        """校验并安装一个 zip；在线下载与离线选择共用这一条路径。"""
+        """校验并安装一个 zip；在线下载与「从文件安装」共用这一条路径。"""
         try:
             if not archive.is_file() or archive.stat().st_size == 0:
-                self.notify.emit("更新包不存在或为空", "error")
+                self._fail("更新包不存在或为空")
                 return
-            staging = self._config.config_dir / "updates" / f"staging-{int(time.time())}"
+            staging = self._updates_dir() / f"staging-{int(time.time())}"
             with zipfile.ZipFile(archive) as bundle:
                 # 防 Zip Slip：所有条目必须落在 staging 目录内。
                 root = staging.resolve()
@@ -670,85 +808,236 @@ class UpdateManager(QObject):
                 bundle.extractall(staging)
             exe = next(staging.rglob("RinLauncher.exe"), None)
             if exe is None:
-                self.notify.emit("更新包里没有 RinLauncher.exe", "error")
+                self._fail("更新包里没有 RinLauncher.exe")
                 return
             payload = exe.parent
             target = Path(sys.executable).resolve().parent
-            script = self._config.config_dir / "updates" / "apply-update.ps1"
-            script.write_text(self._install_script(), encoding="utf-8-sig")
-            subprocess.Popen(
-                ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-                 "-WindowStyle", "Hidden", "-File", str(script),
-                 "-TargetPid", str(os.getpid()),
-                 "-Payload", str(payload),
-                 "-Target", str(target),
-                 "-Exe", exe.name],
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
+            script = self._updates_dir() / "apply-update.ps1"
+            result = self._result_file()
+            try:
+                result.unlink(missing_ok=True)
+            except OSError:
+                logger.debug("无法删除旧的安装结果文件", exc_info=True)
+
+            powershell.write_script(script, self._install_script())
+            proc = powershell.spawn_hidden(script, [
+                "-TargetPid", str(os.getpid()),
+                "-Payload", str(payload),
+                "-Target", str(target),
+                "-Exe", exe.name,
+                "-LogFile", str(result),
+            ], cwd=target)
+            logger.info(
+                "Update helper started: pid=%s payload=%s target=%s",
+                proc.pid, payload, target)
+            self._pending_proc = proc
             self._state = STATE_INSTALLING
             self._message = "正在退出并安装更新…"
             self.changed.emit()
-            QTimer.singleShot(250, QCoreApplication.quit)
+            # 700ms 后再确认辅助进程还活着：脚本立刻退出说明它根本没跑起来
+            # （解析失败 / 被策略拦下），这时候绝不能把主程序关掉。
+            QTimer.singleShot(700, self._confirm_install_started)
         except Exception as exc:
             logger.exception("Installing update failed")
-            self.notify.emit(f"安装更新失败：{exc}", "error")
+            self._fail(f"安装更新失败：{exc}")
+
+    def _confirm_install_started(self) -> None:
+        proc = self._pending_proc
+        self._pending_proc = None
+        if proc is None:
+            return
+        code = proc.poll()
+        if code is None:
+            logger.info("Update helper is alive; quitting for install")
+            QCoreApplication.quit()
+            return
+        detail = self._result_tail() or f"辅助进程退出码 {code}"
+        logger.error("Update helper exited early: %s", detail)
+        self._fail(f"更新脚本没能启动（{detail}）。程序未退出，可以打开下载目录手动替换。")
+
+    def _fail(self, message: str) -> None:
+        """统一的失败出口：留在程序里、把原因显示在更新页。"""
+        self._state = STATE_ERROR
+        self._last_error = message
+        self._message = message
+        self.changed.emit()
+        self.notify.emit(message, "error")
 
     @staticmethod
     def _install_script() -> str:
+        """等主进程退出 → 覆盖程序文件 → 重新启动，并把每一步写进结果文件。
+
+        脚本内容必须保持 **ASCII**：它由 ``powershell.write_script`` 以带 BOM 的
+        UTF-8 落盘，PowerShell 5.1 能正确解析；但日志与异常信息由系统语言环境
+        决定，Python 侧读回来时按 UTF-8 容错解码。
+        """
         return "\n".join([
             "param(",
             "  [int]$TargetPid,",
             "  [string]$Payload,",
             "  [string]$Target,",
-            "  [string]$Exe",
+            "  [string]$Exe,",
+            "  [string]$LogFile",
             ")",
-            "try { Wait-Process -Id $TargetPid -Timeout 60 -ErrorAction SilentlyContinue } catch {}",
-            "Start-Sleep -Milliseconds 1200",
-            "# 先把当前程序文件打包成 old.zip（数据目录除外），给回滚留一手。",
-            "$oldZip = Join-Path $Target 'old.zip'",
-            "try {",
-            "  if (Test-Path -LiteralPath $oldZip) { Remove-Item -LiteralPath $oldZip -Force -ErrorAction SilentlyContinue }",
-            "  $keep = Get-ChildItem -LiteralPath $Target -Force | Where-Object { $_.Name -ne 'data' -and $_.Name -ne 'old.zip' }",
-            "  if ($keep) { Compress-Archive -Path $keep.FullName -DestinationPath $oldZip -CompressionLevel Optimal -Force }",
-            "} catch {}",
-            "# 数据目录（配置、日志、图标）永远保留，不跟随更新包覆盖。",
-            "$data = Join-Path $Payload 'data'",
-            "if (Test-Path -LiteralPath $data) {",
-            "  Remove-Item -LiteralPath $data -Recurse -Force -ErrorAction SilentlyContinue",
+            "$ErrorActionPreference = 'Stop'",
+            "function Write-Result([string]$Text) {",
+            "  try {",
+            "    Add-Content -LiteralPath $LogFile -Value $Text -Encoding UTF8",
+            "  } catch {",
+            "  }",
             "}",
-            "Copy-Item -Path (Join-Path $Payload '*') -Destination $Target -Recurse -Force",
-            "Start-Process -FilePath (Join-Path $Target $Exe)",
-            "Remove-Item -LiteralPath $Payload -Recurse -Force -ErrorAction SilentlyContinue",
+            "try {",
+            "  Write-Result 'start'",
+            "  try { Wait-Process -Id $TargetPid -Timeout 60 -ErrorAction SilentlyContinue } catch {",
+            "  }",
+            "  Start-Sleep -Milliseconds 1200",
+            "  $payloadExe = Join-Path $Payload $Exe",
+            "  if (-not (Test-Path -LiteralPath $payloadExe)) {",
+            "    throw 'payload has no RinLauncher.exe'",
+            "  }",
+            "  # data/ (config, logs, icons) must never be overwritten by the payload.",
+            "  $payloadData = Join-Path $Payload 'data'",
+            "  if (Test-Path -LiteralPath $payloadData) {",
+            "    Remove-Item -LiteralPath $payloadData -Recurse -Force -ErrorAction SilentlyContinue",
+            "  }",
+            "  $copied = $false",
+            "  for ($i = 1; $i -le 10; $i++) {",
+            "    try {",
+            "      Copy-Item -Path (Join-Path $Payload '*') -Destination $Target -Recurse -Force -ErrorAction Stop",
+            "      $copied = $true",
+            "      break",
+            "    } catch {",
+            "      Write-Result ('copy-retry ' + $i + ': ' + $_.Exception.Message)",
+            "      Start-Sleep -Milliseconds 800",
+            "    }",
+            "  }",
+            "  if (-not $copied) { throw 'copy failed (files still locked)' }",
+            "  $src = Get-Item -LiteralPath $payloadExe",
+            "  $dst = Get-Item -LiteralPath (Join-Path $Target $Exe)",
+            "  if ($src.Length -ne $dst.Length) {",
+            "    throw ('exe size mismatch: ' + $src.Length + ' != ' + $dst.Length)",
+            "  }",
+            "  Write-Result 'copied'",
+            "  Start-Process -FilePath (Join-Path $Target $Exe) -WorkingDirectory $Target",
+            "  Write-Result 'started'",
+            "  Remove-Item -LiteralPath $Payload -Recurse -Force -ErrorAction SilentlyContinue",
+            "  Write-Result 'OK'",
+            "} catch {",
+            "  Write-Result ('FAIL ' + $_.Exception.Message)",
+            "  # On failure relaunch the old build so the user is not left with nothing.",
+            "  try {",
+            "    Start-Process -FilePath (Join-Path $Target $Exe) -WorkingDirectory $Target",
+            "  } catch {",
+            "  }",
+            "  exit 1",
+            "}",
         ])
 
-    @Slot(result=bool)
-    def rollbackUpdate(self) -> bool:
-        """回滚到上一版本：把 old.zip 装回去，同时把当前版本另存为新的 old.zip。
+    # ------------------------------------------------------------------
+    # 路径与清理
+    # ------------------------------------------------------------------
+    def _updates_dir(self) -> Path:
+        return self._config.config_dir / "updates"
 
-        old.zip 必须先拷出来再用 —— 安装脚本会重新生成它，不拷的话就自己
-        把自己覆盖了。
-        """
-        if not getattr(sys, "frozen", False):
-            self.notify.emit("源码模式不支持回滚", "warning")
-            return False
-        old = self._old_version_path()
-        if not old.is_file():
-            self.notify.emit("还没有可回滚的上一版本", "warning")
-            return False
-        folder = self._config.config_dir / "updates"
+    def _archive_path(self, version: str) -> Path:
+        safe = re.sub(r"[^0-9A-Za-z._-]", "_", str(version or "unknown"))
+        return self._updates_dir() / f"RinLauncher-{safe}.zip"
+
+    def _result_file(self) -> Path:
+        return self._config.log_dir / "update-apply.txt"
+
+    def _result_tail(self, lines: int = 6) -> str:
+        path = self._result_file()
+        if not path.is_file():
+            return ""
         try:
-            folder.mkdir(parents=True, exist_ok=True)
-            staged = folder / f"rollback-{int(time.time())}.zip"
-            shutil.copy2(old, staged)
-        except OSError as exc:
-            logger.exception("Cannot stage the rollback archive")
-            self.notify.emit(f"回滚包准备失败：{exc}", "error")
-            return False
-        self._state = STATE_INSTALLING
-        self._message = "正在回滚到上一版本…"
+            text = powershell.read_text(path)
+        except OSError:
+            logger.debug("读取安装结果失败", exc_info=True)
+            return ""
+        rows = [row.strip() for row in text.splitlines() if row.strip()]
+        return "\n".join(rows[-lines:])
+
+    def _cleanup_legacy(self) -> None:
+        """清掉 1.1.8 及以前留下的回滚产物与解包残留。
+
+        ``old.zip`` 那套备份 / 还原已经整体下线（回滚改成「下载一个旧版本」），
+        留着只是白占几十 MB。
+        """
+        removed: list[str] = []
+        targets: list[Path] = [self._app_root() / "old.zip"]
+        updates = self._updates_dir()
+        if updates.is_dir():
+            targets.extend(updates.glob("staging-*"))
+            targets.extend(updates.glob("rollback-*.zip"))
+        for path in targets:
+            try:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                elif path.exists():
+                    path.unlink()
+                else:
+                    continue
+                removed.append(path.name)
+            except OSError:
+                logger.debug("无法清理旧的更新残留 %s", path, exc_info=True)
+        if removed:
+            logger.info("已清理旧的更新残留：%s", ", ".join(removed))
+
+    @staticmethod
+    def _app_root() -> Path:
+        if getattr(sys, "frozen", False):
+            return Path(sys.executable).resolve().parent
+        return Path(__file__).resolve().parent.parent
+
+    def _read_last_result(self) -> None:
+        """读上一次安装脚本留下的结果：失败原因直接摆到更新页上。"""
+        path = self._result_file()
+        if not path.is_file():
+            return
+        try:
+            text = powershell.read_text(path)
+        except OSError:
+            return
+        rows = [row.strip() for row in text.splitlines() if row.strip()]
+        failure = next((row for row in reversed(rows) if "FAIL" in row), "")
+        if failure:
+            reason = failure.partition("FAIL")[2].strip() or "安装脚本报告失败"
+            self._last_error = f"上次更新失败：{reason}"
+            self._message = self._last_error
+            self._state = STATE_ERROR
+            self._startup_note = f"更新器：{self._last_error}\n{chr(10).join(rows[-6:])}"
+        elif rows:
+            self._startup_note = f"更新器：上次安装结果 {rows[-1]}"
+        # 见过一次就把文件改名归档，避免每次启动都重复提示。
+        try:
+            suffix = time.strftime("%Y%m%d-%H%M%S")
+            path.rename(path.with_name(f"update-apply-{suffix}.txt"))
+        except OSError:
+            logger.debug("无法归档安装结果文件", exc_info=True)
+
+    @Slot(result=str)
+    def takeStartupNote(self) -> str:
+        """启动时取走「上次更新」的结论（读一次就清空）。"""
+        note = self._startup_note
+        self._startup_note = ""
+        return note
+
+    @Slot()
+    def clearLastError(self) -> None:
+        self._last_error = ""
+        if self._state == STATE_ERROR:
+            self._state = STATE_IDLE
+            self._message = "尚未检查更新"
         self.changed.emit()
-        self._install_archive(staged)
-        return True
+
+    @staticmethod
+    def _safe_emit(signal: Any, *args: Any) -> None:
+        """后台线程发信号：对象已销毁时 Qt 会抛 RuntimeError，这里吞掉。"""
+        try:
+            signal.emit(*args)
+        except RuntimeError:
+            logger.debug("Update signal dropped: receiver already deleted")
 
     @Slot()
     def openReleasePage(self) -> None:
@@ -763,7 +1052,7 @@ class UpdateManager(QObject):
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
 
-        folder = self._config.config_dir / "updates"
+        folder = self._updates_dir()
         folder.mkdir(parents=True, exist_ok=True)
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(folder)))
 
@@ -771,11 +1060,16 @@ class UpdateManager(QObject):
         self._state = STATE_IDLE
         self._message = "尚未检查更新"
         self._latest_version = ""
+        self._releases = []
+        self._selected = -1
+        self._downloaded_version = ""
         self._release_blocks = []
         self._release_url = ""
         self._download_url = ""
         self._progress = 0.0
         self._digest_verified = False
+        self._last_error = ""
 
     def stop(self) -> None:
-        """占位：线程都是 daemon，退出时不需要额外等待。"""
+        """标记退出：后台下载线程下一轮循环就会自己收手。"""
+        self._stopped = True

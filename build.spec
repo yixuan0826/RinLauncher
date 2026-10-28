@@ -126,6 +126,10 @@ a = Analysis(
         "winrt.windows.ui.notifications",
         # 启动台搜索的拼音匹配（rin_launcher/search.py，缺失时自动退化）。
         "pypinyin",
+        # 冻结包里按名字动态查找的编码器不会被静态收集；1.1.6~1.1.8 的
+        # “unknown encoding: utf-8-sig” 就是这么来的。这里显式点名两个会用到的。
+        "encodings.utf_8_sig",
+        "encodings.utf_8",
     ],
     hookspath=[],
     hooksconfig={},

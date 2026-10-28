@@ -5,7 +5,9 @@ import RinUI
 
 import "../../components"
 
-// 设置 → 更新：通道、状态、操作，以及最新 Release 的更新说明（Markdown）。
+// 设置 → 更新：版本列表、下载、安装，以及选中版本的更新说明（Markdown）。
+//
+// 回滚不再依赖 old.zip：在「版本列表」里选一个旧一点的版本重装就行。
 Item {
     id: pageRoot
 
@@ -16,6 +18,8 @@ Item {
         ? pageRoot.page.updater.mirrorSpeeds : []
     readonly property bool speedTesting: pageRoot.page && pageRoot.page.updater
         ? pageRoot.page.updater.speedTesting : false
+    readonly property var updater: pageRoot.page ? pageRoot.page.updater : null
+    readonly property var releaseLabels: updater ? updater.releaseLabels : []
 
     Flickable {
         id: flick
@@ -37,11 +41,12 @@ Item {
                 iconKey: "ic_fluent_arrow_download_20_regular"
 
                 FormRow {
-                    label: qsTr("更新通道")
+                    label: qsTr("自动提醒通道")
+                    description: qsTr("只影响自动检查时的提示；下面列表里始终包含全部版本")
                     ComboBox {
                         id: channelCombo
                         Layout.preferredWidth: 220
-                        model: [qsTr("稳定版（Latest）"), qsTr("测试版（Pre-Release）")]
+                        model: [qsTr("仅正式版"), qsTr("包含预发布")]
                         onActivated: function (index) {
                             if (!pageRoot.page.updater) return
                             pageRoot.page.updater.setChannel(
@@ -131,12 +136,12 @@ Item {
             }
 
             SettingsGroup {
-                title: qsTr("离线更新")
+                title: qsTr("高级：从文件安装")
                 iconKey: "ic_fluent_folder_zip_20_regular"
 
                 FormRow {
                     label: qsTr("本地安装包")
-                    description: qsTr("选择自己下载的 RinLauncher.zip")
+                    description: qsTr("不推荐：仅在在线下载不可用时使用，选自己下载的 RinLauncher.zip")
                     Button {
                         text: qsTr("选择本地 zip…")
                         icon.name: "ic_fluent_arrow_upload_20_regular"
@@ -146,27 +151,6 @@ Item {
                                 pageRoot.page.updater.installFromFile()
                             }
                         }
-                    }
-                }
-
-                // 回滚：安装更新前会把当前程序文件打成 old.zip，这里可以再装回去。
-                FormRow {
-                    label: qsTr("上一版本")
-                    description: {
-                        var old = pageRoot.page.updater
-                            ? pageRoot.page.updater.oldVersion : null
-                        return old && old.exists
-                            ? qsTr("old.zip · %1 · %2").arg(old.size).arg(old.time)
-                            : qsTr("还没有上一版本（安装一次更新后才会生成）")
-                    }
-                    Button {
-                        text: qsTr("回滚")
-                        icon.name: "ic_fluent_arrow_reset_20_regular"
-                        enabled: pageRoot.page.updater && pageRoot.page.updater.canRollback
-                                 && !pageRoot.page.updateBusy
-                        onClicked: pageRoot.page.openConfirm(
-                            qsTr("回滚到上一版本？程序会退出并把 old.zip 中的文件装回候选位置。"),
-                            function () { pageRoot.page.updater.rollbackUpdate() })
                     }
                     Button {
                         text: qsTr("恢复模式")
@@ -192,6 +176,32 @@ Item {
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
                         text: qsTr("最新：v%1").arg(pageRoot.page.updateLatestVersion)
+                    }
+                }
+
+                // 版本列表：选旧版本就是「在线回滚」。
+                FormRow {
+                    label: qsTr("版本列表")
+                    description: qsTr("下载并安装任意版本；装回旧版本就是回滚")
+                    ComboBox {
+                        id: releaseCombo
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: 420
+                        model: pageRoot.releaseLabels
+                        currentIndex: pageRoot.updater ? pageRoot.updater.selectedIndex : -1
+                        enabled: pageRoot.releaseLabels.length > 0
+                                       && !pageRoot.page.updateBusy
+                        onActivated: function (index) {
+                            if (pageRoot.updater) {
+                                pageRoot.updater.selectRelease(index)
+                            }
+                        }
+                    }
+                    Button {
+                        text: qsTr("刷新列表")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        enabled: !pageRoot.page.updateBusy
+                        onClicked: pageRoot.checkNow()
                     }
                 }
 
@@ -236,29 +246,53 @@ Item {
                     }
                 }
 
+                // 失败原因：不只是一句「失败了」，把脚本给出的原文摆出来。
+                FormRow {
+                    label: qsTr("错误详情")
+                    visible: pageRoot.updater && pageRoot.updater.lastError.length > 0
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Theme.currentTheme.colors.systemCriticalColor
+                        text: pageRoot.updater ? pageRoot.updater.lastError : ""
+                    }
+                    ToolButton {
+                        icon.name: "ic_fluent_clipboard_20_regular"
+                        ToolTip.text: qsTr("复制错误详情")
+                        onClicked: {
+                            if (pageRoot.updater) {
+                                ConfigManager.copyText(pageRoot.updater.lastError)
+                            }
+                        }
+                    }
+                }
+
                 FormRow {
                     label: qsTr("操作")
                     RowLayout {
+                        Layout.fillWidth: true
                         spacing: 8
 
                         Button {
-                            text: qsTr("检查更新")
-                            icon.name: "ic_fluent_arrow_sync_20_regular"
-                            enabled: !pageRoot.page.updateBusy
-                            onClicked: pageRoot.checkNow()
+                            text: qsTr("下载所选版本")
+                            icon.name: "ic_fluent_arrow_download_20_regular"
+                            highlighted: pageRoot.updater ? pageRoot.updater.canDownload : false
+                            enabled: pageRoot.updater ? pageRoot.updater.canDownload : false
+                            onClicked: pageRoot.downloadNow()
                         }
 
                         Button {
-                            text: qsTr("安装并重启")
-                            icon.name: "ic_fluent_arrow_download_20_regular"
-                            highlighted: pageRoot.page.updateCanInstall
+                            text: pageRoot.page.updateCanInstall
+                                ? qsTr("安装 v%1").arg(pageRoot.updater.downloadedVersion)
+                                : qsTr("安装")
+                            icon.name: "ic_fluent_checkmark_circle_20_regular"
                             visible: pageRoot.page.updateCanInstall
                             enabled: !pageRoot.page.updateBusy
                             onClicked: pageRoot.installNow()
                         }
 
                         Button {
-                            text: qsTr("下载目录")
+                            text: qsTr("打开下载目录")
                             icon.name: "ic_fluent_folder_open_20_regular"
                             onClicked: pageRoot.openDownloadFolder()
                         }
@@ -390,8 +424,17 @@ Item {
     }
 
     function installNow() {
+        if (page.updater && page.updater.downloadedVersion.length > 0) {
+            page.openConfirm(
+                qsTr("安装 v%1？程序会退出，替换文件后自动重启。").arg(
+                    page.updater.downloadedVersion),
+                function () { page.updater.installUpdate() })
+        }
+    }
+
+    function downloadNow() {
         if (page.updater) {
-            page.updater.installUpdate()
+            page.updater.downloadSelected()
         }
     }
 
@@ -414,5 +457,17 @@ Item {
         mirrorCombo.currentIndex = Math.max(0,
             pageRoot.mirrorNames.indexOf(model.updateMirror || "github"))
         mirrorAutoSwitch.checked = model.updateMirrorAuto !== false
+    }
+
+    // 后端选中项变了（刷新列表 / 默认选中新版本）时，下拉跟着走。
+    Connections {
+        target: pageRoot.updater
+
+        function onChanged() {
+            var index = pageRoot.updater ? pageRoot.updater.selectedIndex : -1
+            if (releaseCombo.currentIndex !== index) {
+                releaseCombo.currentIndex = index
+            }
+        }
     }
 }

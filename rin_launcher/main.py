@@ -403,6 +403,16 @@ class Launcher:
         if self.config_manager.config["settings"].get("autoCheckUpdates", True):
             self.update_manager.checkSilently()
 
+    def log_startup_notes(self) -> None:
+        """把上次更新的结论写进日志（日志初始化在这之后，所以单独调）。"""
+        note = self.update_manager.takeStartupNote()
+        if not note:
+            return
+        if "失败" in note:
+            logger.warning("%s", note)
+        else:
+            logger.info("%s", note)
+
     def quit(self) -> None:
         self.hotkey.unregister()
         self.tray.stop()
@@ -459,6 +469,7 @@ def main() -> int:
 
     launcher = Launcher(app)
     _setup_logging(launcher.config_manager)
+    launcher.log_startup_notes()
 
     # 小窗总是先建好（恢复模式下只建不显示）：恢复窗口的「继续使用」要直接
     # 把小窗亮出来，不能到了那儿才发现它根本没建。

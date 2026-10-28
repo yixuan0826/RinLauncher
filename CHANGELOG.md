@@ -3,6 +3,71 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.1.9-pre（Hoshimi Miyabi）— 2026-10-28
+
+> ## ⚠️ 请手动下载安装这一版
+>
+> **1.1.6-pre ~ 1.1.8-pre 的内置更新是坏的，装不上。** 这一版修好了，但你手上
+> 的旧版本没法自己升上来，所以：
+>
+> 1. 在 Release 页面下载 `RinLauncher.zip`；
+> 2. 退出正在运行的 Rin Launcher（托盘图标 → 退出）；
+> 3. 把 zip 里的内容解压覆盖到原安装目录，**保留 `data` 文件夹**（配置、日志、
+>    图标都在里面）。
+>
+> 请不要用旧版本里的「更新」或「离线更新 / 从文件安装」来装这一版 ——
+> 那条路本身就是坏的。
+
+> 1.1.9 与 1.2.0 共用开发代号 **Hoshimi Miyabi**，同样以 Pre-Release 发布。
+
+### 修复
+
+- **更新装不上的根因**：安装脚本用 `encoding="utf-8-sig"` 落盘，而 PyInstaller
+  冻结包里没有静态收集 `encodings.utf_8_sig`（编码器是按名字动态查找的），
+  于是抛 `LookupError: unknown encoding: utf-8-sig`。脚本根本没写出来，程序
+  既没装更新也没退出。现在改用 `codecs.BOM_UTF8 + utf-8` 写字节流，并在
+  打包清单里显式收集 `encodings.utf_8_sig` / `encodings.utf_8` 兜底。
+  同一个坑也修了「重启 / 提权重启」（重启助手用的是同一段逻辑）。
+- **安装失败不再静默**：脚本改为 `$ErrorActionPreference = 'Stop'`，每一步都写
+  结果文件（`start` / `copy-retry N` / `copied` / `started` / `OK` / `FAIL 原因`）；
+  下次启动时由程序读回来，把失败原因直接显示在更新页，并可在日志里看到。
+- **复制失败会重试，且不会把用户晾着**：文件仍被占用时最多重试 10 次；仍然失败
+  就写 `FAIL` 并把旧版本重新拉起来，不会只剩一个空目录。
+- **辅助进程没起来就不退出**：启动安装脚本 700ms 后确认它仍在运行，才允许主
+  进程退出；脚本立刻退出（解析失败 / 被策略拦截）时留在程序里报错。
+- **下载线程不再抛 `Signal source has been deleted`**：退出时的后台下载会
+  自己收手，发信号也做了对象已销毁的保护。
+
+### 变更
+
+- **更新页改成「版本列表 → 下载 → 安装」**：下拉列出仓库里全部 Release（含
+  预发布，最多 30 条，标注当前版本与无更新包的版本），可以任选一个新版或旧版
+  下载安装。「回滚」不再靠 `old.zip`，就是选一个旧版本重装。
+- **彻底删除 `old.zip` 回滚机制**：安装脚本不再打包旧版本，更新页的「上一版本 /
+  回滚」区块、设置 → 存储里的 old.zip 占用与删除按钮、恢复模式里的回滚动作、
+  `rollbackUpdate()` / `deleteOldVersion()` 接口全部下线；启动时会顺手清掉历史
+  遗留的 `old.zip`、`updates/staging-*` 与 `rollback-*.zip`。
+- 「离线更新」改名为「高级：从文件安装」，并在界面上标注不推荐。
+- 「更新通道」改名为「自动提醒通道」：它只影响自动检查时的提示，列表里始终
+  包含全部版本。
+- 更新失败时更新页新增「错误详情」一行，可一键复制。
+
+### 升级说明
+
+- 配置格式不变（`version: 3`）。
+- 本版以 Pre-Release 通道发布。
+- **再次提醒**：本版请手动下载替换，旧版内置更新不可用。
+
+### 验证
+
+- `ruff check rin_launcher tests scripts`：通过。
+- `pytest -q`：**132 passed**，其中包含一项**真实执行 PowerShell 安装脚本**的
+  用例（校验覆盖、保留 `data`、不生成 old.zip、结果文件为 OK、新程序被拉起），
+  以及「源码里不许再出现 `encoding="utf-8-sig"`」的回归测试。
+- 全部 QML 经 `pyside6-qmllint` 检查，无 `Error:`。
+- 真机 `scripts/verify_ui.py`：实际拉取 GitHub Release 列表，9 个版本正常排序、
+  当前版本识别正确，更新页截图正常。
+
 ## 1.1.8-pre（Hoshimi Miyabi）— 2026-10-27
 
 > 1.1.8 与 1.1.7、1.2.0 共用开发代号 **Hoshimi Miyabi**，同样以 Pre-Release 发布。

@@ -65,9 +65,6 @@ FluentWindowBase {
         { key: "restore", title: qsTr("恢复备份"),
           description: qsTr("最近的一份配置备份会覆盖当前配置"),
           icon: "ic_fluent_history_20_regular", danger: false },
-        { key: "rollback", title: qsTr("回滚到上一版本"),
-          description: qsTr("把 old.zip 装回去，数据目录不受影响"),
-          icon: "ic_fluent_arrow_reset_20_regular", danger: true },
         { key: "resetSettings", title: qsTr("重置应用设置"),
           description: qsTr("启动台和图标保留，设置项回到默认值"),
           icon: "ic_fluent_settings_20_regular", danger: true },
@@ -140,10 +137,6 @@ FluentWindowBase {
                     recoveryWindow.reload()
                 }
             })
-            break
-        case "rollback":
-            confirmDialog.ask(qsTr("回滚到上一版本？程序会退出并把 old.zip 装回去。"),
-                              function () { UpdateManager.rollbackUpdate() })
             break
         case "resetSettings":
             confirmDialog.ask(qsTr("重置应用设置？配置会先自动备份一份。"),

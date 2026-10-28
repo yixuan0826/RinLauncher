@@ -1059,15 +1059,12 @@ class ConfigManager(QObject):
             "success" if removed else "info")
         return True
 
-    # ── 存储占用 / 旧版本 / 诊断 ──────────────────────────────────────
+    # ── 存储占用 / 诊断 ──────────────────────────────────────────────
     def _app_root(self) -> Path:
         """安装目录：打包后是 exe 同级，源码是仓库根目录。"""
         if getattr(sys, "frozen", False):
             return Path(sys.executable).resolve().parent
         return Path(__file__).resolve().parent.parent
-
-    def _old_version_file(self) -> Path:
-        return self._app_root() / "old.zip"
 
     @Slot(result="QVariantMap")
     def getStorageUsage(self) -> dict[str, Any]:
@@ -1085,11 +1082,6 @@ class ConfigManager(QObject):
 
         log_count, log_size = usage(self.log_dir, logging_setup.FILE_GLOB)
         backup_count, backup_size = usage(self.backup_dir, "config-*.yaml")
-        old_file = self._old_version_file()
-        try:
-            old_size = old_file.stat().st_size if old_file.is_file() else 0
-        except OSError:
-            old_size = 0
         return {
             "configDir": str(self.config_dir),
             "logDir": str(self.log_dir),
@@ -1097,36 +1089,27 @@ class ConfigManager(QObject):
             "logSize": _human_size(log_size),
             "backupCount": backup_count,
             "backupSize": _human_size(backup_size),
-            "oldVersionPath": str(old_file),
-            "oldVersionExists": old_file.is_file(),
-            "oldVersionSize": _human_size(old_size),
         }
-
-    @Slot(result=bool)
-    def deleteOldVersion(self) -> bool:
-        target = self._old_version_file()
-        if not target.is_file():
-            return False
-        try:
-            target.unlink()
-        except OSError:
-            logger.exception("Failed to delete old version %s", target)
-            self.showToast.emit("旧版本文件删不掉，可能正在被占用", "error")
-            return False
-        self.showToast.emit("已删除上一版本文件", "success")
-        return True
 
     @Slot(result=bool)
     def copyDiagnostics(self) -> bool:
         """把关于页展示的诊断信息复制到剪贴板。"""
         text = str(self.getRuntimeInfo().get("diagnostics") or "")
-        if not text:
+        if not text or not self.copyText(text):
+            return False
+        self.showToast.emit("诊断信息已复制", "success")
+        return True
+
+    @Slot(str, result=bool)
+    def copyText(self, text: str) -> bool:
+        """把一段文本复制到剪贴板（更新页复制错误详情等）。"""
+        value = str(text or "").strip()
+        if not value:
             return False
         clipboard = QGuiApplication.clipboard()
         if clipboard is None:
             return False
-        clipboard.setText(text)
-        self.showToast.emit("诊断信息已复制", "success")
+        clipboard.setText(value)
         return True
 
     def _write_to(self, path: Path) -> bool:
@@ -1938,6 +1921,14 @@ class ConfigManager(QObject):
         updates_dir = self.config_dir / "updates"
         removed = 0
         freed = 0
+        legacy = self._app_root() / "old.zip"
+        if legacy.is_file():
+            try:
+                freed += legacy.stat().st_size
+                legacy.unlink()
+                removed += 1
+            except OSError:
+                logger.debug("无法清理历史回滚包 %s", legacy, exc_info=True)
         if updates_dir.is_dir():
             for path in sorted(updates_dir.iterdir()):
                 try:
@@ -1962,11 +1953,6 @@ class ConfigManager(QObject):
     def getRecoveryInfo(self) -> dict[str, Any]:
         """恢复模式窗口的首屏信息。"""
         backups = self.listBackups()
-        old_file = self._old_version_file()
-        try:
-            old_size = old_file.stat().st_size if old_file.is_file() else 0
-        except OSError:
-            old_size = 0
         usage = self.getStorageUsage()
         return {
             "version": APP_VERSION,
@@ -1977,9 +1963,6 @@ class ConfigManager(QObject):
             "backupCount": len(backups),
             "latestBackup": backups[0]["name"] if backups else "",
             "latestBackupTime": backups[0]["time"] if backups else "",
-            "oldVersionExists": old_file.is_file(),
-            "oldVersionPath": str(old_file),
-            "oldVersionSize": _human_size(old_size),
             "logSize": usage.get("logSize", ""),
         }
 

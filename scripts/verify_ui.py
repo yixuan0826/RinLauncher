@@ -229,12 +229,27 @@ def main() -> int:
         report["screenshots"]["settings"] = grab(
             settings.root_window, "settings", backdrop)
 
+        # 更新页：真拉一次 Release 列表，确认能拿到版本、下拉有内容。
+        updater = launcher.update_manager
+        try:
+            updater._check_worker()
+        except Exception as exc:  # 断网时不该把整个验收带崩
+            report["update_error"] = str(exc)
+        wait(400)
+        report["update"] = {
+            "labels": list(updater.releaseLabels),
+            "selected": updater.selectedRelease.get("version", ""),
+            "state": updater.state,
+            "message": updater.message,
+            "lastError": updater.lastError,
+        }
+
         page = settings.root_window.findChild(QObject, "settingsPage")
         report["notifications"] = launcher.config_manager.getNotificationSettings()[
             "categories"]
         if page is not None:
-            for index, name in ((2, "settings-notification"), (5, "settings-storage"),
-                                (6, "settings-about")):
+            for index, name in ((3, "settings-update"), (2, "settings-notification"),
+                                (5, "settings-storage"), (6, "settings-about")):
                 page.setProperty("currentIndex", index)
                 wait(400)
                 report["screenshots"][name] = grab(

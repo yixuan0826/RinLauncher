@@ -9,11 +9,12 @@ from __future__ import annotations
 import ctypes
 import logging
 import os
-import subprocess
 import sys
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
+
+from rin_launcher import powershell
 
 logger = logging.getLogger(__name__)
 
@@ -125,13 +126,10 @@ def _spawn_restart_helper(*, elevated: bool, extra: Iterable[str] = ()) -> bool:
     ])
     script_path = Path(tempfile.gettempdir()) / f"rinlauncher-restart-{os.getpid()}.ps1"
     try:
-        script_path.write_text(script, encoding="utf-8-sig")
-        subprocess.Popen(
-            ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
-             "-WindowStyle", "Hidden", "-File", str(script_path)],
-            cwd=cwd,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        )
+        # 不用 encoding="utf-8-sig"：冻结包里没有动态收集 encodings.utf_8_sig
+        # 时它会抛 LookupError（1.1.6 起更新装不上的真实原因）。
+        powershell.write_script(script_path, script)
+        powershell.spawn_hidden(script_path, cwd=cwd)
         return True
     except Exception:
         logger.exception("Failed to spawn the restart helper")
