@@ -39,7 +39,7 @@ def test_shortcut_icon_location_is_tried_before_target(qapp, tmp_path, monkeypat
         # 第一个候选故意取不到，确认下一个候选是快捷方式本身。
         return "file:second" if len(seen) == 2 else ""
 
-    monkeypatch.setattr(manager, "_icon_from_path", fake_icon_from_path)
+    monkeypatch.setattr(manager._icons, "from_path", fake_icon_from_path)
     assert manager._extract_icon_file(str(link), notify=False) == "file:second"
     assert seen[0] == icon
     # 第二个候选是快捷方式本身，而不是它指向的目标。

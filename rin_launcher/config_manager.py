@@ -27,7 +27,6 @@ import yaml
 from PySide6.QtCore import (
     Property,
     QCoreApplication,
-    QFileInfo,
     QObject,
     Qt,
     QTimer,
@@ -35,15 +34,14 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QGuiApplication, QIcon
-
-# QFileIconProvider 在 Qt6 里搬到了 QtWidgets（QtGui 那个基类要自己实现 icon()）。
-from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
+from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtWidgets import QFileDialog
 
 from rin_launcher import __codename__ as APP_CODENAME
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher import (
     autostart,
+    drives,
     logging_setup,
     notifications,
     risk_rules,
@@ -51,11 +49,13 @@ from rin_launcher import (
     start_menu,
     toast,
 )
+from rin_launcher import backups as backup_store
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
     restart_elevated_delayed,
 )
+from rin_launcher.icon_store import IconStore, icon_key
 from rin_launcher.system_theme import read_system_accent_color
 
 logger = logging.getLogger(__name__)
@@ -112,9 +112,6 @@ ACTION_TYPES: tuple = ("file", "cmd", "url", "uwp", "keyboard")
 # 旧版「键鼠模拟」已降级为「按键模拟」：读到旧类型名就迁成 keyboard，
 # 旧字段 keymouse_steps 中的鼠标步骤直接跳过（执行端不再认识它）。
 LEGACY_ACTION_TYPES: dict[str, str] = {"keymouse": "keyboard"}
-# 这些后缀是「图片」，走导入；其余（exe/dll/lnk…）走系统图标提取。
-IMAGE_ICON_SUFFIXES: tuple = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
-
 # 用户自建图标的落盘目录（导入的 svg/png/ico、从程序里抽出来的图标都放这儿）。
 ICON_STORE_NAME = "icons"
 # 磁盘容量这种系统调用有成本；小窗每 2 秒轮询一次，缓存留 1.5 秒就够
@@ -122,172 +119,16 @@ ICON_STORE_NAME = "icons"
 STORAGE_TTL = 1.5
 
 # ── 备份 ────────────────────────────────────────────────────────
-# 自动备份 7 天一次，保留最近 8 份；手动备份不自动删。
-AUTO_BACKUP_INTERVAL = 7 * 24 * 60 * 60
-AUTO_BACKUP_KEEP = 8
-BACKUP_AUTO_PREFIX = "config-auto-"
-BACKUP_MANUAL_PREFIX = "config-manual-"
+# 具体文件操作在 backups.py；这里只保留测试和界面会用到的常量别名。
+AUTO_BACKUP_KEEP = backup_store.AUTO_KEEP
 
 
-def _human_size(size: int) -> str:
-    """把字节数写成 32.78GB 这种一眼能读的形式。"""
-    value = float(size)
-    for unit in ("B", "KB", "MB", "GB", "TB"):
-        if value < 1024 or unit == "TB":
-            return f"{value:.0f}{unit}" if unit == "B" else f"{value:.2f}{unit}"
-        value /= 1024
-    return f"{value:.2f}TB"
-
-
-def _drive_kind(code: int) -> str:
-    return {2: "removable", 3: "fixed", 4: "network", 5: "cdrom", 6: "ramdisk"}.get(code, "")
-
-
-_DRIVE_KIND_LABELS = {
-    "removable": "可移动磁盘", "fixed": "本地磁盘", "network": "网络位置",
-    "cdrom": "光驱", "ramdisk": "内存盘",
-}
-
-
-def _volume_label(root: str) -> str:
-    """读盘根的卷标（如 ``课件``）；没有卷标或读不到时返回空串。"""
-    if sys.platform != "win32" or not root:
-        return ""
-    try:
-        import ctypes
-
-        buffer = ctypes.create_unicode_buffer(261)
-        if ctypes.windll.kernel32.GetVolumeInformationW(
-                ctypes.c_wchar_p(root), buffer, 261, None, None, None, None, 0):
-            return buffer.value.strip()
-    except Exception:
-        logger.debug("Cannot read volume label of %s", root, exc_info=True)
-    return ""
-
-
-def _drive_details(path: Path) -> dict[str, Any]:
-    """路径是盘根时返回卷标 / 类型；普通文件夹返回空字典。
-
-    小窗的存储卡片要显示「课件」而不是「E:\\」：盘符对用户没有意义，卷标才是
-    他自己起的名字。普通文件夹仍然用目录名。
-    """
-    root = str(path.anchor or "")
-    if not root or str(path) != root:
-        return {}
-    kind = ""
-    if sys.platform == "win32":
-        try:
-            import ctypes
-
-            kind = _drive_kind(ctypes.windll.kernel32.GetDriveTypeW(
-                ctypes.c_wchar_p(root)))
-        except Exception:
-            logger.debug("Cannot read drive type of %s", root, exc_info=True)
-    return {
-        "root": root,
-        "label": _volume_label(root),
-        "kind": kind,
-        "kindLabel": _DRIVE_KIND_LABELS.get(kind, ""),
-    }
-
-
-def _find_removable_drive() -> str:
-    """返回第一个可移动磁盘的根路径（如 ``E:\\``）；找不到或非 Windows 返回空串。"""
-    if sys.platform != "win32":
-        return ""
-    try:
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        mask = kernel32.GetLogicalDrives()
-    except Exception:
-        logger.exception("Failed to enumerate drives")
-        return ""
-
-    for index in range(26):
-        if not mask & (1 << index):
-            continue
-        root = f"{chr(ord('A') + index)}:\\"
-        if kernel32.GetDriveTypeW(ctypes.c_wchar_p(root)) == 2:  # DRIVE_REMOVABLE
-            return root
-    return ""
-
-
-def _list_drives() -> list[dict[str, Any]]:
-    """枚举本机磁盘，给「磁盘」槽位的选择器用。
-
-    非 Windows 上只给一个根分区 —— 开发环境（Linux/macOS）里界面照样能跑通，
-    不至于整块功能消失。
-    """
-    if sys.platform != "win32":
-        try:
-            usage = shutil.disk_usage("/")
-        except OSError:
-            return []
-        return [{
-            "path": "/",
-            "label": "根目录",
-            "kind": "fixed",
-            "kindLabel": "本地磁盘",
-            "free": _human_size(usage.free),
-            "total": _human_size(usage.total),
-            "percent": round(usage.used / usage.total * 100) if usage.total else 0,
-        }]
-
-    try:
-        import ctypes
-
-        kernel32 = ctypes.windll.kernel32
-        mask = kernel32.GetLogicalDrives()
-    except Exception:
-        logger.exception("Failed to enumerate drives")
-        return []
-
-    kind_labels = _DRIVE_KIND_LABELS
-    drives: list[dict[str, Any]] = []
-    for index in range(26):
-        if not mask & (1 << index):
-            continue
-        root = f"{chr(ord('A') + index)}:\\"
-        kind = _drive_kind(kernel32.GetDriveTypeW(ctypes.c_wchar_p(root)))
-        if not kind:
-            continue
-
-        label = ""
-        try:
-            buffer = ctypes.create_unicode_buffer(261)
-            if kernel32.GetVolumeInformationW(
-                    ctypes.c_wchar_p(root), buffer, 261, None, None, None, None, 0):
-                label = buffer.value
-        except Exception:
-            logger.debug("Cannot read volume label of %s", root)
-
-        free_text = total_text = ""
-        percent = 0
-        # 光驱／网络盘没插介质时读容量会卡住，直接跳过。
-        if kind in ("fixed", "removable", "ramdisk"):
-            try:
-                free = ctypes.c_ulonglong(0)
-                total = ctypes.c_ulonglong(0)
-                if kernel32.GetDiskFreeSpaceExW(
-                        ctypes.c_wchar_p(root), ctypes.byref(free),
-                        ctypes.byref(total), None) and total.value:
-                    free_text = _human_size(free.value)
-                    total_text = _human_size(total.value)
-                    percent = round((total.value - free.value) / total.value * 100)
-            except Exception:
-                logger.debug("Cannot read free space of %s", root)
-
-        drives.append({
-            "path": root,
-            "label": label or root,
-            "kind": kind,
-            "kindLabel": kind_labels.get(kind, kind),
-            "free": free_text,
-            "total": total_text,
-            "percent": percent,
-        })
-    return drives
+# 磁盘探测（卷标 / 类型 / 容量）已搬到 drives.py。保留同名别名，调用点与
+# 测试都不用改；想单独测这部分纯函数直接 import rin_launcher.drives。
+_human_size = drives.human_size
+_drive_details = drives.drive_details
+_find_removable_drive = drives.find_removable_drive
+_list_drives = drives.list_drives
 
 
 def _dir_writable(path: Path) -> bool:
@@ -589,7 +430,8 @@ class ConfigManager(QObject):
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
         self._observer: Any | None = None
         self._quiet_until = 0.0  # ignores the watcher echo of our own writes
-        self._icon_provider = QFileIconProvider()
+        self._icons = IconStore(self.icon_dir, BUNDLED_ICON_DIR,
+                                notify=self._icon_notify)
         # 磁盘容量缓存：(取值时间, 数据)。
         self._storage_cache: tuple[float, dict[str, Any]] | None = None
         # 可移动磁盘缓存：枚举驱动器有系统调用成本，刷新时只问一次。
@@ -827,34 +669,19 @@ class ConfigManager(QObject):
         return True
 
     def _rotate_backups(self, keep: int = 10) -> None:
-        shutil.copy2(self.config_file, self.backup_dir / f"config.yaml.bak.{int(time.time())}")
-        for stale in sorted(self.backup_dir.glob("config.yaml.bak.*"))[:-keep]:
-            stale.unlink(missing_ok=True)
+        backup_store.rotate(self.backup_dir, self.config_file, keep)
 
     # ------------------------------------------------------------------
     # Backups (manual + 7-day automatic)
     # ------------------------------------------------------------------
     def _backup_files(self, prefix: str) -> list[Path]:
-        return sorted(
-            self.backup_dir.glob(f"{prefix}*.yaml"),
-            key=lambda path: path.stat().st_mtime,
-        )
+        return backup_store.files(self.backup_dir, prefix)
 
     def _create_backup(self, *, manual: bool, silent: bool = False) -> str:
         if not self.config_file.is_file():
             return ""
-        stamp = time.strftime("%Y%m%d-%H%M%S")
-        prefix = BACKUP_MANUAL_PREFIX if manual else BACKUP_AUTO_PREFIX
-        target = self.backup_dir / f"{prefix}{stamp}.yaml"
-        suffix = 1
-        while target.exists():
-            target = self.backup_dir / f"{prefix}{stamp}-{suffix}.yaml"
-            suffix += 1
-        try:
-            # 不要用 copy2：它会保留源文件的 mtime，7 天自动备份的判断会失真。
-            shutil.copyfile(self.config_file, target)
-        except OSError:
-            logger.exception("Failed to create backup %s", target)
+        target = backup_store.create(self.backup_dir, self.config_file, manual=manual)
+        if target is None:
             if not silent:
                 self.showToast.emit("备份失败，可以看看日志", "error")
             return ""
@@ -865,8 +692,7 @@ class ConfigManager(QObject):
                     "autoBackupKeep", AUTO_BACKUP_KEEP)))
             except (TypeError, ValueError):
                 keep = AUTO_BACKUP_KEEP
-            for stale in self._backup_files(BACKUP_AUTO_PREFIX)[:-keep]:
-                stale.unlink(missing_ok=True)
+            backup_store.prune_auto(self.backup_dir, keep)
         self.backupChanged.emit()
         if not silent:
             self.showToast.emit(
@@ -884,14 +710,9 @@ class ConfigManager(QObject):
         """按设置里的间隔补一份自动备份；启动与每 6 小时各检查一次。"""
         if not bool(self._config["settings"].get("autoBackupEnabled", True)):
             return
-        existing = self._backup_files(BACKUP_AUTO_PREFIX)
-        if existing:
-            try:
-                age = time.time() - existing[-1].stat().st_mtime
-                if age < self._backup_interval_days() * 24 * 60 * 60:
-                    return
-            except OSError:
-                pass
+        age = backup_store.newest_age_seconds(self.backup_dir)
+        if age is not None and age < self._backup_interval_days() * 24 * 60 * 60:
+            return
         self._create_backup(manual=False, silent=True)
 
     @Slot(result=str)
@@ -901,34 +722,15 @@ class ConfigManager(QObject):
 
     @Slot(result="QVariantMap")
     def getBackupInfo(self) -> dict[str, Any]:
-        auto = self._backup_files(BACKUP_AUTO_PREFIX)
-        manual = self._backup_files(BACKUP_MANUAL_PREFIX)
-
-        def describe(paths: list[Path]) -> tuple[str, str]:
-            if not paths:
-                return "", ""
-            latest = paths[-1]
-            try:
-                stamp = time.strftime("%Y-%m-%d %H:%M", time.localtime(latest.stat().st_mtime))
-            except OSError:
-                stamp = ""
-            return stamp, latest.name
-
-        auto_time, auto_name = describe(auto)
-        manual_time, manual_name = describe(manual)
-        return {
+        info = backup_store.describe(self.backup_dir)
+        info.update({
             "dir": str(self.backup_dir),
-            "autoCount": len(auto),
-            "manualCount": len(manual),
-            "autoTime": auto_time,
-            "manualTime": manual_time,
-            "autoName": auto_name,
-            "manualName": manual_name,
             "autoKeep": AUTO_BACKUP_KEEP,
             "autoEnabled": bool(self._config["settings"].get("autoBackupEnabled", True)),
             "intervalDays": self._backup_interval_days(),
             "keepCount": int(self._config["settings"].get("autoBackupKeep", AUTO_BACKUP_KEEP)),
-        }
+        })
+        return info
 
     @Slot()
     def openBackupFolder(self) -> None:
@@ -938,20 +740,15 @@ class ConfigManager(QObject):
     @Slot(result="QVariantList")
     def listBackups(self) -> list[dict[str, Any]]:
         """最近的备份（手动 + 自动），按时间倒序，供设置页列表用。"""
-        entries: list[dict[str, Any]] = []
-        for path in self._backup_files("config-"):
-            try:
-                stat = path.stat()
-            except OSError:
-                continue
-            entries.append({
-                "name": path.name,
-                "manual": path.name.startswith(BACKUP_MANUAL_PREFIX),
-                "size": _human_size(stat.st_size),
-                "time": time.strftime("%Y-%m-%d %H:%M", time.localtime(stat.st_mtime)),
-            })
-        entries.sort(key=lambda item: item["time"], reverse=True)
-        return entries
+        return [
+            {
+                "name": entry["name"],
+                "manual": entry["manual"],
+                "size": _human_size(entry["size"]),
+                "time": entry["time"],
+            }
+            for entry in backup_store.list_entries(self.backup_dir)
+        ]
 
     @Slot(str, result=bool)
     def restoreBackup(self, name: str) -> bool:
@@ -1001,13 +798,7 @@ class ConfigManager(QObject):
     @Slot(result="QVariantMap")
     def clearBackups(self) -> dict[str, Any]:
         """清空全部备份；返回最新的存储占用。"""
-        removed = 0
-        for path in self._backup_files("config-"):
-            try:
-                path.unlink()
-                removed += 1
-            except OSError:
-                logger.debug("无法删除备份 %s", path, exc_info=True)
+        removed = backup_store.clear(self.backup_dir)
         self.backupChanged.emit()
         self.showToast.emit(f"已删除 {removed} 份备份", "success" if removed else "info")
         return self.getStorageUsage()
@@ -1343,134 +1134,42 @@ class ConfigManager(QObject):
     @Slot(result="QStringList")
     def getBundledIcons(self) -> list[str]:
         """Names of the icon marks shipped under assets/icons/lawnicons."""
-        if not BUNDLED_ICON_DIR.is_dir():
-            return []
-        return sorted(path.stem for path in BUNDLED_ICON_DIR.glob("*.svg"))
+        return self._icons.bundled()
 
     @Slot(result="QVariantList")
     def getCustomIcons(self) -> list[dict]:
         """用户自己的图标库：导入的位图/矢量 + 从程序里抽出来的。"""
-        if not self.icon_dir.is_dir():
-            return []
-        items = []
-        for path in sorted(self.icon_dir.iterdir(),
-                           key=lambda item: item.stat().st_mtime, reverse=True):
-            if path.suffix.lower() not in (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp"):
-                continue
-            items.append({
-                "name": path.stem,
-                "key": self._icon_key(path),
-                "size": _human_size(path.stat().st_size),
-            })
-        return items
+        return self._icons.custom()
 
     def _icon_key(self, path: Path) -> str:
         """图标在配置里的写法：``file:<绝对路径>``。"""
-        return f"file:{path}"
+        return icon_key(path)
+
+    def _icon_notify(self, message: str, severity: str) -> None:
+        self.showToast.emit(message, severity)
 
     def _import_icon_file(self, path: str, notify: bool = True) -> str:
         """把一张图片（svg / png / ico / …）复制进图标库，返回它的 icon key。"""
-        source = Path(path)
-        if not source.is_file():
-            return ""
-        target = self.icon_dir / f"{_new_id()}{source.suffix.lower()}"
-        try:
-            shutil.copy2(source, target)
-        except OSError:
-            logger.exception("Failed to copy icon %s", source)
-            if notify:
-                self.showToast.emit("图标复制失败", "error")
-            return ""
-        if notify:
-            self.showToast.emit(f"已添加图标：{source.name}", "success")
-        return self._icon_key(target)
+        return self._icons.import_file(path, notify=notify)
 
     @Slot(result=str)
     def importIcon(self) -> str:
         """把用户挑的图片复制进图标库，返回它的 icon key。"""
-        path, _ = QFileDialog.getOpenFileName(
-            None, "添加图标", str(Path.home()),
-            "图标 (*.svg *.png *.ico *.jpg *.jpeg *.bmp);;所有文件 (*)")
+        path = IconStore.pick_image()
         return self._import_icon_file(path) if path else ""
 
     @staticmethod
     def _shortcut_target(path: str | Path) -> Path | None:
         """快捷方式（.lnk）指向的目标；不是快捷方式或解析不出来时返回 None。"""
-        source = Path(path)
-        if source.suffix.lower() != ".lnk":
-            return None
-        target = QFileInfo(str(source)).symLinkTarget()
-        if not target:
-            return None
-        candidate = Path(target)
-        return candidate if candidate.exists() else None
+        return IconStore.shortcut_target(path)
 
     def _icon_from_path(self, source: Path, notify: bool) -> str:
         """从一个具体文件取图标；取不到返回空串。"""
-        if not source.is_file():
-            return ""
-        suffix = source.suffix.lower()
-        if suffix in IMAGE_ICON_SUFFIXES:
-            if suffix != ".ico":
-                return self._import_icon_file(str(source), notify=notify)
-            # .ico 可能是多尺寸的：转成 256 的 PNG 再入库，小窗放大时不糊。
-            icon = QIcon(str(source))
-            pixmap = icon.pixmap(256, 256) if not icon.isNull() else None
-            if pixmap is None or pixmap.isNull():
-                return ""
-            target = self.icon_dir / f"{_new_id()}.png"
-            return self._icon_key(target) if pixmap.save(str(target), "PNG") else ""
-
-        icon = self._icon_provider.icon(QFileInfo(str(source)))
-        if icon.isNull():
-            return ""
-        # 取最大的一档，通常在 32~256 之间。
-        pixmap = icon.pixmap(256, 256)
-        if pixmap.isNull():
-            return ""
-        target = self.icon_dir / f"{_new_id()}.png"
-        if not pixmap.save(str(target), "PNG"):
-            return ""
-        return self._icon_key(target)
+        return self._icons.from_path(source, notify)
 
     def _extract_icon_file(self, path: str, notify: bool = True) -> str:
-        """从程序 / 快捷方式 / DLL 里抽出图标，落成文件存进图标库。
-
-        快捷方式按「自己的 IconLocation → 快捷方式本身 → 目标」的顺序找：
-        WSA 安卓应用的正确图标只在 IconLocation 里（LocalState 下的 .ico），
-        直接跟随目标只会拿到 WsaClient.exe 的通用图标。普通程序没有
-        IconLocation 时再退回目标，行为与旧版一致。
-
-        ``notify=False`` 用于保存槽位时的自动补图标：静默失败，不打扰用户。
-        """
-        # 没有 QApplication（裸脚本／无 GUI 环境）时 QFileIconProvider 会直接
-        # 把进程干掉（原生访问冲突，Python 捕不住），先挡一道。
-        if QApplication.instance() is None:
-            logger.warning("No QApplication instance, skipping icon extraction")
-            return ""
-        source = Path(path)
-        candidates: list[Path] = []
-        if source.suffix.lower() == ".lnk":
-            icon_path = start_menu.shortcut_icon_path(source)
-            if icon_path:
-                candidates.append(Path(icon_path))
-            # 快捷方式自身的 shell 图标；IconLocation 读不到时的兜底。
-            candidates.append(source)
-            target = self._shortcut_target(source)
-            if target is not None:
-                candidates.append(target)
-        else:
-            candidates.append(source)
-
-        for candidate in candidates:
-            key = self._icon_from_path(candidate, notify)
-            if key:
-                if notify:
-                    self.showToast.emit(f"已提取图标：{candidate.name}", "success")
-                return key
-        if notify:
-            self.showToast.emit("这个文件里没有取到图标", "warning")
-        return ""
+        """从程序 / 快捷方式 / DLL 里抽出图标，落成文件存进图标库。"""
+        return self._icons.extract(path, notify=notify)
 
     @Slot(str, result=str)
     def acquireIcon(self, path: str) -> str:
@@ -1478,41 +1177,17 @@ class ConfigManager(QObject):
 
         支持 exe / dll / lnk（跟随快捷方式目标）与 ico / svg / png / jpg / bmp。
         """
-        if not path:
-            path = self.pickIconSource()
-        if not path:
-            return ""
-        suffix = Path(path).suffix.lower()
-        if suffix in IMAGE_ICON_SUFFIXES:
-            return self._import_icon_file(path)
-        return self._extract_icon_file(path)
+        return self._icons.acquire(path)
 
     @Slot(result=str)
     def pickIconSource(self) -> str:
         """挑一个「图标来源」文件：程序、快捷方式或图片都行。"""
-        path, _ = QFileDialog.getOpenFileName(
-            None, "选择程序、快捷方式或图片", str(Path.home()),
-            "程序与图标 (*.exe *.dll *.lnk *.ico *.svg *.png *.jpg *.jpeg *.bmp)"
-            ";;程序与库 (*.exe *.dll *.lnk)"
-            ";;图标图片 (*.ico *.svg *.png *.jpg *.jpeg *.bmp)"
-            ";;所有文件 (*)")
-        return path or ""
+        return IconStore.pick_source()
 
     @Slot(str, result=bool)
     def deleteCustomIcon(self, key: str) -> bool:
         """删掉图标库里的一张图；配置里还在引用它的地方会退回默认图标。"""
-        name = key.removeprefix("file:")
-        target = Path(name)
-        # 只允许删图标库里的东西，免得被误导着删掉别处的文件。
-        if target.parent.resolve() != self.icon_dir.resolve() or not target.is_file():
-            return False
-        try:
-            target.unlink()
-        except OSError:
-            logger.exception("Failed to delete icon %s", target)
-            return False
-        self.showToast.emit("图标已删除", "success")
-        return True
+        return self._icons.delete(key)
 
     # ------------------------------------------------------------------
     # Write API (called from QML)
@@ -1892,8 +1567,10 @@ class ConfigManager(QObject):
     # ── 恢复模式 ─────────────────────────────────────────────────────
     @Slot(result=str)
     def getLaunchMode(self) -> str:
-        """本次启动的模式：normal / safe / diagnostic。"""
+        """本次启动的模式：normal / recovery / safe / diagnostic。"""
         args = [str(item) for item in sys.argv[1:]]
+        if "--recovery" in args:
+            return "recovery"
         if "--safe-mode" in args:
             return "safe"
         if "--diagnostic" in args:
@@ -1968,8 +1645,9 @@ class ConfigManager(QObject):
 
     @Slot(str, result=bool)
     def restartWithMode(self, mode: str) -> bool:
-        """带启动模式参数重启：safe / diagnostic / normal。"""
-        flag = {"safe": "--safe-mode", "diagnostic": "--diagnostic"}.get(str(mode), "")
+        """带启动模式参数重启：recovery / safe / diagnostic / normal。"""
+        flag = {"recovery": "--recovery", "safe": "--safe-mode",
+                "diagnostic": "--diagnostic"}.get(str(mode), "")
         extra = [flag] if flag else []
         if not restart_application(extra):
             self.showToast.emit("重启失败，可以看看日志", "error")

@@ -3,6 +3,48 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.1.10-pre（Hoshimi Miyabi）— 2026-10-29
+
+> 1.1.10 与 1.2.0 共用开发代号 **Hoshimi Miyabi**，以 Pre-Release 发布。
+> 从 1.1.9 可以直接用内置更新升级到这一版（配置格式不变）。
+
+### 新增
+
+- **恢复模式独立成进程**：点「恢复模式」不再只是弹一个窗口，而是主程序退出、
+  重启到一个只加载恢复窗口的独立进程。那个进程不建桌面小窗、不装托盘、
+  不注册全局热键、不跑系统状态轮询与静默更新检查，关掉恢复窗口就直接退出。
+  入口新增三处：小窗「更多」菜单、托盘右键菜单、`--recovery` 启动参数；
+  设置 → 存储与更新页原有的按钮改为「重启到恢复模式」。
+
+### 改进
+
+- **发布流水线加质量门禁**：`release.yml` 在 PyInstaller 之前先跑
+  `ruff check`、`pytest` 与 `pyside6-qmllint`，测试红着的 tag 发不出去。
+- **打包体积**：剔除 Qt Quick Controls 里没用到的 Imagine / Material / Universal
+  三套样式、`qmltooling` 调试插件、四种用不到的图片格式插件与全部非简体中文
+  翻译。解压后体积从 183MB 降到 **167MB**，发布 zip 约 67MB。
+  （Basic / FluentWinUI3 / Windows / Fusion 四套样式必须保留：默认 style 解析
+  会依次尝试，少一个就会报 `module is not installed` 并白屏。）
+- **`config_manager.py` 拆分**：从 2304 行降到 1990 行。磁盘探测、备份文件操作、
+  图标库分别拆到 `drives.py`、`backups.py`、`icon_store.py` —— 都是不依赖
+  Qt 对象的纯逻辑或单一职责类，可以单独测试。
+- **Python 最低版本提到 3.12**：`requires-python`、ruff target 与 CI / 发布
+  流水线三处统一，不再声明一个从未验证过的 3.10。
+
+### 修复
+
+- **多显示器定位**：小窗改用 `QGuiApplication.primaryScreen()` 的真实可用区域
+  定位。旧实现用 `Screen.virtualX + desktopAvailableWidth`，算出来的是
+  **虚拟桌面**右边缘，多屏时窗口会跑到最右侧那块屏上。主屏切换、分辨率与
+  任务栏变化时会自动重新贴角。
+
+### 升级说明
+
+- 配置格式不变（`version: 3`）。
+- 本版以 Pre-Release 通道发布。
+- 从 1.1.9 可以用内置更新直接升级；更新包结构与之前一致（`RinLauncher.zip`
+  覆盖程序目录，`data/` 不受影响）。
+
 ## 1.1.9-pre（Hoshimi Miyabi）— 2026-10-28
 
 > ## ⚠️ 请手动下载安装这一版

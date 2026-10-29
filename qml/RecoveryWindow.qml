@@ -8,10 +8,12 @@ import "dialogs"
 
 // 恢复模式窗口。
 //
-// 独立于设置窗口：设置页加载不出来、配置被改坏、更新装出问题时，这个窗口
-// 仍然能打开 —— 它只依赖 ConfigManager 的几个只读接口和最基本的文件操作。
+// 独立于主程序：恢复进程只加载这一个窗口 —— 小窗、托盘、全局热键、系统状态
+// 轮询都不启动。设置页、小窗「更多」菜单与托盘菜单点「恢复模式」时会重启到
+// 这里；也可以带 --recovery / --safe-mode / --diagnostic 直接启动。
 //
-// 入口：设置 → 存储 → 恢复；或带 --safe-mode / --diagnostic 启动。
+// 它只依赖 ConfigManager 的几个只读接口和最基本的文件操作，所以配置被改坏、
+// 更新装出问题时仍然打得开。
 FluentWindowBase {
     id: recoveryWindow
 
@@ -25,16 +27,18 @@ FluentWindowBase {
     property var info: ({})
     property var backups: []
 
-    readonly property bool inRecoveryMode: info.launchMode === "safe"
+    readonly property bool inRecoveryMode: info.launchMode === "recovery"
+                                          || info.launchMode === "safe"
                                           || info.launchMode === "diagnostic"
-    readonly property string modeLabel: info.launchMode === "safe"
-        ? qsTr("安全模式")
+    readonly property string modeLabel: info.launchMode === "recovery"
+        ? qsTr("恢复模式")
+        : info.launchMode === "safe" ? qsTr("安全模式")
         : info.launchMode === "diagnostic" ? qsTr("诊断模式") : qsTr("正常模式")
 
     // 启动动作：继续使用 / 安全模式 / 诊断模式。
     readonly property var launchActions: [
         { key: "continue", title: qsTr("继续使用"),
-          description: qsTr("关掉这个窗口，回到桌面小窗"),
+          description: qsTr("退出恢复模式，按正常模式重新启动"),
           icon: "ic_fluent_play_20_regular", danger: false },
         { key: "safe", title: qsTr("以安全模式重启"),
           description: qsTr("跳过全局热键、系统状态轮询与配置监听"),
@@ -254,7 +258,9 @@ FluentWindowBase {
                     color: Theme.currentTheme.colors.textColor
                     text: recoveryWindow.info.launchMode === "safe"
                         ? qsTr("当前处于安全模式：全局热键、系统状态轮询与配置监听都不会启动。确认问题解决后，请在「继续使用」里正常重启。")
-                        : qsTr("当前处于诊断模式：日志级别已临时拉到 DEBUG。复现问题后，请导出日志并附在反馈里。")
+                        : recoveryWindow.info.launchMode === "diagnostic"
+                          ? qsTr("当前处于诊断模式：日志级别已临时拉到 DEBUG。复现问题后，请导出日志并附在反馈里。")
+                          : qsTr("当前是独立的恢复进程：小窗、托盘与全局热键都没有启动，关掉这个窗口就退出程序。处理完问题后，请在「继续使用」里正常重启。")
                 }
             }
 

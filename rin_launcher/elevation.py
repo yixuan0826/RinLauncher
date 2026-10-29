@@ -87,11 +87,11 @@ def restart_elevated() -> bool:
 def _restart_target() -> tuple[str, list[str], str]:
     """返回 (可执行文件, 参数, 工作目录)；打包与源码模式都适用。
 
-    ``--safe-mode`` / ``--diagnostic`` 是一次的启动模式，不能跟着下一次重启走进
-    去 —— 否则从安全模式里「正常重启」永远退不出安全模式。
+    ``--recovery`` / ``--safe-mode`` / ``--diagnostic`` 都是一次的启动模式，
+    不能跟着下一次重启走进去 —— 否则从恢复模式里「正常重启」永远退不出来。
     """
     args = [arg for arg in sys.argv[1:]
-            if arg not in ("--safe-mode", "--diagnostic")]
+            if arg not in ("--recovery", "--safe-mode", "--diagnostic")]
     if getattr(sys, "frozen", False):
         exe = sys.executable
         return exe, args, str(Path(exe).resolve().parent)

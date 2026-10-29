@@ -31,7 +31,15 @@ Window {
     readonly property int cardRadius: Theme.currentTheme.appearance.windowRadius
 
     width: 400
-    height: Math.max(400, Math.round(Screen.desktopAvailableHeight / 2))
+    // 主屏可用高度由 Python 注入（多显示器下 Screen.* 会跟着窗口所在屏幕跑，
+    // 不能用来算「主屏的一半」）。没注入时退回 Screen 的单屏行为。
+    property int primaryX: 0
+    property int primaryY: 0
+    property int primaryWidth: 0
+    property int primaryHeight: 0
+    readonly property int availableHeight: primaryHeight > 0
+        ? primaryHeight : Screen.desktopAvailableHeight
+    height: Math.max(400, Math.round(availableHeight / 2))
     visible: false
     color: "transparent"
     title: qsTr("启动台")
@@ -81,7 +89,14 @@ Window {
     // 位置：固定贴主显示器右下角，不拖动、不记忆。
     // ------------------------------------------------------------------
     function snapToCorner() {
-        // Screen 给的是窗口所在（未显示时是主）显示器的可用区域，已经排除任务栏。
+        // 多显示器下 Screen.virtualX + desktopAvailableWidth 算出来的是**虚拟桌面**
+        // 的右边缘，窗口会跑到最右侧那块屏上。主屏几何由 Python 注入，拿不到时
+        // 才退回单屏公式（主屏位于虚拟桌面原点时两者等价）。
+        if (primaryWidth > 0 && primaryHeight > 0) {
+            x = primaryX + primaryWidth - width - edgeMargin
+            y = primaryY + primaryHeight - height - edgeMargin
+            return
+        }
         x = Screen.virtualX + Screen.desktopAvailableWidth - width - edgeMargin
         y = Screen.virtualY + Screen.desktopAvailableHeight - height - edgeMargin
     }
@@ -648,6 +663,13 @@ Window {
             text: qsTr("提权重启")
             icon.name: "ic_fluent_shield_20_regular"
             onTriggered: ConfigManager.restartAsAdmin()
+        }
+        MenuSeparator {}
+        MenuItem {
+            // 恢复模式是独立进程：点了就重启过去，不再和当前进程共存。
+            text: qsTr("恢复模式")
+            icon.name: "ic_fluent_wrench_screwdriver_20_regular"
+            onTriggered: ConfigManager.restartWithMode("recovery")
         }
         MenuSeparator {}
         MenuItem {

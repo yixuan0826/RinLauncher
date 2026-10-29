@@ -61,6 +61,11 @@ DROP_QT_DLL_PREFIXES = (
     "Qt6TextToSpeech", "Qt6Sensors", "Qt6Positioning", "Qt6Location",
     "Qt6RemoteObjects", "Qt6Scxml", "Qt6StateMachine", "Qt6Sql", "Qt6Test",
     "Qt6QuickTest", "Qt6Designer", "Qt6Help",
+    # Qt Quick Controls 的默认 style 解析会依次尝试 Windows / Fusion，这两个
+    # 必须留着；RinUI 组件显式 import Basic，FluentWinUI3 是当前观感基准。
+    # Imagine / Material / Universal 三套（~8MB）用不到，可以剔掉。
+    "Qt6QuickControls2Imagine", "Qt6QuickControls2Material",
+    "Qt6QuickControls2Universal",
 )
 # 对应的 QML 模块目录（dest 以 PySide6/qml/ 开头）。
 DROP_QML_DIRS = (
@@ -69,6 +74,14 @@ DROP_QML_DIRS = (
     "QtVirtualKeyboard", "QtTextToSpeech", "QtSensors", "QtPositioning",
     "QtLocation", "QtRemoteObjects", "QtScxml", "QtStateMachine", "QtSql", "QtTest",
 )
+# QtQuick/Controls 下的样式子目录，与上面 DLL 一一对应。
+DROP_CONTROLS_STYLES: tuple[str, ...] = ("Imagine", "Material", "Universal")
+
+# 运行期用不到的插件目录：qmltooling 是 QML 调试器后端，networkinformation 只服务于
+# Qt Network 的网络状态查询，两者都不会被加载。
+DROP_PLUGIN_DIRS = ("qmltooling", "networkinformation")
+# 不会用到的图片格式（图标只用 png / ico / svg / jpeg / webp / gif）。
+DROP_PLUGIN_FILES = ("qtiff.dll", "qicns.dll", "qtga.dll", "qwbmp.dll")
 
 
 def _basename(path: str) -> str:
@@ -76,8 +89,17 @@ def _basename(path: str) -> str:
 
 
 def _drop_qt_binaries(binaries):
-    kept = [entry for entry in binaries
-            if not _basename(entry[0]).startswith(DROP_QT_DLL_PREFIXES)]
+    kept = []
+    for entry in binaries:
+        name = _basename(entry[0])
+        norm = entry[0].replace("\\", "/")
+        if name.startswith(DROP_QT_DLL_PREFIXES):
+            continue
+        if "/plugins/" in norm:
+            plugin_dir = norm.split("/plugins/", 1)[1].split("/", 1)[0]
+            if plugin_dir in DROP_PLUGIN_DIRS or name in DROP_PLUGIN_FILES:
+                continue
+        kept.append(entry)
     print(f"[spec] Qt DLL: {len(binaries)} -> {len(kept)}")
     return kept
 
@@ -85,10 +107,20 @@ def _drop_qt_binaries(binaries):
 def _drop_qt_datas(datas):
     def unwanted(dest: str) -> bool:
         norm = dest.replace("\\", "/")
+        if norm.startswith("PySide6/translations/"):
+            # 本项目不做 i18n；Qt 自己的翻译只留简体中文（标准文件对话框的
+            # 按钮文字靠它）。其余语言全部剔掉，一次省 8MB。
+            return not norm.rsplit("/", 1)[-1].endswith("_zh_CN.qm")
         if not norm.startswith("PySide6/qml/"):
             return False
-        module = norm[len("PySide6/qml/"):].split("/", 1)[0]
-        return module in DROP_QML_DIRS
+        rest = norm[len("PySide6/qml/"):]
+        parts = rest.split("/")
+        if parts[0] in DROP_QML_DIRS:
+            return True
+        # QtQuick/Controls/<Style>：样式目录不在第一层，需要单独匹配。
+        if len(parts) >= 3 and parts[0] == "QtQuick" and parts[1] == "Controls":
+            return parts[2] in DROP_CONTROLS_STYLES
+        return False
 
     kept = [entry for entry in datas if not unwanted(entry[0])]
     print(f"[spec] QML datas: {len(datas)} -> {len(kept)}")

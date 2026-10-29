@@ -95,12 +95,12 @@ Item {
 
                 FormRow {
                     label: qsTr("恢复模式")
-                    description: qsTr("安全 / 诊断模式重启、恢复备份、重置配置都在这里")
+                    description: qsTr("重启到独立的恢复窗口：安全 / 诊断模式、恢复备份、重置配置都在那里")
                     Item { Layout.fillWidth: true }
                     Button {
-                        text: qsTr("打开恢复模式")
-                        icon.name: "ic_fluent_open_20_regular"
-                        onClicked: ConfigManager.requestPage("recovery")
+                        text: qsTr("重启到恢复模式")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        onClicked: ConfigManager.restartWithMode("recovery")
                     }
                 }
             }

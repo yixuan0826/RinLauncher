@@ -153,9 +153,9 @@ Item {
                         }
                     }
                     Button {
-                        text: qsTr("恢复模式")
-                        icon.name: "ic_fluent_shield_20_regular"
-                        onClicked: ConfigManager.requestPage("recovery")
+                        text: qsTr("重启到恢复模式")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        onClicked: ConfigManager.restartWithMode("recovery")
                     }
                 }
             }

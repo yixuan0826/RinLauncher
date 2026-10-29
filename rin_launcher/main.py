@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import logging
 import sys
+import tempfile
+import traceback
 from pathlib import Path
 
 PROJECT_ROOT = (
@@ -40,6 +42,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from PySide6.QtCore import QTimer
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
@@ -65,6 +68,41 @@ logger = logging.getLogger(__name__)
 
 # 三个窗口统一用云母；Win10 或调用失败时由 apply_backdrop 回退到不透明。
 BACKDROP_EFFECT = BackdropEffect.Mica
+
+# 恢复类的启动参数。命中任意一个就进入「独立恢复进程」：不建小窗、不装托盘与
+# 全局热键、不跑系统轮询、不抢单实例锁，只留一个恢复窗口。
+RECOVERY_FLAGS = ("--recovery", "--safe-mode", "--diagnostic")
+
+
+def _install_crash_handler() -> None:
+    """windowed 包里没有 stderr：未捕获异常落一份文本，方便用户回传。"""
+
+    def hook(exc_type, exc_value, exc_tb) -> None:
+        try:
+            Path(tempfile.gettempdir(), "RinLauncher-crash.log").write_text(
+                "".join(traceback.format_exception(exc_type, exc_value, exc_tb)),
+                encoding="utf-8")
+        except OSError:
+            pass
+        sys.__excepthook__(exc_type, exc_value, exc_tb)
+
+    sys.excepthook = hook
+
+
+def _install_qml_logging() -> None:
+    """把 QML 的警告/错误接进日志：windowed 包里 stderr 是空的。"""
+    from PySide6.QtCore import QtMsgType, qInstallMessageHandler
+
+    def handler(mode, context, message):
+        where = f"{context.file}:{context.line}" if context.file else "?"
+        text = f"{where}: {message}"
+        if mode in (QtMsgType.QtWarningMsg, QtMsgType.QtCriticalMsg,
+                    QtMsgType.QtFatalMsg):
+            logger.warning("%s", text)
+        else:
+            logger.debug("%s", text)
+
+    qInstallMessageHandler(handler)
 
 
 def _setup_logging(config_manager: ConfigManager) -> None:
@@ -101,10 +139,39 @@ class Launcher:
         # 单实例消息服务端（见 start_single_instance_server）。
         self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
+        self._screen_wired = False
         # 安全模式：不装全局热键钩子、不跑系统状态轮询与配置监听。
         self.launch_mode = self.config_manager.getLaunchMode()
 
         self._wire_config()
+
+    def _wire_screen(self) -> None:
+        """主屏 / 分辨率 / 任务栏变化时重新贴角。"""
+        if self._screen_wired:
+            return
+        self._screen_wired = True
+        # primaryScreenChanged 是 QGuiApplication 的实例信号；直接拿类属性
+        # 是 Signal 描述符，没有 connect()。
+        app = QGuiApplication.instance()
+        if app is not None:
+            app.primaryScreenChanged.connect(self._on_primary_screen_changed)
+        self._attach_primary_screen()
+
+    def _on_primary_screen_changed(self, _screen=None) -> None:
+        self._attach_primary_screen()
+        self.sync_primary_screen()
+
+    def _attach_primary_screen(self) -> None:
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        # 主屏切换后旧屏还在发信号，先断掉再连，避免重复触发。
+        for signal in (screen.availableGeometryChanged, screen.geometryChanged):
+            try:
+                signal.disconnect(self.sync_primary_screen)
+            except (RuntimeError, TypeError):
+                pass
+            signal.connect(self.sync_primary_screen)
 
     # ------------------------------------------------------------------
     # Setup
@@ -130,11 +197,12 @@ class Launcher:
 
         # 热键与托盘放到小窗首帧之后：pynput 的全局键盘钩子和 QSystemTrayIcon
         # 都要跟系统打交道，没必要挡在「小窗可见」这条关键路径上。
-        if self.safe_mode:
-            logger.warning("安全模式：跳过热键注册与系统状态轮询")
-        else:
-            QTimer.singleShot(120, lambda: self.apply_hotkey(
-                str(settings.get("globalHotkey", ""))))
+        # 恢复模式是独立救命通道：不注册热键、不装托盘、不跑系统状态轮询。
+        if self.recovery_only:
+            logger.warning("%s 模式：跳过热键、托盘与系统状态轮询", self.launch_mode)
+            return
+        QTimer.singleShot(120, lambda: self.apply_hotkey(
+            str(settings.get("globalHotkey", ""))))
         QTimer.singleShot(120, lambda: self.apply_tray(
             bool(settings.get("showTray", True))))
 
@@ -145,6 +213,11 @@ class Launcher:
     @property
     def diagnostic_mode(self) -> bool:
         return self.launch_mode == "diagnostic"
+
+    @property
+    def recovery_only(self) -> bool:
+        """恢复类启动：整个进程只为恢复窗口存在，不建常驻组件。"""
+        return self.launch_mode in ("recovery", "safe", "diagnostic")
 
     def _wire_tray(self) -> None:
         # 托盘可以在设置里反复开关，重复连接会让一次点击触发多次。
@@ -177,6 +250,8 @@ class Launcher:
         window.load(entry)
 
         if window.root_window is None:
+            for error in window.engine.errors():
+                logger.error("QML: %s", error.toString())
             logger.error("Failed to load %s", entry)
             return None
         if ICON_FILE.is_file():
@@ -204,7 +279,28 @@ class Launcher:
         effects.apply_bottom_layer(root)
         effects.apply_win11_round_corners(root)
         self.apply_backdrop(window)
+        # 先把主屏几何灌进去，再让 QML 自己贴边（height 绑定会触发重算）。
+        self._wire_screen()
+        self.sync_primary_screen()
         return True
+
+    def sync_primary_screen(self, *_args) -> None:
+        """把主显示器的可用区域同步给小窗。
+
+        QML 里的 ``Screen`` 跟着窗口当前所在屏幕走，多显示器时用它算「主屏右下角」
+        会跑到别的屏上；这里统一用 ``QGuiApplication.primaryScreen()``。
+        """
+        if self.compact is None or self.compact.root_window is None:
+            return
+        screen = QGuiApplication.primaryScreen()
+        if screen is None:
+            return
+        rect = screen.availableGeometry()
+        root = self.compact.root_window
+        root.setProperty("primaryX", rect.x())
+        root.setProperty("primaryY", rect.y())
+        root.setProperty("primaryWidth", rect.width())
+        root.setProperty("primaryHeight", rect.height())
 
     def create_editor_window(self) -> bool:
         window = self._create_window(EDITOR_ENTRY)
@@ -261,15 +357,16 @@ class Launcher:
             return False
         return True
 
-    def show_recovery(self) -> None:
+    def show_recovery(self) -> bool:
         if not self.ensure_recovery_window():
-            return
+            return False
         root = self.recovery.root_window
         if root is None:
-            return
+            return False
         root.show()
         root.raise_()
         root.requestActivate()
+        return True
 
     def start_single_instance_server(self) -> None:
         """守着单实例的本地套接字：第二个进程请求「亮出小窗」时照办。"""
@@ -380,11 +477,22 @@ class Launcher:
         elif page == "compact":
             self.show_compact()
         elif page == "recovery":
-            self.show_recovery()
+            self.enter_recovery_mode()
         elif page == "about":
             self.show_settings("about")
         else:
             self.show_settings()
+
+    def enter_recovery_mode(self) -> None:
+        """重启到独立的恢复进程。
+
+        恢复窗口不再和主程序共存：先拉起一个 ``--recovery`` 进程，再退出当前
+        进程。回调函数也走这里，所以已经是恢复进程时只把窗口抬到前面。
+        """
+        if self.recovery_only:
+            self.show_recovery()
+            return
+        self.config_manager.restartWithMode("recovery")
 
     def handle_tray_page(self, page: str) -> None:
         """托盘菜单：启动台设置 → 编辑窗口，设置 / 关于 → 设置窗口。"""
@@ -422,16 +530,18 @@ class Launcher:
         self.app.quit()
 
     def run(self) -> int:
-        # 安全模式 / 诊断模式直接开恢复窗口，让小窗先靠边站。
-        if self.launch_mode in ("safe", "diagnostic"):
-            self.show_recovery()
+        # 恢复类启动只开恢复窗口，小窗 / 托盘 / 热键一概不建。
+        if self.recovery_only:
+            if not self.show_recovery():
+                logger.error("恢复模式窗口加载失败，退出进程")
+                return 1
         elif not self.config_manager.config["settings"].get("startMinimized", False):
             self.show_compact()
         # 这些都不是「小窗可见」的必要条件，推迟到首帧之后：
         #   * watchdog 的导入与文件监听（几十毫秒）；
         #   * schtasks 子进程查任务计划状态；
         #   * 静默更新检查（本来就在 5 秒后）。
-        if not self.safe_mode:
+        if not self.recovery_only:
             QTimer.singleShot(1200, self.config_manager.startWatching)
             QTimer.singleShot(4000, self.config_manager._start_startup_prefetch)
             QTimer.singleShot(5000, self._auto_check_updates)
@@ -443,6 +553,7 @@ class Launcher:
 
 
 def main() -> int:
+    _install_crash_handler()
     # 隐藏的辅助入口：三态启动方式里的任务计划重活在提权进程里干完就退，
     # 完全不进 Qt、不抢单实例锁（见 rin_launcher/autostart.py）。
     for arg in sys.argv[1:]:
@@ -459,8 +570,8 @@ def main() -> int:
     app.setQuitOnLastWindowClosed(False)  # the tray keeps the app alive
 
     # 单实例：已经有实例在跑就把「亮出小窗」交给它，本进程直接退出。
-    # 安全 / 诊断模式是救命通道，不抢锁也不被旧实例拦截。
-    recovery_mode = any(arg in ("--safe-mode", "--diagnostic") for arg in sys.argv[1:])
+    # 恢复类模式是救命通道，不抢锁也不被旧实例拦截。
+    recovery_mode = any(arg in RECOVERY_FLAGS for arg in sys.argv[1:])
     if not recovery_mode:
         guard = acquire_single_instance()
         if guard is None:
@@ -469,13 +580,16 @@ def main() -> int:
 
     launcher = Launcher(app)
     _setup_logging(launcher.config_manager)
+    _install_qml_logging()
     launcher.log_startup_notes()
+    if launcher.recovery_only:
+        logger.warning("%s 模式：独立进程，只加载恢复窗口（无小窗/托盘/热键）",
+                       launcher.launch_mode)
 
-    # 小窗总是先建好（恢复模式下只建不显示）：恢复窗口的「继续使用」要直接
-    # 把小窗亮出来，不能到了那儿才发现它根本没建。
-    if not launcher.create_compact_window():
-        return 1
+    # 正常启动先建好小窗；恢复模式只建恢复窗口，连小窗都不建。
     if not recovery_mode:
+        if not launcher.create_compact_window():
+            return 1
         launcher.start_single_instance_server()
         launcher.hotkey.activated.connect(launcher.toggle_compact)
     return launcher.run()

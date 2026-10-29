@@ -98,6 +98,13 @@ class TrayIcon(QObject):
 
         menu.addSeparator()
 
+        # 恢复模式是独立进程：交给 main.py 重启过去，托盘本身不参与恢复 UI。
+        recovery = QAction("恢复模式", menu)
+        recovery.triggered.connect(lambda: self.openPageRequested.emit("recovery"))
+        menu.addAction(recovery)
+
+        menu.addSeparator()
+
         open_folder = QAction("打开配置目录", menu)
         open_folder.triggered.connect(self.openConfigFolderRequested.emit)
         menu.addAction(open_folder)

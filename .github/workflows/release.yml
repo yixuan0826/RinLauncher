@@ -21,7 +21,31 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller
+          pip install -r requirements.txt pyinstaller pytest ruff
+
+      # 发布前先过同一套门禁：tag 推送也不能绕过测试。
+      - name: Ruff
+        run: ruff check rin_launcher tests scripts
+
+      - name: Pytest
+        run: pytest tests -q
+
+      - name: QML lint
+        shell: pwsh
+        run: |
+          $env:QML_IMPORT_PATH = (Get-Location).Path
+          $files = Get-ChildItem qml -Recurse -Filter *.qml
+          $errors = 0
+          foreach ($file in $files) {
+            $out = & pyside6-qmllint -I . $file.FullName 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "qmllint failed: $($file.FullName)"
+              $out | Write-Host
+              $errors++
+            }
+          }
+          if ($errors -gt 0) { exit 1 }
+          Write-Host "qmllint: $($files.Count) files OK"
 
       - name: Build (onedir)
         run: pyinstaller build.spec
