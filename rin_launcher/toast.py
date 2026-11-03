@@ -8,8 +8,11 @@ from xml.sax.saxutils import escape
 
 logger = logging.getLogger(__name__)
 
+# 与 notification_registration 保持一致；设置页的「快速注册」会创建这个 AUMID。
+DEFAULT_APP_ID = "RinLauncher.Desktop"
 
-def show(title: str, message: str, app_id: str = "Rin Launcher") -> bool:
+
+def show(title: str, message: str, app_id: str = DEFAULT_APP_ID) -> bool:
     if sys.platform != "win32":
         return False
     try:

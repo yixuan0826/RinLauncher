@@ -36,6 +36,65 @@ Item {
             width: Math.min(flick.width - 48, 860)
             spacing: 18
 
+            // 顶部摘要：版本号与状态先摆出来，下面的设置与版本列表只负责操作。
+            Frame {
+                Layout.fillWidth: true
+                implicitHeight: 84
+                radius: Theme.currentTheme.appearance.windowRadius
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 18
+                    anchors.rightMargin: 18
+                    spacing: 24
+
+                    ColumnLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 2
+                        Text {
+                            typography: Typography.Caption
+                            color: Theme.currentTheme.colors.textSecondaryColor
+                            text: qsTr("当前版本")
+                        }
+                        Text {
+                            typography: Typography.Title
+                            color: Theme.currentTheme.colors.textColor
+                            text: "v" + pageRoot.page.updateCurrentVersion
+                        }
+                    }
+
+                    ColumnLayout {
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 2
+                        Text {
+                            typography: Typography.Caption
+                            color: Theme.currentTheme.colors.textSecondaryColor
+                            text: qsTr("最新版本")
+                        }
+                        Text {
+                            typography: Typography.Title
+                            color: Theme.currentTheme.colors.textColor
+                            text: pageRoot.page.updateLatestVersion.length > 0
+                                ? "v" + pageRoot.page.updateLatestVersion : "—"
+                        }
+                    }
+
+                    Item { Layout.fillWidth: true }
+
+                    Text {
+                        Layout.alignment: Qt.AlignVCenter
+                        wrapMode: Text.Wrap
+                        maximumLineCount: 2
+                        elide: Text.ElideRight
+                        Layout.maximumWidth: 360
+                        color: pageRoot.page.updateState === "error"
+                            ? Theme.currentTheme.colors.systemCriticalColor
+                            : Theme.currentTheme.colors.textSecondaryColor
+                        text: pageRoot.page.updateMessage
+                    }
+                }
+            }
+
             SettingsGroup {
                 title: qsTr("更新设置")
                 iconKey: "ic_fluent_arrow_download_20_regular"

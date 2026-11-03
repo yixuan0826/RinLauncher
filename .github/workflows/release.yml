@@ -13,9 +13,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # 只接受严格的 v主版本.次版本.修订号 与可选的预发布后缀；玩笑 tag
+      # （v1.1.114514 / v.1.1.2）必须在构建前就被拦住。
+      - name: Validate tag
+        shell: pwsh
+        run: |
+          $tag = "${{ github.ref_name }}"
+          if ($tag -notmatch '^v\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$') {
+            Write-Error "Invalid release tag: $tag"
+            exit 1
+          }
+          Write-Host "Release tag OK: $tag"
+
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
+          python-version: "3.14"
           cache: pip
 
       - name: Install dependencies
@@ -53,8 +65,54 @@ jobs:
       - name: Mark build channel
         shell: pwsh
         run: |
-          $channel = if ("${{ github.ref_name }}" -match '-') { "Pre-Release" } else { "Release" }
-          Set-Content -Path dist/RinLauncher/channel.txt -Value $channel -Encoding utf8
+          $channel = if ("${{ github.ref_name }}" -match '-') { "prerelease" } else { "stable" }
+          $lines = @(
+            "# Rin Launcher 启动配置",
+            "# 布尔项只写 true / false；channel 只写 stable / prerelease。",
+            "first-run==true",
+            "normal-boot==true",
+            "failsafe==false",
+            "debug==false",
+            "channel==$channel",
+            "recovery==false"
+          )
+          # UTF-8 无 BOM；Windows PowerShell 的 utf8 刚好满足。
+          Set-Content -Path dist/RinLauncher/appmodset.conf -Value $lines -Encoding utf8
+          if (-not (Test-Path dist/RinLauncher/appmodset.conf)) { exit 1 }
+
+      # 冻结包冒烟：源码测试绿不代表 exe 能起来。恢复窗口只加载一个 QML，
+      # 7 秒足够确认进程没在启动阶段崩掉。
+      - name: Smoke test frozen package
+        shell: pwsh
+        run: |
+          $exe = Join-Path (Get-Location) "dist/RinLauncher/RinLauncher.exe"
+          if (-not (Test-Path $exe)) { throw "missing $exe" }
+          $proc = Start-Process -FilePath $exe -ArgumentList "--recovery" -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) { throw "frozen exe exited during recovery smoke test" }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host "Frozen recovery smoke test OK"
+
+      - name: Upgrade dry-run (cover install)
+        shell: pwsh
+        run: |
+          # 用真实 zip 走一遍 1.1.9 的覆盖式安装脚本：解压 → 定位 exe →
+          # 删除 payload 的 data/ → Copy-Item -Force → 校验大小。
+          Compress-Archive -Path dist/RinLauncher/* -DestinationPath smoke-payload.zip
+          $root = Join-Path $env:RUNNER_TEMP "rin-upgrade-smoke"
+          Remove-Item $root -Recurse -Force -ErrorAction SilentlyContinue
+          New-Item -ItemType Directory -Path $root | Out-Null
+          New-Item -ItemType Directory -Path (Join-Path $root "data") | Out-Null
+          Set-Content -Path (Join-Path $root "data/user-marker.txt") -Value "keep-me" -Encoding utf8
+          Expand-Archive -Path smoke-payload.zip -DestinationPath (Join-Path $root "payload")
+          $sourceExe = Get-ChildItem (Join-Path $root "payload") -Recurse -Filter RinLauncher.exe |
+            Select-Object -First 1
+          if (-not $sourceExe) { throw "payload has no RinLauncher.exe" }
+          Copy-Item (Join-Path $sourceExe.DirectoryName "*") $root -Recurse -Force
+          if (-not (Test-Path (Join-Path $root "RinLauncher.exe"))) { throw "install did not produce exe" }
+          if (-not (Test-Path (Join-Path $root "data/user-marker.txt"))) { throw "install wiped user data" }
+          if (-not (Test-Path (Join-Path $root "appmodset.conf"))) { throw "appmodset.conf missing after install" }
+          Write-Host "Upgrade dry-run OK"
 
       - name: Package (zip)
         run: Compress-Archive -Path dist/RinLauncher/* -DestinationPath RinLauncher.zip

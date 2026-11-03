@@ -13,9 +13,14 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_single_source():
     import rin_launcher.config_manager as cm
 
-    assert __version__ == "1.1.10"
+    # 版本号只在包里有唯一来源；这里只校验格式与两处一致，改版本不用改测试。
+    parts = __version__.split(".")
+    assert len(parts) == 3 and all(part.isdigit() for part in parts)
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__
+    # 每个版本都要在更新日志里留条目，免得发版时忘了写。
+    changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
+    assert f"## {__version__}-pre" in changelog
 
 
 def test_pyproject_reads_version_dynamically():
@@ -35,14 +40,14 @@ def test_default_config_has_no_quick_action_library():
     assert "actions" not in config
     assert "categories" not in config
 
-    slots = config["launcher"]["slots"]
-    # 面板 5 个内置功能 + 存储区（U 盘 + 磁盘）。
-    assert len(slots) == 7
-    assert all(slot["kind"] == "tool" for slot in slots[:5])
-    assert [slot["kind"] for slot in slots[5:]] == ["usb", "path"]
+    # 首次运行只生成一份空启动台，内容交给 OOBE / 用户自己添加。
+    assert config["launcher"]["slots"] == []
     assert config["settings"]["startupMode"] == "off"
     assert config["settings"]["updateChannel"] == "stable"
     assert config["settings"]["autoCheckUpdates"] is True
+    assert config["settings"]["compactMode"] == "normal"
+    assert config["settings"]["windowCorner"] == "bottom-right"
+    assert config["settings"]["compactTransparency"] == 82
     assert "compactAcrylic" not in config["settings"]
 
 

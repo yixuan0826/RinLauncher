@@ -57,7 +57,7 @@
 数据保存在同级 `data/`（`config.yaml`、`logs/`、`icons/`、`backups/`）；
 目录不可写时自动回退到 `%APPDATA%\RinLauncher`。
 
-**源码运行**（需要 Python 3.12 或更高）：
+**源码运行**（需要 Python 3.14 或更高）：
 
 ```bash
 git clone https://github.com/yixuan0826/RinLauncher.git
@@ -164,6 +164,10 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.1.11**（Hoshimi Miyabi）：迷你模式 / 悬浮球 / OOBE；`appmodset.conf` 取代
+  `channel.txt`；窗口位置与三套形态独立透明度；开始菜单异步扫描与缩略图；
+  U 盘设备名与多分区合并；系统通知快速注册；Python 3.14。
+  详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.1.10**（Hoshimi Miyabi）：恢复模式独立成进程（新增小窗「更多」、托盘菜单与
   `--recovery` 三个入口）；发布流水线加 ruff / pytest / qmllint 门禁；打包剔除
   未用到的 Qt 样式与非中文翻译；`config_manager.py` 拆出磁盘 / 备份 / 图标三个模块；

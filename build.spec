@@ -20,6 +20,7 @@
 """
 
 import os
+import shutil
 from pathlib import Path
 
 ROOT = Path(SPECPATH)
@@ -147,6 +148,8 @@ a = Analysis(
         # 小窗系统控制：音量（pycaw）与 WinRT 投影。这些导入都在函数里延迟加载，
         # 静态分析可能漏掉子模块，这里逐个点名。
         "pycaw", "pycaw.pycaw", "comtypes", "comtypes.client",
+        # 系统通知注册：win32comext 的 propsys 是扩展模块，动态导入。
+        "win32com.propsys", "win32com.propsys.propsys", "win32com.propsys.pscon",
         "winrt", "winrt.runtime",
         "winrt.windows.devices.radios",
         "winrt.windows.foundation",
@@ -156,6 +159,7 @@ a = Analysis(
         # Windows 原生通知（rin_launcher/toast.py）。
         "winrt.windows.data.xml.dom",
         "winrt.windows.ui.notifications",
+        "winrt.windows.storage.streams",
         # 启动台搜索的拼音匹配（rin_launcher/search.py，缺失时自动退化）。
         "pypinyin",
         # 冻结包里按名字动态查找的编码器不会被静态收集；1.1.6~1.1.8 的
@@ -222,3 +226,11 @@ else:
         entitlements_file=None,
         icon=str(ICON) if ICON.exists() else None,
     )
+
+# 启动配置必须跟 exe 同级（on‌edir 是 dist/RinLauncher/，onefile 是 dist/）。
+# 放在 datas 里会被塞进 _internal，运行时找不到。
+_CONF_SOURCE = ROOT / "appmodset.conf"
+if _CONF_SOURCE.is_file():
+    _CONF_TARGET = Path(DISTPATH) / ("RinLauncher" if ONEDIR else "") / "appmodset.conf"
+    shutil.copy2(_CONF_SOURCE, _CONF_TARGET)
+    print(f"[spec] appmodset.conf -> {_CONF_TARGET}")

@@ -26,6 +26,7 @@ AppDialog {
     property string kind: "action"
     property string toolKey: ""
     property string path: ""
+    property string pathType: "disk"
     property string label: ""
     property string iconKey: ""
 
@@ -270,43 +271,24 @@ AppDialog {
             }
         }
 
-        // ── 文件 / 文件夹 / 磁盘 ──
+        // ── 固定位置：磁盘 / 文件位置 ──
         FormRow {
             visible: editor.kind === "path"
-            label: qsTr("路径")
-            description: qsTr("点开就打开这个位置")
-            TextField {
-                Layout.fillWidth: true
-                placeholderText: qsTr("例如 D:\\ 或 C:\\Tools")
-                text: editor.path
-                onTextChanged: editor.path = text
-            }
-            ToolButton {
-                icon.name: "ic_fluent_folder_open_20_regular"
-                ToolTip.text: qsTr("选一个文件夹")
-                onClicked: {
-                    var picked = ConfigManager.pickFolder()
-                    if (picked.length > 0) {
-                        editor.path = picked
-                    }
-                }
-            }
-            ToolButton {
-                icon.name: "ic_fluent_document_20_regular"
-                ToolTip.text: qsTr("选一个文件")
-                onClicked: {
-                    var picked = ConfigManager.pickFile()
-                    if (picked.length > 0) {
-                        editor.path = picked
-                    }
+            label: qsTr("位置类型")
+            ComboBox {
+                Layout.preferredWidth: 180
+                model: [qsTr("磁盘"), qsTr("文件位置")]
+                currentIndex: editor.pathType === "file" ? 1 : 0
+                onActivated: function (index) {
+                    editor.pathType = index === 1 ? "file" : "disk"
                 }
             }
         }
 
         FormRow {
-            visible: editor.kind === "path" && editor.drives.length > 0
+            visible: editor.kind === "path" && editor.pathType === "disk"
             label: qsTr("磁盘")
-            description: qsTr("一键把路径填成某个盘")
+            description: qsTr("把卡片固定到某块盘；小窗显示卷标")
             ComboBox {
                 Layout.fillWidth: true
                 Layout.maximumWidth: 320
@@ -315,17 +297,39 @@ AppDialog {
                     editor.path = editor.drives[index].path
                 }
             }
+            ToolButton {
+                icon.name: "ic_fluent_folder_open_20_regular"
+                ToolTip.text: qsTr("选一个文件夹")
+                onClicked: {
+                    var picked = ConfigManager.pickFolder()
+                    if (picked.length > 0) {
+                        editor.path = picked
+                        editor.pathType = "disk"
+                    }
+                }
+            }
         }
 
         FormRow {
-            visible: editor.kind === "usb"
-            label: qsTr("可移动磁盘")
-            Text {
+            visible: editor.kind === "path" && editor.pathType === "file"
+            label: qsTr("文件位置")
+            description: qsTr("点开时打开所在目录并选中文件")
+            TextField {
                 Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                typography: Typography.Caption
-                color: Theme.currentTheme.colors.textSecondaryColor
-                text: qsTr("插上后自动识别第一个可移动磁盘。")
+                placeholderText: qsTr("例如 C:\\Tools\\notes.txt")
+                text: editor.path
+                onTextChanged: editor.path = text
+            }
+            ToolButton {
+                icon.name: "ic_fluent_document_20_regular"
+                ToolTip.text: qsTr("选一个文件")
+                onClicked: {
+                    var picked = ConfigManager.pickFile()
+                    if (picked.length > 0) {
+                        editor.path = picked
+                        editor.pathType = "file"
+                    }
+                }
             }
         }
 
@@ -417,10 +421,8 @@ AppDialog {
          "hint": qsTr("程序、命令、网址或按键")},
         {"kind": "tool", "title": qsTr("内置功能"), "icon": "ic_fluent_wrench_20_regular",
          "hint": qsTr("设置、重载、隐藏等内置功能")},
-        {"kind": "path", "title": qsTr("打开路径"), "icon": "ic_fluent_folder_open_20_regular",
-         "hint": qsTr("文件、文件夹或磁盘")},
-        {"kind": "usb", "title": qsTr("可移动磁盘"), "icon": "ic_fluent_usb_plug_20_regular",
-         "hint": qsTr("自动识别移动磁盘")}
+        {"kind": "path", "title": qsTr("固定位置"), "icon": "ic_fluent_pin_20_regular",
+         "hint": qsTr("磁盘或文件位置；U 盘由迷你模式自动提供")}
     ]
 
     readonly property string kindTitle: {
@@ -458,9 +460,6 @@ AppDialog {
             var ti = toolKeys.indexOf(toolKey)
             return ti >= 0 ? toolNames[ti] : qsTr("未选择功能")
         }
-        if (kind === "usb") {
-            return qsTr("可移动磁盘")
-        }
         return path.length > 0 ? path : qsTr("未设置路径")
     }
 
@@ -490,10 +489,9 @@ AppDialog {
         if (kind === "tool") {
             return qsTr("%1 · 小窗自带").arg(kindTitle)
         }
-        if (kind === "usb") {
-            return qsTr("%1 · 插上后自动识别").arg(kindTitle)
-        }
-        return qsTr("%1 · %2").arg(kindTitle).arg(path.length > 0 ? path : qsTr("未设置路径"))
+        var typeLabel = editor.pathType === "file" ? qsTr("文件位置") : qsTr("磁盘")
+        return qsTr("%1 · %2 · %3").arg(kindTitle).arg(typeLabel)
+            .arg(path.length > 0 ? path : qsTr("未设置路径"))
     }
 
     readonly property string previewIcon: {
@@ -503,10 +501,8 @@ AppDialog {
         if (kind === "tool") {
             return "ic_fluent_wrench_20_regular"
         }
-        if (kind === "usb") {
-            return "ic_fluent_usb_plug_20_regular"
-        }
-        return "ic_fluent_folder_open_20_regular"
+        return editor.pathType === "file"
+            ? "ic_fluent_document_20_regular" : "ic_fluent_folder_open_20_regular"
     }
 
     // ------------------------------------------------------------------
@@ -522,6 +518,7 @@ AppDialog {
         kind = slot.kind || "action"
         toolKey = slot.key || ""
         path = slot.path || ""
+        pathType = slot.pathType || (path.toLowerCase().match(/\.\w+$/) ? "file" : "disk")
         label = slot.label || ""
         iconKey = slot.icon || ""
 
@@ -568,6 +565,7 @@ AppDialog {
             "icon": iconKey,
             "key": kind === "tool" ? toolKey : "",
             "path": kind === "path" ? path.trim() : "",
+            "pathType": kind === "path" ? pathType : "",
             "action": kind === "action" ? inlineAction.read() : null
         }
 

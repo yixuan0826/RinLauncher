@@ -10,6 +10,7 @@ IconGrid 1.0 IconGrid.qml
 KeyboardStepsEditor 1.0 KeyboardStepsEditor.qml
 MiniIconButton 1.0 MiniIconButton.qml
 RecoveryGroup 1.0 RecoveryGroup.qml
+RinToast 1.0 RinToast.qml
 SettingsGroup 1.0 SettingsGroup.qml
 SlotListEditor 1.0 SlotListEditor.qml
 SlotSearchResults 1.0 SlotSearchResults.qml

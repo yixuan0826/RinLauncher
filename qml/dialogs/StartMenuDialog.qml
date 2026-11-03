@@ -35,8 +35,17 @@ AppDialog {
     onAboutToShow: reload()
 
     function reload() {
-        apps = ConfigManager.listStartMenuApps()
         selected = ({})
+        apps = ConfigManager.startMenuApps
+        ConfigManager.refreshStartMenuApps()
+    }
+
+    Connections {
+        target: ConfigManager
+
+        function onStartMenuAppsChanged() {
+            dialog.apps = ConfigManager.startMenuApps
+        }
     }
 
     function keyOf(app) {
@@ -146,6 +155,7 @@ AppDialog {
 
             ListView {
                 id: appList
+                objectName: "startMenuAppList"
                 anchors.fill: parent
                 anchors.margins: 6
                 clip: true
@@ -156,11 +166,12 @@ AppDialog {
                 delegate: Rectangle {
                     id: row
 
-                    readonly property var app: modelData
+                    required property var modelData
+                    readonly property var app: modelData || ({})
                     readonly property bool checked: dialog.isSelected(app)
 
                     width: appList.width
-                    height: 56
+                    height: 64
                     radius: Theme.currentTheme.appearance.windowRadius
                     color: checked
                         ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
@@ -188,12 +199,15 @@ AppDialog {
                             onClicked: dialog.toggle(row.app)
                         }
 
+                        // 预览缩略图：扫描阶段已经为所有类别缓存 96/256px PNG，
+                        // 没有再退回类型图标。
                         AppIcon {
-                            Layout.preferredWidth: 24
-                            Layout.preferredHeight: 24
-                            iconKey: row.app.icon.length > 0
-                                ? row.app.icon : dialog.kindIcon(row.app.kind)
-                            iconSize: 24
+                            Layout.preferredWidth: 40
+                            Layout.preferredHeight: 40
+                            iconKey: (row.app.thumb || row.app.icon || "").length > 0
+                                ? (row.app.thumb || row.app.icon)
+                                : dialog.kindIcon(row.app.kind)
+                            iconSize: 36
                             tint: Theme.currentTheme.colors.textColor
                         }
 
@@ -245,9 +259,15 @@ AppDialog {
                 }
             }
 
+            BusyIndicator {
+                anchors.centerIn: parent
+                visible: ConfigManager.startMenuLoading && appList.count === 0
+                running: visible
+            }
+
             Text {
                 anchors.centerIn: parent
-                visible: appList.count === 0
+                visible: appList.count === 0 && !ConfigManager.startMenuLoading
                 width: parent.width - 32
                 horizontalAlignment: Text.AlignHCenter
                 wrapMode: Text.Wrap

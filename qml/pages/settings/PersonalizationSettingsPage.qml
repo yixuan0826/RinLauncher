@@ -125,6 +125,131 @@ Item {
                     }
                 }
             }
+
+            SettingsGroup {
+                title: qsTr("窗口形态与位置")
+                iconKey: "ic_fluent_window_20_regular"
+
+                FormRow {
+                    label: qsTr("启动台形态")
+                    description: qsTr("也可以从小窗「更多」菜单里随时切换")
+                    ComboBox {
+                        id: modeCombo
+                        Layout.preferredWidth: 180
+                        model: [qsTr("完整启动台"), qsTr("迷你模式"), qsTr("悬浮球")]
+                        onActivated: function (index) {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("compactMode",
+                                ["normal", "mini", "floating"][index])
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("贴角位置")
+                    description: qsTr("悬浮球始终固定在右下角")
+                    ComboBox {
+                        id: cornerCombo
+                        Layout.preferredWidth: 180
+                        model: [qsTr("右下"), qsTr("左下")]
+                        onActivated: function (index) {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("windowCorner",
+                                index === 1 ? "bottom-left" : "bottom-right")
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("X 轴偏移")
+                    description: qsTr("像素；正数向右")
+                    SpinBox {
+                        id: offsetXBox
+                        Layout.preferredWidth: 160
+                        from: -2000
+                        to: 2000
+                        stepSize: 1
+                        onValueModified: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("windowOffsetX", value)
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("Y 轴偏移")
+                    description: qsTr("像素；正数向下")
+                    SpinBox {
+                        id: offsetYBox
+                        Layout.preferredWidth: 160
+                        from: -2000
+                        to: 2000
+                        stepSize: 1
+                        onValueModified: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("windowOffsetY", value)
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup {
+                title: qsTr("云母与透明度")
+                iconKey: "ic_fluent_paint_brush_20_regular"
+
+                FormRow {
+                    label: qsTr("材质")
+                    description: qsTr("启动台固定亚克力（Acrylic），设置 / 引导 / 编辑 / 恢复窗口固定云母（Mica）")
+                }
+
+                FormRow {
+                    label: qsTr("完整启动台透明度")
+                    description: qsTr("%1%（越大越透）").arg(Math.round(compactSlider.value))
+                    Slider {
+                        id: compactSlider
+                        Layout.preferredWidth: 240
+                        from: 0
+                        to: 90
+                        stepSize: 1
+                        onMoved: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("compactTransparency", Math.round(value))
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("迷你启动台透明度")
+                    description: qsTr("%1%（越大越透）").arg(Math.round(miniSlider.value))
+                    Slider {
+                        id: miniSlider
+                        Layout.preferredWidth: 240
+                        from: 0
+                        to: 90
+                        stepSize: 1
+                        onMoved: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("miniTransparency", Math.round(value))
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("悬浮球透明度")
+                    description: qsTr("%1%（越大越透）").arg(Math.round(floatingSlider.value))
+                    Slider {
+                        id: floatingSlider
+                        Layout.preferredWidth: 240
+                        from: 0
+                        to: 90
+                        stepSize: 1
+                        onMoved: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("floatingTransparency", Math.round(value))
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -160,6 +285,17 @@ Item {
         tileSizeCombo.currentIndex = Math.max(0,
             ["small", "medium", "large"].indexOf(model.tileSize || "medium"))
         animationSwitch.checked = model.animationEnabled !== false
+        modeCombo.currentIndex = Math.max(0,
+            ["normal", "mini", "floating"].indexOf(model.compactMode || "normal"))
+        cornerCombo.currentIndex = model.windowCorner === "bottom-left" ? 1 : 0
+        offsetXBox.value = Number(model.windowOffsetX || 0)
+        offsetYBox.value = Number(model.windowOffsetY || 0)
+        compactSlider.value = model.compactTransparency !== undefined
+            ? Number(model.compactTransparency) : 82
+        miniSlider.value = model.miniTransparency !== undefined
+            ? Number(model.miniTransparency) : 30
+        floatingSlider.value = model.floatingTransparency !== undefined
+            ? Number(model.floatingTransparency) : 8
         Qt.callLater(function () { pageRoot.accentReady = true })
     }
 }

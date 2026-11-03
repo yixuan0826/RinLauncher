@@ -99,3 +99,134 @@ def apply_win11_round_corners(window: Any) -> None:
         )
     except Exception:
         logger.debug("Failed to apply Win11 round corners", exc_info=True)
+
+
+# ──────────────────────────────────────────────────────────────────────
+# 系统材质（DWM）
+#
+# 刻意不走 RinUI 的 ThemeManager.apply_backdrop_effect()：那边的窗口句柄列表
+# 是**类级共享**的（ThemeManager.windows），调一次等于给所有窗口上同一种材质，
+# 做不出「启动台亚克力、其它窗口云母」。这里直接对单个 hwnd 下 DWM 属性。
+# ──────────────────────────────────────────────────────────────────────
+
+_DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+_DWMWA_WINDOW_CORNER_PREFERENCE = 33
+_DWMWA_BORDER_COLOR = 34
+_DWMWA_CAPTION_COLOR = 35
+_DWMWA_SYSTEMBACKDROP_TYPE = 38
+_DWMWA_MICA_EFFECT = 1029  # Win11 21H2 旧接口
+_DWMWA_COLOR_NONE = 0xFFFFFFFE
+_DWMWCP_ROUND = 2
+# DWMWA_SYSTEMBACKDROP_TYPE 的取值：2 = Mica，3 = Acrylic，4 = Mica Alt。
+_DWMSBT = {"auto": 0, "none": 1, "mica": 2, "acrylic": 3, "tabbed": 4}
+_WCA_ACCENT_POLICY = 19
+_ACCENT_ENABLE_ACRYLICBLURBEHIND = 4
+_WIN11_BUILD = 22000
+_WIN11_22H2_BUILD = 22621
+
+
+class _AccentPolicy(ctypes.Structure):
+    _fields_ = [
+        ("AccentState", ctypes.c_int),
+        ("AccentFlags", ctypes.c_int),
+        ("GradientColor", ctypes.c_uint),
+        ("AnimationId", ctypes.c_int),
+    ]
+
+
+class _WindowCompositionAttributeData(ctypes.Structure):
+    _fields_ = [
+        ("Attrib", ctypes.c_int),
+        ("pvData", ctypes.c_void_p),
+        ("cbData", ctypes.c_size_t),
+    ]
+
+
+def _windows_build() -> int:
+    try:
+        return int(sys.getwindowsversion().build)
+    except Exception:  # 非 Windows / 老 Python
+        return 0
+
+
+def apply_backdrop(
+        window: Any, effect: str = "mica", dark: bool = True,
+        legacy_acrylic: bool = False) -> bool:
+    """给**这一个窗口**套上系统材质，返回是否真的调到了 DWM。
+
+    ``effect`` 取 auto / none / mica / acrylic / tabbed：
+
+    * Win11 22H2+ 走 ``DWMWA_SYSTEMBACKDROP_TYPE``（2=Mica，3=Acrylic）；
+    * Win11 21H2 只有旧接口 ``DWMWA_MICA_EFFECT``，非云母一律按云母处理；
+    * Win10 走 ``SetWindowCompositionAttribute`` 的 Acrylic 模糊。
+
+    ``legacy_acrylic=True`` 时即使 Win11 也走 AccentPolicy：系统版的
+    Acrylic 只在**激活窗口**上绘制，置底、不抢焦点的桌面挂件用它永远是
+    一块实色；旧接口的模糊不挑激活状态，桌面挂件用这个才透得出来。
+
+    顺带把标题栏 / 边框颜色设成 ``DWMWA_COLOR_NONE``：Win11 会给无边框窗口
+    补一条 1px 浅色边 —— 那就是用户看到的「一圈讨厌的边框」。
+    """
+    if sys.platform != "win32":
+        return False
+    hwnd = _hwnd(window)
+    if not hwnd:
+        return False
+    try:
+        dwm = ctypes.windll.dwmapi
+        dark_mode = ctypes.c_int(1 if dark else 0)
+        dwm.DwmSetWindowAttribute(
+            hwnd, _DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(dark_mode), ctypes.sizeof(dark_mode))
+
+        none_color = ctypes.c_int(_DWMWA_COLOR_NONE)
+        for attribute in (_DWMWA_BORDER_COLOR, _DWMWA_CAPTION_COLOR):
+            dwm.DwmSetWindowAttribute(
+                hwnd, attribute,
+                ctypes.byref(none_color), ctypes.sizeof(none_color))
+
+        corner = ctypes.c_int(_DWMWCP_ROUND)
+        dwm.DwmSetWindowAttribute(
+            hwnd, _DWMWA_WINDOW_CORNER_PREFERENCE,
+            ctypes.byref(corner), ctypes.sizeof(corner))
+
+        build = _windows_build()
+        if legacy_acrylic and effect == "acrylic":
+            return _apply_win10_acrylic(hwnd, effect, dark)
+        if build >= _WIN11_22H2_BUILD:
+            value = ctypes.c_int(_DWMSBT.get(effect, _DWMSBT["mica"]))
+            dwm.DwmSetWindowAttribute(
+                hwnd, _DWMWA_SYSTEMBACKDROP_TYPE,
+                ctypes.byref(value), ctypes.sizeof(value))
+            return True
+        if build >= _WIN11_BUILD:
+            enable = ctypes.c_int(1 if effect in ("auto", "mica") else 0)
+            dwm.DwmSetWindowAttribute(
+                hwnd, _DWMWA_MICA_EFFECT,
+                ctypes.byref(enable), ctypes.sizeof(enable))
+            return True
+        return _apply_win10_acrylic(hwnd, effect, dark)
+    except Exception:
+        logger.exception("Failed to apply backdrop %r", effect)
+        return False
+
+
+def _apply_win10_acrylic(hwnd: int, effect: str, dark: bool) -> bool:
+    """Win10 没有 DWM 材质属性，退回 SetWindowCompositionAttribute 模糊。"""
+    try:
+        gradient = 0x991F1F1F if dark else 0x99F3F3F3
+        accent = _AccentPolicy()
+        accent.AccentState = (
+            _ACCENT_ENABLE_ACRYLICBLURBEHIND
+            if effect in ("acrylic", "auto") else 0)
+        accent.AccentFlags = 2
+        accent.GradientColor = gradient
+        data = _WindowCompositionAttributeData()
+        data.Attrib = _WCA_ACCENT_POLICY
+        data.pvData = ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p)
+        data.cbData = ctypes.sizeof(accent)
+        ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
+        return True
+    except Exception:
+        logger.debug("Failed to apply Win10 acrylic", exc_info=True)
+        return False

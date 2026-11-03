@@ -70,6 +70,15 @@ Item {
             iconKey: tile.slot ? tile.slot.icon : ""
             iconSize: tile.iconSize
             placeholder: "ic_fluent_add_20_regular"
+            // 悬停时图标轻微放大：格子平时是透明底，光靠背景变色在云母上不够明显。
+            scale: pointer.hovered && !tile.empty ? 1.08 : 1
+
+            Behavior on scale {
+                NumberAnimation {
+                    duration: Utils.animationSpeedFaster
+                    easing.type: Easing.OutCubic
+                }
+            }
             tint: tile.empty || tile.disabled
                 ? Theme.currentTheme.colors.textSecondaryColor
                 : Theme.currentTheme.colors.textColor

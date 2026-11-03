@@ -25,6 +25,7 @@ COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
 EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
 SETTINGS_ENTRY = PROJECT_ROOT / "qml" / "SettingsWindow.qml"
 RECOVERY_ENTRY = PROJECT_ROOT / "qml" / "RecoveryWindow.qml"
+OOBE_ENTRY = PROJECT_ROOT / "qml" / "OobeWindow.qml"
 ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
 
 # RinUI 启动时会 print 一个带 emoji 的横幅。老终端（cmd.exe 的 GBK 代码页）编码
@@ -49,6 +50,7 @@ from PySide6.QtWidgets import QApplication
 import RinUI  # noqa: F401
 from rin_launcher import __version__, effects, logging_setup
 from rin_launcher.action_executor import ActionExecutor
+from rin_launcher.ball_watcher import BallWatcher
 from rin_launcher.config_manager import ConfigManager
 from rin_launcher.hotkey import GlobalHotkey
 from rin_launcher.key_recorder import KeyRecorder
@@ -107,8 +109,8 @@ def _install_qml_logging() -> None:
 
 def _setup_logging(config_manager: ConfigManager) -> None:
     level_name = str(config_manager.config["settings"].get("logLevel", "INFO")).upper()
-    # 诊断模式：临时把级别拉到 DEBUG，控制台输出也跟着打开。
-    if "--diagnostic" in sys.argv[1:]:
+    # 诊断模式 / appmodset 的 debug：临时把级别拉到 DEBUG。
+    if "--diagnostic" in sys.argv[1:] or config_manager.app_mode.debug:
         level_name = "DEBUG"
     log_file = logging_setup.setup(
         config_manager.config_dir, level_name, console=sys.stdout is not None)
@@ -128,6 +130,7 @@ class Launcher:
         self.editor: RinUIWindow | None = None
         self.settings: RinUIWindow | None = None
         self.recovery: RinUIWindow | None = None
+        self.oobe: RinUIWindow | None = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
         # 系统控制（音量 / Wi-Fi / 移动热点），小窗底部那排卡片用。
@@ -136,6 +139,8 @@ class Launcher:
         self.update_manager = UpdateManager(self.config_manager)
         # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
         self.key_recorder = KeyRecorder()
+        # 悬浮球展开时临时监听 Esc / 点外部。Launcher 不是 QObject，不挂父子关系。
+        self.ball_watcher = BallWatcher()
         # 单实例消息服务端（见 start_single_instance_server）。
         self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
@@ -181,6 +186,8 @@ class Launcher:
         settings = self.config_manager.config["settings"]
         self.config_manager.hotkeyChanged.connect(self.apply_hotkey)
         self.config_manager.trayEnabledChanged.connect(self.apply_tray)
+        # 材质模式 / 透明度变化后，重新给所有窗口套一次背景。
+        self.config_manager.settingsChanged.connect(self.apply_backdrop)
         # QML 里的页面够不到窗口对象，页面级请求统一从后端转上来。
         self.config_manager.pageRequested.connect(self.show_page)
         # 托盘气泡是「通知」的一个渠道，由 ConfigManager 按类别分发；
@@ -208,7 +215,7 @@ class Launcher:
 
     @property
     def safe_mode(self) -> bool:
-        return self.launch_mode == "safe"
+        return self.launch_mode == "safe" or self.config_manager.app_mode.safe_mode
 
     @property
     def diagnostic_mode(self) -> bool:
@@ -247,6 +254,7 @@ class Launcher:
         context.setContextProperty("KeyRecorder", self.key_recorder)
         context.setContextProperty("SystemControls", self.system_controls)
         context.setContextProperty("UpdateManager", self.update_manager)
+        context.setContextProperty("FloatingBall", self.ball_watcher)
         window.load(entry)
 
         if window.root_window is None:
@@ -269,6 +277,10 @@ class Launcher:
         root.openMainRequested.connect(self.show_page)
         root.hideRequested.connect(self.hide_compact)
         root.quitRequested.connect(self.quit)
+        # 悬浮球展开时，Esc / 点击窗口外都通过全局监听收起。
+        self.ball_watcher.attach(root)
+        self.ball_watcher.collapseRequested.connect(
+            lambda: root.setProperty("ballExpanded", False))
 
         # 小窗不是 RinUI 的 FluentWindow，需要手动把 hwnd 注册给 ThemeManager，
         # 之后才能用和完整窗口同一套云母 / 增强云母。
@@ -338,7 +350,33 @@ class Launcher:
             return False
         return True
 
-    def create_recovery_window(self) -> bool:
+    def create_oobe_window(self) -> bool:
+        window = self._create_window(OOBE_ENTRY)
+        if window is None:
+            return False
+        self.oobe = window
+        if window.root_window is not None:
+            window.root_window.closeRequested.connect(
+                lambda: self._close_window(window))
+        self.apply_backdrop(window)
+        return True
+
+    def ensure_oobe_window(self) -> bool:
+        if self.oobe is not None:
+            return True
+        return self.create_oobe_window()
+
+    def show_oobe(self) -> bool:
+        if not self.ensure_oobe_window():
+            return False
+        root = self.oobe.root_window
+        if root is None:
+            return False
+        root.show()
+        root.raise_()
+        root.requestActivate()
+        self._settle_backdrop(self.oobe)
+        return True
         window = self._create_window(RECOVERY_ENTRY)
         if window is None:
             return False
@@ -366,6 +404,7 @@ class Launcher:
         root.show()
         root.raise_()
         root.requestActivate()
+        self._settle_backdrop(self.recovery)
         return True
 
     def start_single_instance_server(self) -> None:
@@ -380,29 +419,53 @@ class Launcher:
         if not self.hotkey.register(sequence):
             logger.info("No global hotkey registered (configured value: %r)", sequence)
 
-    def apply_backdrop(self, target: RinUIWindow | None = None) -> None:
-        """给窗口上云母背景（默认三个窗口全部）。
+    def _window_backdrop(self, window: RinUIWindow | None) -> str:
+        """每个窗口用哪种材质，看窗口角色，不看设置。
 
-        新建窗口时只给它自己上材质；对已有窗口重复调用只是白跑一次
-        DwmSetWindowAttribute，代价很低。Win10 没有云母，直接退回不透明，
-        而不是把文字铺在桌面上。
+        * 启动台 → Acrylic：它是置底、不激活的桌面挂件，云母在非激活窗口上
+          会被合成成一块实色，只有亚克力能把壁纸真正透出来。
+        * 其它窗口（设置 / OOBE / 编辑 / 恢复）→ 经典云母。
         """
+        if window is self.compact:
+            return BackdropEffect.Acrylic.value
+        if not is_win11():
+            return BackdropEffect.None_.value
+        return BACKDROP_EFFECT.value
+
+    def apply_backdrop(self, target: RinUIWindow | None = None) -> None:
+        """给窗口套系统材质（默认全部窗口）。"""
         if not is_windows():
             return
-        effect = BACKDROP_EFFECT if is_win11() else BackdropEffect.None_
         targets = (target,) if target is not None else (
-            self.compact, self.editor, self.settings, self.recovery)
+            self.compact, self.editor, self.settings, self.recovery, self.oobe)
         for window in targets:
             if window is None or window.root_window is None:
                 continue
+            effect = self._window_backdrop(window)
             try:
-                status = window.theme_manager.apply_backdrop_effect(effect.value)
-                if window is self.compact:
-                    window.root_window.setProperty(
-                        "backdropActive",
-                        status == 0 and effect != BackdropEffect.None_)
+                dark = bool(window.theme_manager.is_dark_theme())
             except Exception:
-                logger.exception("Failed to apply backdrop effect")
+                dark = False
+            # 启动台走旧接口的 Acrylic 模糊：系统版 Acrylic 只给激活窗口绘制，
+            # 置底挂件用它会被合成成一块实色灰。
+            ok = effects.apply_backdrop(
+                window.root_window, effect, dark,
+                legacy_acrylic=window is self.compact)
+            if window is self.compact:
+                window.root_window.setProperty(
+                    "backdropActive",
+                    ok and effect != BackdropEffect.None_.value)
+
+    def _settle_backdrop(self, window: RinUIWindow | None) -> None:
+        """窗口可见之后再补一次材质。
+
+        DWM 的 SystemBackdrop 属性在窗口首次合成之前设置会被丢掉 —— 表现就是
+        桌面小窗永远是一块灰色实底。show() 之后同步补一次、稍后再补一次最稳。
+        """
+        if window is None or window.root_window is None:
+            return
+        self.apply_backdrop(window)
+        QTimer.singleShot(120, lambda: self.apply_backdrop(window))
 
     def apply_tray(self, enabled: bool) -> None:
         if enabled:
@@ -434,6 +497,8 @@ class Launcher:
         # 警告）。置底窗口不能 raise_()（那会把它翻到别的窗口上面），显示完再向
         # 系统兜一次底，防止刚显示时被抬到前台。
         effects.apply_bottom_layer(root)
+        # 置底之后再补亚克力：材质属性在窗口可见前设会被 DWM 丢掉。
+        self._settle_backdrop(self.compact)
 
     def hide_compact(self) -> None:
         if self.compact is not None and self.compact.root_window is not None:
@@ -455,6 +520,7 @@ class Launcher:
         root.show()
         root.raise_()
         root.requestActivate()
+        self._settle_backdrop(self.editor)
 
     def show_settings(self, section: str = "") -> None:
         if not self.ensure_settings_window():
@@ -465,6 +531,7 @@ class Launcher:
         root.show()
         root.raise_()
         root.requestActivate()
+        self._settle_backdrop(self.settings)
         if section:
             # 新窗口的 QML 连接可能还没建好，稍等一拍再滚到目标分组。
             QTimer.singleShot(
@@ -480,6 +547,8 @@ class Launcher:
             self.enter_recovery_mode()
         elif page == "about":
             self.show_settings("about")
+        elif page == "oobe":
+            self.show_oobe()
         else:
             self.show_settings()
 
@@ -504,7 +573,7 @@ class Launcher:
             window.root_window.hide()
         if (not self.tray.started and not self._visible(self.compact)
                 and not self._visible(self.editor) and not self._visible(self.settings)
-                and not self._visible(self.recovery)):
+                and not self._visible(self.recovery) and not self._visible(self.oobe)):
             self.quit()
 
     def _auto_check_updates(self) -> None:
@@ -523,6 +592,7 @@ class Launcher:
 
     def quit(self) -> None:
         self.hotkey.unregister()
+        self.ball_watcher.setActive(False)
         self.tray.stop()
         self.system_controls.stop()
         self.update_manager.stop()
@@ -535,8 +605,15 @@ class Launcher:
             if not self.show_recovery():
                 logger.error("恢复模式窗口加载失败，退出进程")
                 return 1
-        elif not self.config_manager.config["settings"].get("startMinimized", False):
+        elif self.config_manager.isFirstRun():
+            # 首次运行只开 OOBE；小窗已经建好但先藏着，完成引导后再亮出来。
+            logger.info("首次运行：展示 OOBE")
+            self.show_oobe()
+        elif not (self.config_manager.config["settings"].get("startMinimized", False)
+                  or self.config_manager.app_mode.start_minimized):
             self.show_compact()
+        if not self.recovery_only and not self.config_manager.isFirstRun():
+            self.config_manager.applyShellPreferences()
         # 这些都不是「小窗可见」的必要条件，推迟到首帧之后：
         #   * watchdog 的导入与文件监听（几十毫秒）；
         #   * schtasks 子进程查任务计划状态；
@@ -572,6 +649,11 @@ def main() -> int:
     # 单实例：已经有实例在跑就把「亮出小窗」交给它，本进程直接退出。
     # 恢复类模式是救命通道，不抢锁也不被旧实例拦截。
     recovery_mode = any(arg in RECOVERY_FLAGS for arg in sys.argv[1:])
+    # appmodset.conf 的 failsafe / recovery 也属于恢复类启动，同样不抢单实例锁。
+    from rin_launcher import app_mode as _app_mode
+
+    conf_mode = _app_mode.effective_mode(_app_mode.load()[0])
+    recovery_mode = recovery_mode or conf_mode.recovery_only
     if not recovery_mode:
         guard = acquire_single_instance()
         if guard is None:

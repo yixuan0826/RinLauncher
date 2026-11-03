@@ -94,6 +94,7 @@ RowLayout {
         hoverable: true
         padding: 0
         radius: Theme.currentTheme.appearance.windowRadius
+        border.width: 0
 
         ColumnLayout {
             anchors.fill: parent
@@ -186,6 +187,7 @@ RowLayout {
         hoverable: true
         padding: 0
         radius: Theme.currentTheme.appearance.windowRadius
+        border.width: 0
         color: root.background(root.wifiEnabledValue, wifiMouse.containsMouse)
 
         ColumnLayout {
@@ -259,6 +261,7 @@ RowLayout {
         hoverable: true
         padding: 0
         radius: Theme.currentTheme.appearance.windowRadius
+        border.width: 0
         color: root.background(root.hotspotEnabledValue, hotspotMouse.containsMouse)
 
         ColumnLayout {

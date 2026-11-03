@@ -10,6 +10,7 @@ Item {
     id: pageRoot
 
     property var page
+    property var appModeInfo: ({})
 
     readonly property var startupModes: ["off", "normal", "admin"]
     property int startupPendingAttempts: 0
@@ -96,6 +97,63 @@ Item {
                     typography: Typography.Caption
                     color: Theme.currentTheme.colors.textSecondaryColor
                     text: qsTr("热键需含修饰键；留空即关闭。")
+                }
+            }
+
+            SettingsGroup {
+                title: qsTr("首次使用与启动配置")
+                iconKey: "ic_fluent_rocket_20_regular"
+
+                FormRow {
+                    label: qsTr("首次引导")
+                    description: qsTr("重新看一遍基本设置和使用说明")
+                    Button {
+                        text: qsTr("重新打开")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        onClicked: ConfigManager.openOobe()
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("隐藏快捷方式小箭头")
+                    description: qsTr("修改当前用户注册表；需要重启资源管理器")
+                    Switch {
+                        id: arrowSwitch
+                        checkedText: qsTr("开")
+                        uncheckedText: qsTr("关")
+                        onCheckedChanged: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("shortcutArrowGlobal", checked)
+                        }
+                    }
+                    Button {
+                        text: qsTr("重启资源管理器")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        onClicked: pageRoot.page.openConfirm(
+                            qsTr("桌面会闪一下，资源管理器重启后快捷方式箭头设置才会生效。"),
+                            function () { ConfigManager.restartExplorer() })
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("启动配置文件")
+                    description: pageRoot.appModeInfo.path || ""
+                    Button {
+                        text: qsTr("打开所在目录")
+                        icon.name: "ic_fluent_folder_open_20_regular"
+                        onClicked: ConfigManager.openPath(
+                            String(pageRoot.appModeInfo.path || "")
+                                .replace(/[\\/][^\\/]+$/, ""))
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    visible: (pageRoot.appModeInfo.problems || []).length > 0
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.systemCautionColor
+                    text: (pageRoot.appModeInfo.problems || []).join("；")
                 }
             }
 
@@ -240,8 +298,10 @@ Item {
         hotkeyField.value = model.globalHotkey || ""
         elevateSwitch.checked = model.adminAutoElevate !== false
         confirmAdminSwitch.checked = model.confirmAdminActions !== false
+        arrowSwitch.checked = model.shortcutArrowGlobal !== false
         logCombo.currentIndex = Math.max(0,
             ["DEBUG", "INFO", "WARNING", "ERROR"].indexOf(model.logLevel || "INFO"))
+        appModeInfo = ConfigManager ? ConfigManager.getAppModeInfo() : ({})
         reloadStartup()
     }
 

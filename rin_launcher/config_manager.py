@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 import sys
 import threading
 import time
@@ -40,12 +41,15 @@ from PySide6.QtWidgets import QFileDialog
 from rin_launcher import __codename__ as APP_CODENAME
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher import (
+    app_mode,
     autostart,
     drives,
     logging_setup,
+    notification_registration,
     notifications,
     risk_rules,
     search,
+    shell_tweaks,
     start_menu,
     toast,
 )
@@ -129,6 +133,7 @@ _human_size = drives.human_size
 _drive_details = drives.drive_details
 _find_removable_drive = drives.find_removable_drive
 _list_drives = drives.list_drives
+_removable_devices = drives.removable_devices
 
 
 def _dir_writable(path: Path) -> bool:
@@ -205,12 +210,36 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "autoCheckUpdates": True,
     "updateMirror": "github",
     "updateMirrorAuto": True,
+    # 小窗形态：normal / mini / floating。迷你与悬浮球都由同一个窗口变形而来。
+    "compactMode": "normal",
+    # 贴角位置与像素偏移；悬浮球始终固定在右下角，不受这两个值影响。
+    "windowCorner": "bottom-right",
+    "windowOffsetX": 0,
+    "windowOffsetY": 0,
+    # 三套形态各自的透明度（0 = 不透明，90 = 很透）。上限留给可读性。
+    # 完整版默认 82% 透明，与 1.1.10 的云母观感一致。
+    "compactTransparency": 82,
+    "miniTransparency": 30,
+    "floatingTransparency": 8,
+    # auto = 检测到 Wallpaper Engine 时用 Acrylic，否则 Mica。
+    "backdropMode": "auto",
+    # 全局去掉 Windows 快捷方式小箭头（改 HKCU，重启资源管理器后生效）。
+    "shortcutArrowGlobal": True,
 }
 
 # 通知分两级：功能类别 × 投递渠道。表的定义与归一化在 notifications 模块里，
 # 这里只保留同名引用，避免调用方到处改 import。
 NOTIFY_CATEGORIES = notifications.CATEGORIES
 NOTIFY_CHANNELS = notifications.CHANNELS
+
+
+def _clamp_int(raw: Any, default: int, low: int, high: int) -> int:
+    """把外部写进来的整数夹到安全区间；写坏了就用默认值。"""
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return default
+    return max(low, min(high, value))
 
 
 def _new_id() -> str:
@@ -335,18 +364,8 @@ def _derive_action_name(action: dict[str, Any]) -> str:
 
 
 def _default_slots() -> list[dict[str, Any]]:
-    """默认槽位：面板放 5 个内置功能，存储区放一个 U 盘和一个本机磁盘。"""
-    slots = [_new_slot(SLOT_TOOL, ROW_PANEL, key=key) for key in DEFAULT_TOOL_KEYS]
-    slots.append(_new_slot(SLOT_USB, ROW_STORAGE, label="U 盘"))
-
-    # 挑一个非系统盘当默认的「磁盘」项；找不到就用主目录。
-    target = ""
-    for drive in _list_drives():
-        if drive["path"].upper() not in ("C:\\", "/"):
-            target = drive["path"]
-            break
-    slots.append(_new_slot(SLOT_PATH, ROW_STORAGE, path=target or str(Path.home())))
-    return slots
+    """首次运行只生成一份空启动台，具体内容交给 OOBE / 用户自己添加。"""
+    return []
 
 
 def _default_config() -> dict[str, Any]:
@@ -412,8 +431,14 @@ class ConfigManager(QObject):
     backupChanged = Signal()
     # 通知渠道开关被改动（设置页的「通知」分区）。
     notificationsChanged = Signal()
+    # 开始菜单扫描完成（后台线程回到主线程后发）。
+    startMenuAppsChanged = Signal()
+    # 工作线程 → GUI 线程的内部通道；QTimer.singleShot 在工作线程里没有事件
+    # 循环，不会触发，必须走队列信号。
+    _startMenuScanDone = Signal(int, object)
 
-    def __init__(self, config_dir: Path | None = None, parent: QObject | None = None):
+    def __init__(self, config_dir: Path | None = None, parent: QObject | None = None,
+                 app_mode_root: Path | None = None):
         super().__init__(parent)
         # 打包后数据目录是 exe 同级的 data/（不可写则回退 %APPDATA%），
         # 源码运行保持 %APPDATA%；首次切换到 data/ 时会把老数据迁过去。
@@ -422,9 +447,11 @@ class ConfigManager(QObject):
         self.backup_dir = self.config_dir / "backups"
         self.icon_dir = self.config_dir / ICON_STORE_NAME
         self.log_dir = logging_setup.log_dir(self.config_dir)
+        self.thumbnail_dir = self.config_dir / "thumbnails"
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         self.icon_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
+        self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
 
         self.action_executor = None
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
@@ -435,14 +462,37 @@ class ConfigManager(QObject):
         # 磁盘容量缓存：(取值时间, 数据)。
         self._storage_cache: tuple[float, dict[str, Any]] | None = None
         # 可移动磁盘缓存：枚举驱动器有系统调用成本，刷新时只问一次。
-        self._removable_cache: tuple[float, str] | None = None
+        self._removable_cache: tuple[float, list[dict[str, Any]]] | None = None
         # 小窗发起的「编辑这一格」请求（页面建好前先记着，见 requestSlotEditor）。
         self._pending_slot_edit: tuple[int, int] | None = None
         # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
         self._pending_settings_section: str = ""
         # 托盘气泡的投递出口：main.py 在托盘真正起来之后接进来。
         self._tray_sink: Callable[[str, str], Any] | None = None
+        # appmodset.conf：启动模式与发布通道的单一来源。
+        values, problems, path = app_mode.load(app_mode_root)
+        # 安装目录不可写时，OOBE 会把 first-run 写到用户数据目录；这里读回来，
+        # 否则「完成了引导但下次还弹」。
+        override = self.config_dir / app_mode.CONF_NAME
+        if override.is_file():
+            try:
+                override_values, _, _ = app_mode.load(self.config_dir)
+                values["first-run"] = override_values.get("first-run", values["first-run"])
+            except OSError:
+                logger.debug("读取用户目录 appmodset 覆盖失败", exc_info=True)
+        self._app_mode_values = values
+        self._app_mode_problems = problems
+        self.app_mode_path = path
         self._config = self._load()
+        # channel 由 appmodset.conf 决定；设置页的旧字段保留但不再覆盖它。
+        self._config["settings"]["updateChannel"] = app_mode.effective_mode(values).channel
+        # 开始菜单：扫描在后台线程里跑，结果回到主线程后才发给界面。
+        self._start_menu_apps: list[dict[str, Any]] = []
+        self._start_menu_loading = False
+        self._start_menu_token = 0
+        self._thumb_queue: list[dict[str, Any]] = []
+        self._thumb_timer: QTimer | None = None
+        self._startMenuScanDone.connect(self._apply_start_menu_apps, Qt.QueuedConnection)
         # 任务计划状态不再在构造时预热：schtasks 子进程会跟小窗抢启动资源，
         # 等主界面稳定后由 main.py 延迟刷新（或第一次打开设置页时再查）。
         # 7 天一次的自动备份：启动先检查，之后每 6 小时再看一次。
@@ -466,6 +516,15 @@ class ConfigManager(QObject):
     def config(self) -> dict[str, Any]:
         return self._config
 
+    @property
+    def app_mode(self) -> app_mode.Mode:
+        """本次启动的生效模式（含 appmodset.conf 的诊断信息）。"""
+        return app_mode.effective_mode(self._app_mode_values)
+
+    @Slot(result="QStringList")
+    def appModeProblems(self) -> list[str]:
+        return list(self._app_mode_problems)
+
     # ------------------------------------------------------------------
     # Persistence
     # ------------------------------------------------------------------
@@ -484,12 +543,18 @@ class ConfigManager(QObject):
                 old_version = int(raw.get("version") or 1)
             except (TypeError, ValueError):
                 old_version = 1
+            new_keys = {
+                "compactMode", "windowCorner", "windowOffsetX", "windowOffsetY",
+                "compactTransparency", "miniTransparency", "floatingTransparency",
+                "backdropMode", "shortcutArrowGlobal",
+            }
             needs_rewrite = (
                 had_legacy_library
                 or old_version != CONFIG_VERSION
                 or "updateChannel" not in raw_settings
                 or "autoCheckUpdates" not in raw_settings
                 or "notifications" not in raw
+                or bool(new_keys - set(raw_settings))
                 or bool(set(raw_settings) - set(DEFAULT_SETTINGS))
             )
             config = self._normalize(raw)
@@ -541,6 +606,19 @@ class ConfigManager(QObject):
             settings["updateChannel"] = "stable"
         if settings.get("tileSize") not in ("small", "medium", "large"):
             settings["tileSize"] = "medium"
+        if settings.get("compactMode") not in ("normal", "mini", "floating"):
+            settings["compactMode"] = "normal"
+        if settings.get("windowCorner") not in ("bottom-right", "bottom-left"):
+            settings["windowCorner"] = "bottom-right"
+        if settings.get("backdropMode") not in ("auto", "mica", "acrylic"):
+            settings["backdropMode"] = "auto"
+        settings["windowOffsetX"] = _clamp_int(settings.get("windowOffsetX"), 0, -2000, 2000)
+        settings["windowOffsetY"] = _clamp_int(settings.get("windowOffsetY"), 0, -2000, 2000)
+        for key, default in (("compactTransparency", 82),
+                             ("miniTransparency", 30),
+                             ("floatingTransparency", 8)):
+            settings[key] = _clamp_int(settings.get(key), default, 0, 90)
+        settings["shortcutArrowGlobal"] = bool(settings.get("shortcutArrowGlobal", True))
         settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
         data["settings"] = settings
         # 通知开关：按类别补齐渠道，写坏的键直接忽略（旧配置没有这一段）。
@@ -637,6 +715,11 @@ class ConfigManager(QObject):
             slot["key"] = key
         elif kind == SLOT_PATH:
             slot["path"] = str(item.get("path") or "")
+            target = Path(slot["path"]).expanduser() if slot["path"] else None
+            path_type = str(item.get("pathType") or "")
+            if path_type not in ("disk", "file"):
+                path_type = "file" if target and target.is_file() else "disk"
+            slot["pathType"] = path_type
         return slot
 
     def save(self, config: dict[str, Any] | None = None, *, changed: str = "all") -> bool:
@@ -973,21 +1056,50 @@ class ConfigManager(QObject):
         elif kind == SLOT_PATH:
             raw = str(slot.get("path") or "")
             expanded = str(Path(raw).expanduser()) if raw else ""
-            exists = bool(expanded) and Path(expanded).exists()
+            target = Path(expanded) if expanded else None
+            exists = bool(target) and target.exists()
+            is_file = bool(target) and target.is_file()
+            path_type = str(slot.get("pathType") or ("file" if is_file else "disk"))
+            total_text = free_text = ""
+            percent = 0
+            usage_path = target.parent if is_file and target is not None else target
+            if exists and usage_path is not None:
+                try:
+                    usage = shutil.disk_usage(usage_path)
+                except OSError:
+                    logger.debug("Cannot read usage of %s", usage_path)
+                else:
+                    total_text = _human_size(usage.total)
+                    free_text = _human_size(usage.free)
+                    percent = round(usage.used / usage.total * 100) if usage.total else 0
             resolved.update(
-                name=override_label or (Path(expanded).name if expanded else "未设置路径"),
-                icon=override_icon or "ic_fluent_folder_open_20_regular",
+                name=override_label or (
+                    target.name if target else "未设置路径"),
+                icon=override_icon or (
+                    "ic_fluent_document_20_regular" if is_file
+                    else "ic_fluent_folder_open_20_regular"),
                 path=expanded,
+                pathType=path_type,
+                isFile=is_file,
                 exists=exists,
+                total=total_text,
+                free=free_text,
+                percent=percent,
             )
         elif kind == SLOT_USB:
-            drive = self._removable_drive()
+            device = self._removable_devices()
+            first = device[0] if device else {}
             resolved.update(
-                name=override_label or "U 盘",
+                name=override_label or str(first.get("name") or "U 盘"),
                 icon=override_icon or "ic_fluent_usb_plug_20_regular",
-                path=drive,
-                exists=bool(drive),
-                available=bool(drive),
+                path=str(first.get("path") or ""),
+                paths=list(first.get("paths") or []),
+                partitions=list(first.get("partitions") or []),
+                total=str(first.get("total") or ""),
+                free=str(first.get("free") or ""),
+                percent=int(first.get("percent") or 0),
+                exists=bool(first),
+                available=bool(first),
             )
         if resolved.get("inlineAction"):
             resolved["kindLabel"] = "动作"
@@ -1112,22 +1224,32 @@ class ConfigManager(QObject):
         self._reveal(target)
         return True
 
-    def _removable_drive(self) -> str:
-        """可移动磁盘路径，带短缓存 —— 一次界面刷新里可能有好几格都要问。"""
+    def _removable_devices(self) -> list[dict[str, Any]]:
+        """可移动磁盘（按物理设备分组），带短缓存。"""
         now = time.monotonic()
         if self._removable_cache and now - self._removable_cache[0] < STORAGE_TTL:
             return self._removable_cache[1]
-        drive = _find_removable_drive()
-        self._removable_cache = (now, drive)
-        return drive
+        devices = _removable_devices()
+        self._removable_cache = (now, devices)
+        return devices
+
+    @Slot(result="QVariantList")
+    def getRemovableDevices(self) -> list[dict]:
+        """U 盘设备列表：设备名、合并容量与全部分区。"""
+        return [dict(item) for item in self._removable_devices()]
 
     @Slot(result=bool)
     def openRemovableDrive(self) -> bool:
-        drive = self._removable_drive()
-        if not drive:
+        """打开第一个 U 盘（含多分区）的全部盘符。"""
+        devices = self._removable_devices()
+        paths = list(devices[0].get("paths") or []) if devices else []
+        if not paths:
             self.showToast.emit("没有检测到可移动磁盘", "warning")
             return False
-        self._reveal(Path(drive))
+        for raw in paths:
+            path = Path(raw)
+            if path.exists():
+                self._reveal(path)
         return True
 
     # ── 图标 ──────────────────────────────────────────────────────────
@@ -1220,7 +1342,12 @@ class ConfigManager(QObject):
             path = str(payload.get("path") or "").strip()
             if not path:
                 return None
+            target = Path(path).expanduser()
+            path_type = str(payload.get("pathType") or "").strip()
+            if path_type not in ("disk", "file"):
+                path_type = "file" if target.is_file() else "disk"
             created["path"] = path
+            created["pathType"] = path_type
 
         # 没指定图标时替程序 / 快捷方式抽一张，省得小窗上全是空白格子。
         # 抽图标是「顺手好事」，不能因为它失败就毁掉整个保存。
@@ -1268,7 +1395,8 @@ class ConfigManager(QObject):
         """在面板末尾追加一格（或给存储区加一个入口）。面板满时拒绝并提示。"""
         slot = dict(slot)
         kind = str(slot.get("kind") or SLOT_ACTION)
-        if kind not in SLOT_KINDS:
+        if kind not in SLOT_KINDS or kind == SLOT_USB:
+            # U 盘入口由迷你模式的快捷开关自动提供，不再允许手动新增。
             return False
         row = ROW_PANEL if int(row) <= ROW_PANEL else ROW_STORAGE
         if row == ROW_PANEL and self._panel_full():
@@ -1290,8 +1418,12 @@ class ConfigManager(QObject):
         if target is None:
             return False
         slot = dict(slot)
+        # 已经存在的 U 盘槽位保持只读：允许删除，但不能改成别的类型，
+        # 也不能把别的格子改成 U 盘。
+        if target.get("kind") == SLOT_USB:
+            return False
         kind = str(slot.get("kind") or target.get("kind") or SLOT_ACTION)
-        if kind not in SLOT_KINDS:
+        if kind not in SLOT_KINDS or kind == SLOT_USB:
             return False
         updated = self._build_slot(kind, int(target.get("row", 0)), slot)
         if updated is None:
@@ -1357,6 +1489,13 @@ class ConfigManager(QObject):
                 self.hotkeyChanged.emit(str(previous["globalHotkey"]))
             if "showTray" in settings:
                 self.trayEnabledChanged.emit(bool(previous["showTray"]))
+            if "shortcutArrowGlobal" in settings:
+                self.applyShellPreferences()
+            if any(key in settings for key in (
+                    "compactMode", "windowCorner", "windowOffsetX", "windowOffsetY",
+                    "compactTransparency", "miniTransparency", "floatingTransparency",
+                    "backdropMode")):
+                self.settingsChanged.emit()
             mode_changed = ("accentColorMode" in settings
                             and self._config["settings"].get("accentColorMode") != old_mode)
             if mode_changed or ("accentColor" in settings
@@ -1502,6 +1641,34 @@ class ConfigManager(QObject):
             "nativeAvailable": sys.platform == "win32",
         }
 
+    @Slot(result="QVariantMap")
+    def registerSystemNotification(self) -> dict[str, Any]:
+        """创建带 AUMID 的开始菜单快捷方式，并立即发一条测试通知。"""
+        result = notification_registration.register(str(ASSETS_DIR / "icon.ico"))
+        self.showToast.emit(str(result.get("message") or ""),
+                            "success" if result.get("ok") else "error")
+        return result
+
+    @Slot(result="QVariantMap")
+    def applyShellPreferences(self) -> dict[str, Any]:
+        """把「去快捷方式小箭头」偏好应用到当前用户；不自动重启资源管理器。"""
+        enabled = bool(self._config["settings"].get("shortcutArrowGlobal", True))
+        result = shell_tweaks.set_hidden(enabled, data_dir=self.config_dir)
+        if result.get("changed"):
+            self.showToast.emit(str(result.get("message") or ""),
+                                "info" if result.get("ok") else "error")
+        elif not result.get("ok"):
+            logger.warning("应用快捷方式箭头设置失败: %s", result.get("message"))
+        return result
+
+    @Slot(result=bool)
+    def restartExplorer(self) -> bool:
+        """重启资源管理器，让快捷方式箭头设置立即生效。"""
+        ok = shell_tweaks.restart_explorer()
+        self.showToast.emit("资源管理器已重启" if ok else "重启资源管理器失败",
+                            "success" if ok else "error")
+        return ok
+
     @Slot(str, str, bool, result=bool)
     def setNotificationChannel(self, category: str, channel: str,
                                enabled: bool) -> bool:
@@ -1567,7 +1734,10 @@ class ConfigManager(QObject):
     # ── 恢复模式 ─────────────────────────────────────────────────────
     @Slot(result=str)
     def getLaunchMode(self) -> str:
-        """本次启动的模式：normal / recovery / safe / diagnostic。"""
+        """本次启动的模式：normal / recovery / safe / diagnostic。
+
+        命令行旗标优先于 ``appmodset.conf``；两者都没写时是正常模式。
+        """
         args = [str(item) for item in sys.argv[1:]]
         if "--recovery" in args:
             return "recovery"
@@ -1575,7 +1745,61 @@ class ConfigManager(QObject):
             return "safe"
         if "--diagnostic" in args:
             return "diagnostic"
-        return "normal"
+        return self.app_mode.launch_mode
+
+    @Slot(result=bool)
+    def isFirstRun(self) -> bool:
+        """是否应该展示 OOBE（appmodset.conf 的 first-run）。"""
+        return self.app_mode.first_run
+
+    @Slot("QVariantMap", result=bool)
+    def completeOobe(self, settings: dict) -> bool:
+        """OOBE 完成：保存设置并把 first-run 写回 false。"""
+        if settings:
+            self.updateSettings(dict(settings))
+        ok = app_mode.mark_first_run_done(self.app_mode_path.parent)
+        if not ok:
+            # 安装目录不可写：退到用户数据目录的一份覆盖配置，下次启动仍然生效。
+            ok = app_mode.update(self.config_dir, {"first-run": False})
+        if ok:
+            self._app_mode_values["first-run"] = False
+            self.showToast.emit("首次设置已完成", "success")
+        else:
+            self.showToast.emit("首次设置已应用，但配置目录不可写", "warning")
+        self.applyShellPreferences()
+        self.settingsChanged.emit()
+        return ok
+
+    @Slot()
+    def openOobe(self) -> None:
+        self.pageRequested.emit("oobe")
+
+    @Slot(result="QVariantMap")
+    def getAppModeInfo(self) -> dict[str, Any]:
+        """设置页 / 关于页展示的启动配置摘要。"""
+        mode = self.app_mode
+        return {
+            "path": str(self.app_mode_path),
+            "firstRun": mode.first_run,
+            "normalBoot": bool(self._app_mode_values.get("normal-boot", True)),
+            "failsafe": mode.safe_mode,
+            "debug": mode.debug,
+            "channel": mode.channel,
+            "recovery": bool(self._app_mode_values.get("recovery", False)),
+            "launchMode": mode.launch_mode,
+            "problems": list(self._app_mode_problems),
+        }
+
+    @Slot(str, bool, result=bool)
+    def setAppModeFlag(self, key: str, value: bool) -> bool:
+        """修改一个布尔启动项并立即写回 appmodset.conf。"""
+        if key not in ("first-run", "normal-boot", "failsafe", "debug", "recovery"):
+            return False
+        if not app_mode.update(self.app_mode_path.parent, {key: bool(value)}):
+            return False
+        self._app_mode_values[key] = bool(value)
+        self.showToast.emit("启动配置已更新，重启后生效", "info")
+        return True
 
     @Slot(result=bool)
     def resetAppSettings(self) -> bool:
@@ -1589,6 +1813,7 @@ class ConfigManager(QObject):
             self.notificationsChanged.emit()
             self.hotkeyChanged.emit(str(DEFAULT_SETTINGS["globalHotkey"]))
             self.trayEnabledChanged.emit(bool(DEFAULT_SETTINGS["showTray"]))
+            self.applyShellPreferences()
             self.showToast.emit("应用设置已重置", "success")
         return saved
 
@@ -1646,8 +1871,17 @@ class ConfigManager(QObject):
     @Slot(str, result=bool)
     def restartWithMode(self, mode: str) -> bool:
         """带启动模式参数重启：recovery / safe / diagnostic / normal。"""
+        mode = str(mode)
+        # appmodset.conf 的 recovery / failsafe 优先级高于命令行之外的一切；
+        # 「继续使用」必须先把这两个标记清掉，否则重启后还是恢复进程。
+        if mode == "normal" and (self._app_mode_values.get("recovery")
+                                 or self._app_mode_values.get("failsafe")):
+            if app_mode.update(self.app_mode_path.parent,
+                               {"recovery": False, "failsafe": False}):
+                self._app_mode_values["recovery"] = False
+                self._app_mode_values["failsafe"] = False
         flag = {"recovery": "--recovery", "safe": "--safe-mode",
-                "diagnostic": "--diagnostic"}.get(str(mode), "")
+                "diagnostic": "--diagnostic"}.get(mode, "")
         extra = [flag] if flag else []
         if not restart_application(extra):
             self.showToast.emit("重启失败，可以看看日志", "error")
@@ -1729,6 +1963,10 @@ class ConfigManager(QObject):
         if self._config["settings"].get("updateChannel") == channel:
             return True
         self._config["settings"]["updateChannel"] = channel
+        # appmodset.conf 是通道的单一来源：界面改了要同步写回去，否则重启后
+        # 又会被文件里的旧值覆盖。
+        if app_mode.update(self.app_mode_path.parent, {"channel": channel}):
+            self._app_mode_values["channel"] = channel
         return self.save(changed="settings")
 
     @Slot(bool, result=bool)
@@ -1782,10 +2020,124 @@ class ConfigManager(QObject):
             None, "选择快捷方式", start, "快捷方式 (*.lnk);;所有文件 (*)")
         return path or ""
 
+    @Property("QVariantList", notify=startMenuAppsChanged)
+    def startMenuApps(self) -> list[dict]:
+        """最近一次扫描结果（界面绑定这个，不要在主线程里直接扫）。"""
+        return [dict(item) for item in self._start_menu_apps]
+
+    @Property(bool, notify=startMenuAppsChanged)
+    def startMenuLoading(self) -> bool:
+        return self._start_menu_loading
+
     @Slot(result="QVariantList")
     def listStartMenuApps(self) -> list[dict]:
-        """开始菜单里的传统应用 / UWP·WSA / WSL 发行版。"""
-        return start_menu.list_start_menu_apps()
+        """兼容旧调用：已经有缓存就返回缓存，不再同步扫盘。"""
+        return [dict(item) for item in self._start_menu_apps]
+
+    @Slot()
+    def refreshStartMenuApps(self) -> None:
+        """后台重新扫描开始菜单，完成后经 ``startMenuAppsChanged`` 通知。"""
+        if self._start_menu_loading:
+            return
+        self._start_menu_loading = True
+        self._start_menu_token += 1
+        token = self._start_menu_token
+        self.startMenuAppsChanged.emit()
+
+        def worker() -> None:
+            try:
+                apps = start_menu.list_start_menu_apps(force=True)
+            except Exception:
+                logger.exception("开始菜单扫描失败")
+                apps = []
+            # 跨线程 emit 会自动排队到接收者所在线程（GUI）。
+            self._startMenuScanDone.emit(token, apps)
+
+        threading.Thread(target=worker, name="rin-start-menu", daemon=True).start()
+
+    def _apply_start_menu_apps(self, token: int, apps: list[dict[str, Any]]) -> None:
+        if token != self._start_menu_token:
+            return
+        self._start_menu_apps = apps
+        self._start_menu_loading = False
+        self.startMenuAppsChanged.emit()
+        # 缩略图在 GUI 线程里分批生成：QFileIconProvider 不能在工作线程用。
+        self._thumb_queue = [app for app in apps if self._needs_thumb(app)]
+        if self._thumb_queue and self._thumb_timer is None:
+            self._thumb_timer = QTimer(self)
+            self._thumb_timer.setInterval(45)
+            self._thumb_timer.timeout.connect(self._build_thumb_batch)
+            self._thumb_timer.start()
+
+    def _needs_thumb(self, app: dict[str, Any]) -> bool:
+        return bool(app.get("source") or app.get("target")) and not app.get("thumb")
+
+    def _thumb_path(self, app: dict[str, Any]) -> Path | None:
+        """按「来源路径 + 修改时间」算缓存键；同一个应用不会重复抽图标。"""
+        source = Path(str(app.get("source") or ""))
+        target = str(app.get("target") or "")
+        stamp = ""
+        if source.is_file():
+            try:
+                stamp = str(int(source.stat().st_mtime))
+            except OSError:
+                stamp = ""
+        raw = f"{source}|{stamp}|{target}|{app.get('icon') or ''}"
+        key = uuid.uuid5(uuid.NAMESPACE_URL, raw).hex
+        return self.thumbnail_dir / f"{key}.png"
+
+    def _build_thumb_batch(self) -> None:
+        if not self._thumb_queue:
+            if self._thumb_timer is not None:
+                self._thumb_timer.stop()
+                self._thumb_timer.deleteLater()
+                self._thumb_timer = None
+            return
+        changed = False
+        for _ in range(6):
+            if not self._thumb_queue:
+                break
+            app = self._thumb_queue.pop(0)
+            cached = self._thumb_path(app)
+            if cached is not None and cached.is_file():
+                app["thumb"] = f"file:{cached}"
+                changed = True
+                continue
+            key = self._make_thumb(app, cached)
+            if key:
+                app["thumb"] = key
+                changed = True
+        if changed:
+            self.startMenuAppsChanged.emit()
+
+    def _make_thumb(self, app: dict[str, Any], target: Path | None) -> str:
+        if target is None:
+            return ""
+        source = str(app.get("source") or app.get("target") or "")
+        # UWP 的包清单图标本身就是图片，直接复制；其它程序走系统图标提取。
+        icon = str(app.get("icon") or "")
+        temporary = False
+        if icon.startswith("file:"):
+            extracted = icon
+        else:
+            if not source or not Path(source).exists():
+                return ""
+            extracted = self._icons.extract(source, notify=False)
+            temporary = True
+        if not extracted:
+            return ""
+        origin = Path(extracted.removeprefix("file:"))
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(origin, target)
+        except OSError:
+            logger.debug("缩略图缓存失败: %s", source, exc_info=True)
+            return ""
+        finally:
+            # 只有「为了缓存临时抽出来」的图标才删；用户图标库里的原图必须保留。
+            if temporary and origin.parent == self.icon_dir and origin != target:
+                origin.unlink(missing_ok=True)
+        return f"file:{target}"
 
     @Slot(str, result="QVariantMap")
     def parseShortcut(self, path: str) -> dict:
@@ -1908,14 +2260,9 @@ class ConfigManager(QObject):
                 windows_build = f"Build {sys.getwindowsversion().build}"
             except Exception:
                 windows_build = ""
-        # 打包时由 CI 在安装目录写 channel.txt；源码运行默认 Release。
-        channel = "Release"
-        channel_file = self._app_root() / "channel.txt"
-        if channel_file.is_file():
-            try:
-                channel = channel_file.read_text(encoding="utf-8").strip() or "Release"
-            except OSError:
-                logger.debug("读取 channel.txt 失败", exc_info=True)
+        # 发布通道由 appmodset.conf 决定；界面上仍用 Release / Pre-Release 这种
+        # 人话，而不是内部的 stable / prerelease。
+        channel = "Pre-Release" if self.app_mode.channel == "prerelease" else "Release"
 
         system = f"{platform.system()} {platform.release()}"
         if windows_build:
@@ -1949,6 +2296,12 @@ class ConfigManager(QObject):
 
     @staticmethod
     def _reveal(path: Path) -> None:
+        """打开目录；传入文件时打开所在目录并选中它。"""
+        if path.is_file():
+            if sys.platform == "win32":
+                subprocess.Popen(["explorer.exe", "/select,", str(path)])
+                return
+            path = path.parent
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     # ------------------------------------------------------------------

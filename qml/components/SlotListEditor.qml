@@ -235,7 +235,10 @@ ColumnLayout {
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_edit_20_regular"
-                    tip: qsTr("编辑这一格")
+                    // U 盘入口已关闭编辑：只能删除或调整顺序。
+                    tip: modelData.kind === "usb"
+                        ? qsTr("U 盘入口不可编辑") : qsTr("编辑这一格")
+                    enabled: modelData.kind !== "usb"
                     onClicked: list.editRequested(index)
                 }
                 MiniIconButton {
@@ -258,10 +261,15 @@ ColumnLayout {
             return ""
         }
         if (slot.kind === "usb") {
-            return slot.available ? slot.path : qsTr("当前没有检测到")
+            return slot.available
+                ? qsTr("%1 · 剩余 %2").arg(slot.name || "U 盘").arg(slot.free || "?")
+                : qsTr("当前没有检测到")
         }
         if (slot.kind === "path") {
-            return slot.exists ? slot.path : qsTr("%1（路径不存在）").arg(slot.path)
+            var typeLabel = slot.pathType === "file" ? qsTr("文件位置") : qsTr("磁盘")
+            return slot.exists
+                ? qsTr("%1 · %2").arg(typeLabel).arg(slot.path)
+                : qsTr("%1 · %2（不可用）").arg(typeLabel).arg(slot.path)
         }
         if (slot.kind === "action") {
             return slot.target || qsTr("未设置目标")

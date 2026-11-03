@@ -126,6 +126,19 @@ def main() -> int:
     report["compact"] = window_info(compact)
     report["screenshots"]["compact"] = grab(compact, "compact", backdrop)
 
+    # 三种形态各留一张图：迷你胶囊、悬浮球收起 / 展开。
+    for mode, name in (("mini", "compact-mini"), ("floating", "compact-ball")):
+        compact.setProperty("windowMode", mode)
+        wait(320)
+        report["screenshots"][name] = grab(compact, name, backdrop)
+    compact.setProperty("ballExpanded", True)
+    wait(320)
+    report["screenshots"]["compact-ball-expanded"] = grab(
+        compact, "compact-ball-expanded", backdrop)
+    compact.setProperty("ballExpanded", False)
+    compact.setProperty("windowMode", "normal")
+    wait(320)
+
     storage = launcher.config_manager.getStorageInfo()
     report["storage"] = {
         "label": storage.get("label"),
@@ -157,7 +170,13 @@ def main() -> int:
         report["tiles"] = tiles
 
     # ── 开始菜单数据 + UWP 图标入库 ──
-    apps = launcher.config_manager.listStartMenuApps()
+    # 1.1.11 起扫描在后台线程，验收脚本要先触发并等它完成。
+    launcher.config_manager.refreshStartMenuApps()
+    for _ in range(30):
+        wait(500)
+        if not launcher.config_manager.startMenuLoading:
+            break
+    apps = launcher.config_manager.startMenuApps
     kinds: dict[str, int] = {}
     for item in apps:
         kinds[item["kind"]] = kinds.get(item["kind"], 0) + 1
@@ -193,9 +212,17 @@ def main() -> int:
             QMetaObject.invokeMethod(dialog, "open")
             wait(800)
             visible = dialog.property("apps") or []
+            filtered = dialog.property("visibleApps")
+            try:
+                filtered_count = len(filtered.toVariant())
+            except Exception:
+                filtered_count = -1
+            app_list = editor.root_window.findChild(QObject, "startMenuAppList")
             report["start_menu_dialog"] = {
                 "visible": bool(dialog.property("visible")),
                 "apps": len(visible),
+                "filtered": filtered_count,
+                "listCount": app_list.property("count") if app_list is not None else -1,
             }
             report["screenshots"]["start_menu_dialog"] = grab(
                 editor.root_window, "start-menu-dialog", backdrop)

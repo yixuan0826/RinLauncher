@@ -41,6 +41,18 @@ Item {
             return drive.label + "（" + drive.path.replace(/\\$/, "") + "）"
         }))
 
+    RinToast {
+        id: toast
+    }
+
+    Connections {
+        target: ConfigManager
+
+        function onShowToast(message, severity) {
+            toast.show(message, severity)
+        }
+    }
+
     SlotEditorDialog {
         id: slotEditor
         objectName: "slotEditorDialog"

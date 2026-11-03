@@ -63,6 +63,18 @@ Item {
         id: confirmDialog
     }
 
+    RinToast {
+        id: toast
+    }
+
+    Connections {
+        target: ConfigManager
+
+        function onShowToast(message, severity) {
+            toast.show(message, severity)
+        }
+    }
+
     Timer {
         id: applyTimer
         interval: 350

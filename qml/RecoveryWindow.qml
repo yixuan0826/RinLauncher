@@ -189,6 +189,15 @@ FluentWindowBase {
         id: confirmDialog
     }
 
+    RinToast {
+        id: toast
+    }
+
+    property Connections toastWatcher: Connections {
+        target: ConfigManager
+        function onShowToast(message, severity) { toast.show(message, severity) }
+    }
+
     Flickable {
         id: flick
 

@@ -14,6 +14,7 @@ Item {
 
     property var page
     property var info: ({})
+    property string registrationMessage: ""
 
     // 类别 / 渠道由后端给，避免两边各写一份中文名。
     readonly property var categories: info.categories || []
@@ -93,6 +94,33 @@ Item {
                             }
                         }
                     }
+                }
+            }
+
+            SettingsGroup {
+                title: qsTr("系统通知")
+                iconKey: "ic_fluent_alert_20_regular"
+
+                FormRow {
+                    label: qsTr("注册到 Windows")
+                    description: qsTr("创建带应用标识的开始菜单快捷方式，并立即发送一条测试通知")
+                    Button {
+                        text: qsTr("快速注册")
+                        icon.name: "ic_fluent_add_20_regular"
+                        onClicked: {
+                            var result = ConfigManager.registerSystemNotification()
+                            pageRoot.registrationMessage = result.message || ""
+                        }
+                    }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    wrapMode: Text.Wrap
+                    visible: pageRoot.registrationMessage.length > 0
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.textSecondaryColor
+                    text: pageRoot.registrationMessage
                 }
             }
 
