@@ -3,6 +3,21 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.1.13-pre（Hoshimi Miyabi）— 2026-11-04
+
+> 1.2.0 的早期预览版。修复 1.1.12 启动即崩，以及两处菜单被窗口裁切。
+
+### 修复
+
+- **首次启动直接报错**：确认弹窗改成顶层 `Window` 后仍被当作 Item 塞进窗口的
+  `content` 列表，`FluentWindowBase` 拒绕加载（`Cannot assign object of type
+  ConfirmDialog to list property "content"`）。改用属性承载实例后，启动台、设置、
+  编辑、恢复、引导五个窗口都能正常打开。
+- **恢复窗口创建函数被误删**：`show_recovery()` 调不到 `create_recovery_window()`，
+  点「恢复模式」会直接抛 `AttributeError`。
+- **迷你条 / 悬浮球的「更多」菜单显示不全**：窗口只有 404×56 / 72×72，Item 类型的
+  菜单会被窗口裁掉。菜单改为独立弹出窗口，并按主屏可用区域翻转、夹紧。
+
 ## 1.1.12-pre（Hoshimi Miyabi）— 2026-11-03
 
 > 1.2.0 的早期预览版，继续以 Pre-Release 发布。本版重做启动台的材质、

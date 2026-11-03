@@ -377,6 +377,8 @@ class Launcher:
         root.requestActivate()
         self._settle_backdrop(self.oobe)
         return True
+
+    def create_recovery_window(self) -> bool:
         window = self._create_window(RECOVERY_ENTRY)
         if window is None:
             return False

@@ -913,7 +913,11 @@ Window {
     Menu {
         id: slotMenu
 
+        objectName: "slotMenu"
         position: Position.None
+        // 小窗只有 400×456 / 404×56 / 72×72，Item 类型的 Popup 会被窗口
+        // 裁掉一半；改成独立弹出窗口，菜单才能完整铺在窗口外。
+        popupType: Popup.Window
         property var slot: null
 
         MenuItem {
@@ -952,7 +956,9 @@ Window {
     Menu {
         id: moreMenu
 
+        objectName: "moreMenu"
         position: Position.None
+        popupType: Popup.Window
 
         MenuItem {
             text: qsTr("编辑启动台")
@@ -1094,13 +1100,8 @@ Window {
     }
 
     // 退出 / 提权两类确认都是屏幕正中的独立置顶窗口，小窗里不留遮罩。
-    ConfirmDialog {
-        id: quitConfirmDialog
-    }
-
-    ConfirmDialog {
-        id: adminConfirmDialog
-    }
+    property ConfirmDialog quitConfirmDialog: ConfirmDialog {}
+    property ConfirmDialog adminConfirmDialog: ConfirmDialog {}
 
     function filterRow(slots, row) {
         return slots.filter(function (item) { return item.row === row })
@@ -1223,13 +1224,33 @@ Window {
     }
 
     function popupMoreMenu(anchor) {
-        // 菜单右缘贴按钮右缘，向下弹；position 必须是 None，否则 RinUI 的
-        // Menu 会按锚点重算 posX/posY，覆盖掉 popup() 指定的坐标。
-        var item = anchor || moreButton
-        var scene = item.mapToItem(null, item.width, item.height + 4)
-        var local = compact.contentItem.mapFromItem(null, scene.x, scene.y)
-        var menuWidth = moreMenu.width > 0 ? moreMenu.width : moreMenu.implicitWidth
-        moreMenu.popup(Qt.point(Math.max(0, local.x - menuWidth), local.y))
+        // 菜单右缘贴按钮右缘、从锚点**上方**展开：三种形态都贴在屏幕底部，
+        // 向下弹一定出界。position 必须是 None，否则 RinUI 的 Menu 会按锚点
+        // 重算 posX/posY，覆盖掉 popup() 指定的坐标。
+        var item = anchor || (miniMode ? miniMoreButton : moreButton)
+        var scene = item.mapToItem(null, item.width, 0)
+        popupMenuAt(moreMenu, scene.x, scene.y, true, true)
+    }
+
+    // 把菜单摆到屏幕可用区域内：优先按调用方指定的方向，放不下就翻到另一边。
+    function popupMenuAt(menu, sceneX, sceneY, alignRight, preferUp) {
+        var menuWidth = menu.width > 0 ? menu.width : menu.implicitWidth
+        var menuHeight = menu.height > 0 ? menu.height : menu.implicitHeight
+        var minX = (primaryWidth > 0 ? primaryX : Screen.virtualX) + 4
+        var minY = (primaryHeight > 0 ? primaryY : Screen.virtualY) + 4
+        var areaWidth = primaryWidth > 0 ? primaryWidth : Screen.desktopAvailableWidth
+        var areaHeight = primaryHeight > 0 ? primaryHeight : Screen.desktopAvailableHeight
+        var screenX = compact.x + sceneX
+        var screenY = compact.y + sceneY
+        var x = alignRight ? screenX - menuWidth : screenX
+        var y = preferUp ? screenY - menuHeight : screenY
+        // 翻转：上方放不下就向下，下方放不下就向上。
+        if (y < minY || (y + menuHeight > minY + areaHeight && screenY - menuHeight >= minY)) {
+            y = screenY - menuHeight
+        }
+        x = Math.min(Math.max(x, minX), Math.max(minX, minX + areaWidth - menuWidth))
+        y = Math.min(Math.max(y, minY), Math.max(minY, minY + areaHeight - menuHeight))
+        menu.popup(Qt.point(x - compact.x, y - compact.y))
     }
 
     // 右键菜单的编辑入口：切到启动台页并当场打开这一格的编辑器。
@@ -1248,7 +1269,6 @@ Window {
             return
         }
         slotMenu.slot = slot
-        var local = compact.contentItem.mapFromItem(null, sceneX, sceneY)
-        slotMenu.popup(Qt.point(local.x, local.y))
+        popupMenuAt(slotMenu, sceneX, sceneY, false, false)
     }
 }

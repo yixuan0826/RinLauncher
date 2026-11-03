@@ -413,8 +413,7 @@ Item {
         ConfigManager.setLauncherStoragePath(path)
     }
 
-    ConfirmDialog {
-        id: confirmRemove
+    property ConfirmDialog confirmRemove: ConfirmDialog {
         // 默认的 420px 在窄窗口下会被裁掉一截。
         width: 360
     }

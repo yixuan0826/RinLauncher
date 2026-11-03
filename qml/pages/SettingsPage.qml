@@ -59,9 +59,8 @@ Item {
     readonly property var activeSection: sections[Math.max(0,
         Math.min(currentIndex, sections.length - 1))]
 
-    ConfirmDialog {
-        id: confirmDialog
-    }
+    // 确认弹窗是独立顶层窗口，不能进窗口的 content（那是 Item 列表），用属性承载。
+    property ConfirmDialog confirmDialog: ConfirmDialog {}
 
     RinToast {
         id: toast

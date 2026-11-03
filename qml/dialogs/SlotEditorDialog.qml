@@ -51,11 +51,8 @@ AppDialog {
         onPicked: editor.iconKey = iconKey
     }
 
-    // 风险行为的二次确认。同目录组件可以直接实例化。
-    ConfirmDialog {
-        id: riskDialog
-        parent: editor
-    }
+    // 风险行为的二次确认。同样是独立顶层窗口，用属性承载。
+    property ConfirmDialog riskDialog: ConfirmDialog {}
 
     StartMenuDialog {
         id: startMenuPicker

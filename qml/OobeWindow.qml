@@ -51,9 +51,8 @@ FluentWindowBase {
         reloadControls()
     }
 
-    ConfirmDialog {
-        id: confirmReset
-    }
+    // 确认弹窗是独立顶层窗口，不能进窗口的 content（那是 Item 列表），用属性承载。
+    property ConfirmDialog confirmReset: ConfirmDialog {}
 
     property Connections accentWatcher: Connections {
         target: ConfigManager
