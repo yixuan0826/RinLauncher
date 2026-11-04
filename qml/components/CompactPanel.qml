@@ -22,7 +22,6 @@ Item {
     property int gap: 8
 
     signal activated(var slot)
-    signal menuRequested(var slot, real sceneX, real sceneY)
 
     readonly property int shownCount: Math.min(slots.length, capacity)
     // 一行最多 5 格：6 格以上按两行平分，10 格正好 5 + 5。
@@ -65,10 +64,8 @@ Item {
                 width: parent.width
                 height: panel.tileSize
                 slots: panel.lineAt(index)
-                style: "big"
                 tileSizeOverride: panel.tileSize
                 onActivated: panel.activated(slot)
-                onMenuRequested: panel.menuRequested(slot, sceneX, sceneY)
             }
         }
     }

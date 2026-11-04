@@ -10,32 +10,23 @@ Item {
     id: row
 
     property var slots: []
-    property string style: "big"     // big | mini
-    property int maxTileSize: 76
     // 面板给两排指定统一个头；0 = 按格子数自己算。
     property real tileSizeOverride: 0
 
     signal activated(var slot)
-    signal menuRequested(var slot, real sceneX, real sceneY)
 
-    readonly property bool mini: style === "mini"
-    readonly property int gap: mini ? 6 : 10
-    // 大格子边长跟着宽度走，但有上下限：太少不至于撑成巨块，太多也不会缩成点。
+    readonly property int gap: 10
+    // 格子边长跟着宽度走，但有上下限：太少不至于撑成巨块，太多也不会缩成点。
     readonly property real tileSize: {
         if (tileSizeOverride > 0) {
             return tileSizeOverride
         }
         if (slots.length === 0) {
-            return maxTileSize
+            return 76
         }
         var available = width - (slots.length - 1) * gap
-        return Math.max(48, Math.min(maxTileSize, Math.floor(available / slots.length)))
+        return Math.max(48, Math.min(76, Math.floor(available / slots.length)))
     }
-    readonly property real cellWidth: mini
-        ? Math.max(48, Math.min(72, Math.floor((width - (slots.length - 1) * gap)
-                                               / Math.max(1, slots.length))))
-        : tileSize
-    readonly property real cellHeight: mini ? 58 : tileSize
 
     Flickable {
         id: flick
@@ -60,12 +51,10 @@ Item {
                 model: row.slots
 
                 delegate: CompactTile {
-                    width: row.cellWidth
-                    height: row.cellHeight
-                    style: row.mini ? "mini" : "big"
+                    width: row.tileSize
+                    height: row.tileSize
                     slot: modelData
                     onActivated: row.activated(slot)
-                    onMenuRequested: row.menuRequested(slot, sceneX, sceneY)
                 }
             }
         }

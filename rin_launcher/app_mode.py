@@ -34,7 +34,7 @@ DEFAULTS: dict[str, Any] = {
     "normal-boot": True,
     "failsafe": False,
     "debug": False,
-    "channel": "prerelease",
+    "channel": "stable",
     "recovery": False,
 }
 CHANNEL_VALUES: tuple[str, ...] = ("stable", "prerelease")
@@ -47,7 +47,7 @@ first-run==true
 normal-boot==true
 failsafe==false
 debug==false
-channel==prerelease
+channel==stable
 recovery==false
 """
 
@@ -120,7 +120,7 @@ def _migrate_channel(root: Path, target: Path) -> None:
     channel = "prerelease" if ("pre" in value or "-" in value) else "stable"
     try:
         target.write_text(
-            _TEMPLATE.replace("channel==prerelease", f"channel=={channel}"),
+            _TEMPLATE.replace("channel==stable", f"channel=={channel}", 1),
             encoding="utf-8")
     except OSError:
         logger.debug("无法写入 %s，跳过迁移", target, exc_info=True)

@@ -17,8 +17,8 @@ def test_parse_is_strict_about_booleans_and_unknown_keys():
     assert values["debug"] is True
     # 写坏的项保留默认值，并给出可读诊断。
     assert values["normal-boot"] is True
-    # 默认通道是预发布（1.2.0 预览期），坏值不应覆盖它。
-    assert values["channel"] == "prerelease"
+    # 默认通道是正式版（1.2.0 起），坏值不应覆盖它。
+    assert values["channel"] == "stable"
     assert len(problems) == 3
 
 
@@ -123,7 +123,7 @@ def test_appmodset_generated_on_first_run(tmp_path):
     assert path.is_file()
     assert problems == []
     assert values["first-run"] is True
-    assert values["channel"] == "prerelease"
+    assert values["channel"] == "stable"
 
 
 def test_appmodset_upgrade_keeps_existing_file(tmp_path):

@@ -124,13 +124,7 @@ class ActionExecutor:
         return resolved
 
     def _elevation_blocked(self, action: dict[str, Any]) -> bool:
-        """「自动提权」关掉后，隐式提权动作直接拦下并提醒。
-
-        显式提权（右键「以管理员身份打开」，payload 带 ``_explicit_admin``）
-        是用户点名要的，不走这道闸。
-        """
-        if action.get("_explicit_admin"):
-            return False
+        """「自动提权」关掉后，隐式提权动作直接拦下并提醒。"""
         manager = self.config_manager
         if manager is None:
             return False

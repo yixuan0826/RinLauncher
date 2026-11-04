@@ -68,25 +68,51 @@ DROP_QT_DLL_PREFIXES = (
     "Qt6QuickControls2Imagine", "Qt6QuickControls2Material",
     "Qt6QuickControls2Universal",
 )
-# 对应的 QML 模块目录（dest 以 PySide6/qml/ 开头）。
+# 对应的一级 QML 模块目录（dest 以 PySide6/qml/ 开头）。
 DROP_QML_DIRS = (
     "QtQuick3D", "Qt3D", "QtCharts", "QtDataVisualization", "QtGraphs",
     "QtMultimedia", "QtWebEngine", "QtWebView", "QtWebChannel",
     "QtVirtualKeyboard", "QtTextToSpeech", "QtSensors", "QtPositioning",
     "QtLocation", "QtRemoteObjects", "QtScxml", "QtStateMachine", "QtSql", "QtTest",
 )
+# QtQuick 下的二级模块：整目录删。它们是独立的可选模块，RinUI 只用到
+# QtQuick 本体 / Layouts / Window / Shapes / Effects / Templates / Controls。
+DROP_QML_SUBDIRS = (
+    "QtQuick/VirtualKeyboard", "QtQuick/Dialogs", "QtQuick/Particles",
+    "QtQuick/Timeline", "QtQuick/VectorImage", "QtQuick/LocalStorage",
+    "QtQuick/Scene2D", "QtQuick/Scene3D", "QtQuick/tooling",
+    "QtQuick/Controls/designer",
+)
 # QtQuick/Controls 下的样式子目录，与上面 DLL 一一对应。
 DROP_CONTROLS_STYLES: tuple[str, ...] = ("Imagine", "Material", "Universal")
 
 # 运行期用不到的插件目录：qmltooling 是 QML 调试器后端，networkinformation 只服务于
-# Qt Network 的网络状态查询，两者都不会被加载。
-DROP_PLUGIN_DIRS = ("qmltooling", "networkinformation")
-# 不会用到的图片格式（图标只用 png / ico / svg / jpeg / webp / gif）。
-DROP_PLUGIN_FILES = ("qtiff.dll", "qicns.dll", "qtga.dll", "qwbmp.dll")
+# Qt Network 的网络状态查询；tls 是 Qt 网络的后端（本项目只用 Python urllib），
+# generic 只给触摸设备插件用 —— 都不会被加载。
+DROP_PLUGIN_DIRS = ("qmltooling", "networkinformation", "tls", "generic")
+# 不会用到的图片格式（图标只用 png / ico / svg / jpeg / webp / gif）与 QPA 后备平台。
+DROP_PLUGIN_FILES = ("qtiff.dll", "qicns.dll", "qtga.dll", "qwbmp.dll",
+                     "qdirect2d.dll", "qminimal.dll", "qoffscreen.dll")
 
 
 def _basename(path: str) -> str:
     return path.replace("\\", "/").rsplit("/", 1)[-1]
+
+
+def _qml_module_dropped(norm: str) -> bool:
+    """按 PySide6/qml/ 下的模块路径判断是否要剔：datas 与 binaries 共用。"""
+    marker = "PySide6/qml/"
+    if marker not in norm:
+        return False
+    rest = norm.split(marker, 1)[1]
+    parts = rest.split("/")
+    if parts[0] in DROP_QML_DIRS:
+        return True
+    if any(rest == sub or rest.startswith(sub + "/") for sub in DROP_QML_SUBDIRS):
+        return True
+    # QtQuick/Controls/<Style>：样式目录不在第一层，需要单独匹配。
+    return (len(parts) >= 3 and parts[0] == "QtQuick" and parts[1] == "Controls"
+            and parts[2] in DROP_CONTROLS_STYLES)
 
 
 def _drop_qt_binaries(binaries):
@@ -95,6 +121,8 @@ def _drop_qt_binaries(binaries):
         name = _basename(entry[0])
         norm = entry[0].replace("\\", "/")
         if name.startswith(DROP_QT_DLL_PREFIXES):
+            continue
+        if _qml_module_dropped(norm):
             continue
         if "/plugins/" in norm:
             plugin_dir = norm.split("/plugins/", 1)[1].split("/", 1)[0]
@@ -114,14 +142,7 @@ def _drop_qt_datas(datas):
             return not norm.rsplit("/", 1)[-1].endswith("_zh_CN.qm")
         if not norm.startswith("PySide6/qml/"):
             return False
-        rest = norm[len("PySide6/qml/"):]
-        parts = rest.split("/")
-        if parts[0] in DROP_QML_DIRS:
-            return True
-        # QtQuick/Controls/<Style>：样式目录不在第一层，需要单独匹配。
-        if len(parts) >= 3 and parts[0] == "QtQuick" and parts[1] == "Controls":
-            return parts[2] in DROP_CONTROLS_STYLES
-        return False
+        return _qml_module_dropped(norm)
 
     kept = [entry for entry in datas if not unwanted(entry[0])]
     print(f"[spec] QML datas: {len(datas)} -> {len(kept)}")

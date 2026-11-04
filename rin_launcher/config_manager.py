@@ -424,8 +424,6 @@ class ConfigManager(QObject):
     settingsSectionRequested = Signal(str)
     # 任务计划状态的后台刷新完成（启动方式下拉据此回填真实值）。
     startupStateChanged = Signal()
-    # 小窗要直接打开某一格的编辑器（row, index；index=-1 表示新增）。
-    slotEditRequested = Signal(int, int)
     # 手动 / 自动备份完成后通知设置页刷新。
     backupChanged = Signal()
     # 通知渠道开关被改动（设置页的「通知」分区）。
@@ -464,8 +462,6 @@ class ConfigManager(QObject):
         self._storage_cache: tuple[float, dict[str, Any]] | None = None
         # 可移动磁盘缓存：枚举驱动器有系统调用成本，刷新时只问一次。
         self._removable_cache: tuple[float, list[dict[str, Any]]] | None = None
-        # 小窗发起的「编辑这一格」请求（页面建好前先记着，见 requestSlotEditor）。
-        self._pending_slot_edit: tuple[int, int] | None = None
         # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
         self._pending_settings_section: str = ""
         # 托盘气泡的投递出口：main.py 在托盘真正起来之后接进来。
@@ -1932,27 +1928,6 @@ class ConfigManager(QObject):
         """当前 Windows 用户的系统强调色（``#RRGGBB``）；读不到时返回空串。"""
         return read_system_accent_color()
 
-    @Slot(int, int)
-    def requestSlotEditor(self, row: int, index: int) -> None:
-        """小窗右键「编辑这一格 / 再加一格」：切到启动台页并当场打开编辑器。
-
-        ``index`` 为 -1 表示新增。页面可能还没建好，信号发完还留一份待取
-        （takePendingSlotEdit）。
-        """
-        pending = (int(row), int(index))
-        self._pending_slot_edit = pending
-        self.pageRequested.emit("launcher")
-        self.slotEditRequested.emit(*pending)
-
-    @Slot(result="QVariantMap")
-    def takePendingSlotEdit(self) -> dict[str, Any]:
-        """页面姗姗来迟时，把待编辑的槽位取走（读一次就清空）。"""
-        if self._pending_slot_edit is None:
-            return {}
-        row, index = self._pending_slot_edit
-        self._pending_slot_edit = None
-        return {"row": row, "index": index}
-
     @Slot(result=bool)
     def resetToDefaults(self) -> bool:
         return self.save(_default_config(), changed="all")
@@ -2050,11 +2025,6 @@ class ConfigManager(QObject):
     def startMenuLoading(self) -> bool:
         return self._start_menu_loading
 
-    @Slot(result="QVariantList")
-    def listStartMenuApps(self) -> list[dict]:
-        """兼容旧调用：已经有缓存就返回缓存，不再同步扫盘。"""
-        return [dict(item) for item in self._start_menu_apps]
-
     @Slot()
     def refreshStartMenuApps(self) -> None:
         """后台重新扫描开始菜单，完成后经 ``startMenuAppsChanged`` 通知。"""
@@ -2063,6 +2033,7 @@ class ConfigManager(QObject):
         # 先用内存 / 磁盘缓存秒开（不扫盘），再后台强制刷新。
         quick = start_menu.cached_start_menu_apps()
         if quick:
+            self._attach_cached_thumbs(quick)
             self._start_menu_apps = quick
             self._start_menu_view = None
             self.startMenuAppsChanged.emit()
@@ -2101,17 +2072,28 @@ class ConfigManager(QObject):
     def _apply_start_menu_apps(self, token: int, apps: list[dict[str, Any]]) -> None:
         if token != self._start_menu_token:
             return
+        # 已经在磁盘上的缩略图首帧就挂回去，对话框重开时不会先闪一列类型图标。
+        self._attach_cached_thumbs(apps)
         self._start_menu_apps = apps
         self._start_menu_view = None
         self._start_menu_loading = False
         self.startMenuLoadingChanged.emit()
         self.startMenuAppsChanged.emit()
-        # 缩略图不在打开对话框的瞬间跑：先备好队列，等界面关闭后由
+        # 剩下的缩略图不在打开对话框的瞬间跑：先备好队列，等界面关闭后由
         # startThumbnailQueue() 启动，避免一边浏览一边抽图标卡主线程。
         self._thumb_queue = [app for app in apps if self._needs_thumb(app)]
 
+    def _attach_cached_thumbs(self, apps: list[dict[str, Any]]) -> None:
+        """把缩略图目录里已有的图直接挂到条目上（只查文件存在，不抽图）。"""
+        for app in apps:
+            if app.get("thumb"):
+                continue
+            cached = self._thumb_path(app)
+            if cached is not None and cached.is_file():
+                app["thumb"] = f"file:{cached}"
+
     def _needs_thumb(self, app: dict[str, Any]) -> bool:
-        return bool(app.get("source") or app.get("target")) and not app.get("thumb")
+        return not app.get("thumb")
 
     def _thumb_path(self, app: dict[str, Any]) -> Path | None:
         """按「来源路径 + 修改时间」算缓存键；同一个应用不会重复抽图标。"""
@@ -2162,28 +2144,45 @@ class ConfigManager(QObject):
             self._start_menu_view = None
             self.startMenuAppsChanged.emit()
 
+    def _thumb_candidate(self, raw: str) -> Path | None:
+        """把条目里的路径落成真实文件；``wsl.exe`` 这类裸命令走 PATH 解析。"""
+        text = str(raw or "").strip().removeprefix("file:")
+        if not text:
+            return None
+        path = Path(text)
+        if path.is_file():
+            return path
+        found = shutil.which(text)
+        return Path(found) if found else None
+
     def _make_thumb(self, app: dict[str, Any], target: Path | None) -> str:
         if target is None:
             return ""
-        source = str(app.get("source") or app.get("target") or "")
-        # UWP 的包清单图标本身就是图片，直接复制；其它程序走系统图标提取。
         icon = str(app.get("icon") or "")
+        origin: Path | None = None
         temporary = False
+        # 现成图片优先（UWP 包清单图标、WSA 的 IconLocation）。
         if icon.startswith("file:"):
-            extracted = icon
-        else:
-            if not source or not Path(source).exists():
-                return ""
-            extracted = self._icons.extract(source, notify=False)
-            temporary = True
-        if not extracted:
+            origin = self._thumb_candidate(icon)
+        # 没有图片就从快捷方式 / 目标程序里抽：extract() 内部会依次试
+        # IconLocation → 快捷方式本身 → 目标，覆盖 lnk / wsa / wsl。
+        if origin is None:
+            for candidate in (app.get("source"), app.get("target")):
+                path = self._thumb_candidate(str(candidate or ""))
+                if path is None:
+                    continue
+                extracted = self._icons.extract(str(path), notify=False)
+                if extracted:
+                    origin = Path(extracted.removeprefix("file:"))
+                    temporary = True
+                    break
+        if origin is None:
             return ""
-        origin = Path(extracted.removeprefix("file:"))
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(origin, target)
         except OSError:
-            logger.debug("缩略图缓存失败: %s", source, exc_info=True)
+            logger.debug("缩略图缓存失败: %s", origin, exc_info=True)
             return ""
         finally:
             # 只有「为了缓存临时抽出来」的图标才删；用户图标库里的原图必须保留。

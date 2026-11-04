@@ -302,7 +302,6 @@ Window {
                 slots: compact.panelSlots
                 sizeMode: compact.tileSizeMode
                 onActivated: compact.runSlot(slot)
-                onMenuRequested: compact.showSlotMenu(slot, sceneX, sceneY)
             }
 
             // ── 第三行：存储位置 + 磁盘入口 ──
@@ -431,23 +430,7 @@ Window {
                                     anchors.fill: parent
                                     hoverEnabled: true
                                     cursorShape: Qt.PointingHandCursor
-                                    acceptedButtons: Qt.LeftButton | Qt.RightButton
-                                    onClicked: {
-                                        if (mouse.button === Qt.LeftButton) {
-                                            compact.runSlot(modelData)
-                                        }
-                                    }
-                                    onPressed: {
-                                        var scene = diskCard.mapToItem(null, mouse.x, mouse.y)
-                                        compact.pendingPoint = Qt.point(scene.x, scene.y)
-                                    }
-                                    onReleased: {
-                                        if (mouse.button === Qt.RightButton) {
-                                            compact.showSlotMenu(modelData,
-                                                                 compact.pendingPoint.x,
-                                                                 compact.pendingPoint.y)
-                                        }
-                                    }
+                                    onClicked: compact.runSlot(modelData)
                                 }
 
                                 RowLayout {
@@ -562,15 +545,7 @@ Window {
                             anchors.fill: parent
                             hoverEnabled: true
                             cursorShape: Qt.PointingHandCursor
-                            acceptedButtons: Qt.LeftButton | Qt.RightButton
-                            onClicked: {
-                                if (mouse.button === Qt.LeftButton) {
-                                    compact.runSlot(modelData)
-                                } else {
-                                    var scene = parent.mapToItem(null, mouse.x, mouse.y)
-                                    compact.showSlotMenu(modelData, scene.x, scene.y)
-                                }
-                            }
+                            onClicked: compact.runSlot(modelData)
                         }
 
                         ToolTip.text: modelData.name || ""
@@ -680,7 +655,7 @@ Window {
                                 font.pixelSize: Theme.currentTheme.typography.captionSize - 1
                                 color: Theme.currentTheme.colors.textSecondaryColor
                                 text: compact.usbDevices.length > 0
-                                    ? qsTr("已用 %1%").arg(compact.usbDevices[0].percent || 0)
+                                    ? qsTr("剩余 %1").arg(compact.usbDevices[0].free || "?")
                                     : qsTr("没有检测到")
                             }
                         }
@@ -695,11 +670,9 @@ Window {
                         onClicked: ConfigManager.openRemovableDrive()
                     }
                     ToolTip.text: compact.usbDevices.length > 0
-                        ? qsTr("%1\n共 %2 · 剩余 %3 · %4 个分区")
+                        ? qsTr("%1 · 剩余 %2")
                             .arg(compact.usbDevices[0].name || "U 盘")
-                            .arg(compact.usbDevices[0].total || "?")
                             .arg(compact.usbDevices[0].free || "?")
-                            .arg(compact.usbDevices[0].partitions.length)
                         : qsTr("没有检测到 U 盘")
                     ToolTip.visible: usbMouse.containsMouse
                 }
@@ -777,9 +750,6 @@ Window {
         var y = primaryHeight > 0 ? primaryY : Screen.virtualY
         return Qt.rect(x, y, width, height)
     }
-
-    // 右键那一刻的场景坐标，供菜单定位。
-    property point pendingPoint: Qt.point(0, 0)
 
     // 磁盘 / U 盘是热插拔的：小窗可见时每 2.5 秒重读一次（隐藏时停掉）。
     Timer {
@@ -875,7 +845,7 @@ Window {
             runTool(slot.key)
             return
         }
-        // 管理员动作：设置里开着「提权前确认」就先问一句（右键显式提权不拦）。
+        // 管理员动作：设置里开着「提权前确认」就先问一句。
         if (slot.admin === true
                 && ConfigManager.getSettings().confirmAdminActions !== false) {
             compact.askAdminRun(slot)
@@ -906,26 +876,6 @@ Window {
                 }
             },
             { confirmText: qsTr("运行") })
-    }
-
-    function runSlotAsAdmin(slot) {
-        if (!slot || slot.kind !== "action") {
-            return
-        }
-        // 把解析出来的完整动作字段带过去（类型 / 目标 / 参数 / 工作目录 / 按键
-        // 序列），缺了会执行出不一样的结果。
-        // 右键点名要的提权：带 _explicit_admin 标记，不受「提权前确认 / 自动提权」拦截。
-        var payload = {
-            "name": slot.name,
-            "type": slot.type,
-            "target": slot.target,
-            "arguments": slot.arguments || "",
-            "working_dir": slot.working_dir || "",
-            "keyboard_steps": slot.keyboard_steps || [],
-            "run_as": "admin",
-            "_explicit_admin": true
-        }
-        ConfigManager.executeAction(payload)
     }
 
     function runTool(key) {
@@ -965,8 +915,7 @@ Window {
         if (!slot) return ""
         if (slot.kind === "usb") {
             if (slot.exists === false) return qsTr("没有检测到")
-            return qsTr("共 %1 · 剩余 %2")
-                .arg(slot.total || "?").arg(slot.free || "?")
+            return qsTr("剩余 %1").arg(slot.free || "?")
         }
         if (slot.kind === "path" && slot.pathType === "file") {
             return slot.exists === false ? qsTr("文件不可用") : String(slot.path || "")
@@ -1013,95 +962,4 @@ Window {
         compactMenu.openAt(compact.x + scene.x, compact.y + scene.y, list, menuArea())
     }
 
-    // 菜单内容项的真实尺寸：Popup 自己的 width/height 在打开后仍然可能是 0，
-    // 拿它算位置就会把菜单甩到屏幕外（"右对齐"不左移、"向上"不上升）。
-    function menuMetrics(menu) {
-        var width = menu.width
-        var height = menu.height
-        // contentItem 的 implicit 尺寸不含菜单内边距，只能当兜底。
-        var item = menu.contentItem
-        if (item) {
-            if (!(width > 0)) {
-                width = item.implicitWidth
-            }
-            if (!(height > 0)) {
-                height = item.implicitHeight
-            }
-        }
-        if (!(width > 0)) {
-            width = menu.implicitWidth
-        }
-        if (!(height > 0)) {
-            height = menu.implicitHeight
-        }
-        return Qt.point(width, height)
-    }
-
-    // 把菜单摆到屏幕可用区域内：先在关闭状态算好坐标再 open。
-    // 菜单未打开时 implicitWidth / implicitHeight 已经是最终尺寸；open 之后
-    // 再改 x/y 会让 Qt 重新定位（甚至直接关掉菜单），所以只设一次。
-    function popupMenuAt(menu, sceneX, sceneY, alignRight, preferUp) {
-        var metrics = menuMetrics(menu)
-        var menuWidth = metrics.x
-        var menuHeight = metrics.y
-        var screenX = compact.x + sceneX
-        var screenY = compact.y + sceneY
-        var minX = (primaryWidth > 0 ? primaryX : Screen.virtualX) + 4
-        var minY = (primaryHeight > 0 ? primaryY : Screen.virtualY) + 4
-        var areaWidth = primaryWidth > 0 ? primaryWidth : Screen.desktopAvailableWidth
-        var areaHeight = primaryHeight > 0 ? primaryHeight : Screen.desktopAvailableHeight
-        var x = alignRight ? screenX - menuWidth : screenX
-        var y = preferUp ? screenY - menuHeight : screenY
-        // 翻转：上方放不下就向下；下方放不下就向上。
-        if (y < minY && screenY + menuHeight <= minY + areaHeight) {
-            y = screenY
-        }
-        if (y + menuHeight > minY + areaHeight && screenY - menuHeight >= minY) {
-            y = screenY - menuHeight
-        }
-        x = Math.min(Math.max(x, minX), Math.max(minX, minX + areaWidth - menuWidth))
-        y = Math.min(Math.max(y, minY), Math.max(minY, minY + areaHeight - menuHeight))
-        // Popup 的 x/y 是相对父窗口的坐标。
-        menu.x = x - compact.x
-        menu.y = y - compact.y
-        menu.open()
-    }
-
-    // 右键菜单的编辑入口：切到启动台页并当场打开这一格的编辑器。
-    function editSlot(slot) {
-        if (slot) {
-            ConfigManager.requestSlotEditor(slot.row, slot.rowIndex)
-        }
-    }
-
-    function addSlotToRow(slot) {
-        ConfigManager.requestSlotEditor(slot ? slot.row : 0, -1)
-    }
-
-    function showSlotMenu(slot, sceneX, sceneY) {
-        if (!slot) {
-            return
-        }
-        var list = []
-        list.push({
-            icon: "ic_fluent_open_20_regular",
-            text: slot.kind === "usb" ? qsTr("打开可移动磁盘")
-                : slot.kind === "path" ? qsTr("打开这个位置") : qsTr("打开"),
-            action: function () { compact.runSlot(slot) }
-        })
-        if (slot.kind === "action" && (slot.type === "file" || slot.type === "cmd")) {
-            list.push({ icon: "ic_fluent_shield_20_regular",
-                        text: qsTr("以管理员身份打开"),
-                        action: function () { compact.runSlotAsAdmin(slot) } })
-        }
-        // 存储行两张卡片是钉死的（路径在设置页改），只有面板格子有编辑入口。
-        if (slot.row === 0) {
-            list.push({ separator: true })
-            list.push({ icon: "ic_fluent_edit_20_regular", text: qsTr("编辑这一格…"),
-                        action: function () { compact.editSlot(slot) } })
-            list.push({ icon: "ic_fluent_add_20_regular", text: qsTr("再加一格…"),
-                        action: function () { compact.addSlotToRow(slot) } })
-        }
-        compactMenu.openAt(compact.x + sceneX, compact.y + sceneY, list, menuArea())
-    }
 }

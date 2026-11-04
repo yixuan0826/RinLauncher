@@ -3,37 +3,28 @@ import QtQuick.Controls 2.15
 import RinUI
 
 // 小窗里的一格：图标在上、单行标题在下。
-//
-// 被 CompactRow 用来画前两行 —— 大格子放应用，小格子放功能。两种形态只是尺寸
-// 不同，所以用 style 切换而不是拆成两个组件。
 Item {
     id: tile
 
     property var slot: null
-    property string style: "big"        // big = 应用大格，mini = 功能小格
 
     signal activated(var slot)
-    signal menuRequested(var slot, real sceneX, real sceneY)
 
-    readonly property bool mini: style === "mini"
     readonly property bool empty: !slot
     // 引用了被停用的条目时，Python 那边就不会把这一格解析出来，所以这里只兜底。
     readonly property bool disabled: slot ? slot.enabled === false : false
-    // 小格子只有 50px 上下，字号得再收一点，否则「启动台设置」这种五字标题
+    // 格子只有 50~76px，字号得再收一点，否则「启动台设置」这种五字标题
     // 会折成 4+1 两行，第二行孤零零一个字很难看。
-    readonly property int labelSize: mini
-        ? Theme.currentTheme.typography.captionSize - 2
-        : Theme.currentTheme.typography.captionSize
+    readonly property int labelSize: Theme.currentTheme.typography.captionSize
     // 标题最多两行。行高用 RinUI 的 Caption 行高（16px），别自己估。
     readonly property int labelLineHeight: Theme.currentTheme.typography.captionLineHeight
     readonly property int labelBlock: labelLineHeight * 2
     // 图标给两行标题让位：剩下的空间里取大（但不超过原来的比例），至少 14。
     readonly property real iconSize: Math.max(14, Math.min(
-        mini ? 22 : Math.round(width * 0.36),
-        height - labelBlock - (mini ? 3 : 5) - 8))
+        Math.round(width * 0.36), height - labelBlock - 5 - 8))
 
-    width: mini ? 56 : 76
-    height: mini ? 58 : width
+    width: 76
+    height: width
     opacity: empty ? 0.3 : disabled ? 0.45 : 1
 
     // 按下去时整格缩一点，「按到了」有个即时反馈；时长跟着动画总开关走。
@@ -63,7 +54,7 @@ Item {
     Column {
         anchors.centerIn: parent
         width: parent.width - 6
-        spacing: tile.mini ? 3 : 5
+        spacing: 5
 
         AppIcon {
             anchors.horizontalCenter: parent.horizontalCenter
@@ -116,19 +107,11 @@ Item {
         id: pointer
         anchors.fill: parent
         hoverEnabled: true
-        acceptedButtons: Qt.LeftButton | Qt.RightButton
 
         onReleased: {
             // 只在左键按下、且释放仍在格子内时算一次点击；拖出去再松手不启动。
             if (mouse.button === Qt.LeftButton && containsMouse && !tile.empty) {
                 tile.activated(tile.slot)
-            }
-        }
-        onClicked: {
-            if (mouse.button === Qt.RightButton) {
-                // 映射到场景坐标，菜单才能在任何父级里正确定位。
-                var scene = tile.mapToItem(null, mouseX, mouseY)
-                tile.menuRequested(tile.slot, scene.x, scene.y)
             }
         }
     }

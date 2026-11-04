@@ -20,7 +20,7 @@ def test_version_single_source():
     assert cm.APP_VERSION == __version__
     # 每个版本都要在更新日志里留条目，免得发版时忘了写。
     changelog = (ROOT / "CHANGELOG.md").read_text(encoding="utf-8")
-    assert f"## {__version__}-pre" in changelog
+    assert f"## {__version__}" in changelog
 
 
 def test_pyproject_reads_version_dynamically():

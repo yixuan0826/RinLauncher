@@ -92,12 +92,6 @@ def test_elevation_blocked_when_auto_elevate_off(executor, manager):
     assert manager.notifications  # 拦下时必须提醒用户
 
 
-def test_elevation_explicit_admin_bypasses_gate(executor, manager):
-    # 右键「以管理员身份打开」是用户点名要的，不闸
-    manager.config["settings"]["adminAutoElevate"] = False
-    assert executor._elevation_blocked({"_explicit_admin": True}) is False
-
-
 def test_elevation_missing_config_fails_open(executor, manager):
     manager.config = {}  # 配置缺 settings：视为放行，不误伤
     assert executor._elevation_blocked({}) is False

@@ -294,7 +294,6 @@ Item {
 
     Component.onCompleted: {
         reload()
-        applyPendingSlotEdit()
     }
 
     Connections {
@@ -302,11 +301,6 @@ Item {
 
         function onLauncherChanged() {
             launcherSettings.reload()
-        }
-
-        // 小窗里右键「编辑这一格…」会直接落到对应的编辑器上。
-        function onSlotEditRequested(row, index) {
-            launcherSettings.openSlotEditor(row, index)
         }
     }
 
@@ -368,14 +362,6 @@ Item {
         var raw = filterRaw(row)[index]
         if (raw) {
             slotEditor.openFor(row, index, raw)
-        }
-    }
-
-    // 小窗右键「编辑这一格 / 再加一格」：页面可能刚切过来，把留下的请求取走。
-    function applyPendingSlotEdit() {
-        var pending = ConfigManager.takePendingSlotEdit()
-        if (pending && pending.row !== undefined) {
-            openSlotEditor(pending.row, pending.index)
         }
     }
 
