@@ -17,6 +17,8 @@ ColumnLayout {
     property string unit: qsTr("项")
     // 上限；0 表示不限。满了以后「添加」会置灰。
     property int capacity: 0
+    // 整行钉死：不显示添加 / 编辑 / 删除 / 排序入口（存储行用）。
+    property bool locked: false
 
     signal addRequested()
     signal editRequested(int index)
@@ -77,6 +79,7 @@ ColumnLayout {
             text: list.slots.length === 0 ? qsTr("添加第一格") : qsTr("添加一格")
             icon.name: "ic_fluent_add_20_regular"
             highlighted: true
+            visible: !list.locked
             enabled: !list.full
             onClicked: list.addRequested()
         }
@@ -85,7 +88,7 @@ ColumnLayout {
     // ── 空状态：一句话 + 一个明确入口 ──
     Frame {
         Layout.fillWidth: true
-        visible: list.slots.length === 0
+        visible: list.slots.length === 0 && !list.locked
         implicitHeight: 124
         radius: Theme.currentTheme.appearance.windowRadius
         color: "transparent"
@@ -140,8 +143,8 @@ ColumnLayout {
                 anchors.fill: parent
                 anchors.rightMargin: 150   // 让出右边那四个按钮
                 hoverEnabled: true
-                cursorShape: Qt.PointingHandCursor
-                onClicked: list.editRequested(index)
+                cursorShape: list.locked ? Qt.ArrowCursor : Qt.PointingHandCursor
+                onClicked: if (!list.locked) list.editRequested(index)
             }
 
             RowLayout {
@@ -224,26 +227,32 @@ ColumnLayout {
                 MiniIconButton {
                     iconName: "ic_fluent_arrow_up_20_regular"
                     tip: qsTr("前移")
+                    visible: !list.locked
                     enabled: index > 0
                     onClicked: list.moveRequested(index, -1)
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_arrow_down_20_regular"
                     tip: qsTr("后移")
+                    visible: !list.locked
                     enabled: index < list.slots.length - 1
                     onClicked: list.moveRequested(index, 1)
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_edit_20_regular"
-                    // U 盘入口已关闭编辑：只能删除或调整顺序。
+                    // U 盘入口是固定功能，没有可编辑的东西。
                     tip: modelData.kind === "usb"
                         ? qsTr("U 盘入口不可编辑") : qsTr("编辑这一格")
+                    visible: !list.locked
                     enabled: modelData.kind !== "usb"
                     onClicked: list.editRequested(index)
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_delete_20_regular"
-                    tip: qsTr("移除这一格")
+                    tip: modelData.kind === "usb"
+                        ? qsTr("U 盘入口不可删除") : qsTr("移除这一格")
+                    visible: !list.locked
+                    enabled: modelData.kind !== "usb"
                     danger: true
                     onClicked: list.removeRequested(index)
                 }

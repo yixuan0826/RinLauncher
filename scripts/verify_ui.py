@@ -126,16 +126,10 @@ def main() -> int:
     report["compact"] = window_info(compact)
     report["screenshots"]["compact"] = grab(compact, "compact", backdrop)
 
-    # 三种形态各留一张图：迷你胶囊、悬浮球收起 / 展开。
-    for mode, name in (("mini", "compact-mini"), ("floating", "compact-ball")):
-        compact.setProperty("windowMode", mode)
-        wait(320)
-        report["screenshots"][name] = grab(compact, name, backdrop)
-    compact.setProperty("ballExpanded", True)
+    # 迷你形态留一张图，方便回归单行布局。
+    compact.setProperty("windowMode", "mini")
     wait(320)
-    report["screenshots"]["compact-ball-expanded"] = grab(
-        compact, "compact-ball-expanded", backdrop)
-    compact.setProperty("ballExpanded", False)
+    report["screenshots"]["compact-mini"] = grab(compact, "compact-mini", backdrop)
     compact.setProperty("windowMode", "normal")
     wait(320)
 

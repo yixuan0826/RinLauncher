@@ -136,18 +136,18 @@ Item {
                     ComboBox {
                         id: modeCombo
                         Layout.preferredWidth: 180
-                        model: [qsTr("完整启动台"), qsTr("迷你模式"), qsTr("悬浮球")]
+                        model: [qsTr("完整启动台"), qsTr("迷你模式")]
                         onActivated: function (index) {
                             if (!pageRoot.page || pageRoot.page.syncing) return
                             pageRoot.page.apply("compactMode",
-                                ["normal", "mini", "floating"][index])
+                                ["normal", "mini"][index])
                         }
                     }
                 }
 
                 FormRow {
                     label: qsTr("贴角位置")
-                    description: qsTr("悬浮球始终固定在右下角")
+                    description: qsTr("完整启动台与迷你条都贴着所选角落")
                     ComboBox {
                         id: cornerCombo
                         Layout.preferredWidth: 180
@@ -233,22 +233,6 @@ Item {
                         }
                     }
                 }
-
-                FormRow {
-                    label: qsTr("悬浮球透明度")
-                    description: qsTr("%1%（越大越透）").arg(Math.round(floatingSlider.value))
-                    Slider {
-                        id: floatingSlider
-                        Layout.preferredWidth: 240
-                        from: 0
-                        to: 90
-                        stepSize: 1
-                        onMoved: {
-                            if (!pageRoot.page || pageRoot.page.syncing) return
-                            pageRoot.page.apply("floatingTransparency", Math.round(value))
-                        }
-                    }
-                }
             }
         }
     }
@@ -286,7 +270,7 @@ Item {
             ["small", "medium", "large"].indexOf(model.tileSize || "medium"))
         animationSwitch.checked = model.animationEnabled !== false
         modeCombo.currentIndex = Math.max(0,
-            ["normal", "mini", "floating"].indexOf(model.compactMode || "normal"))
+            ["normal", "mini"].indexOf(model.compactMode === "mini" ? "mini" : "normal"))
         cornerCombo.currentIndex = model.windowCorner === "bottom-left" ? 1 : 0
         offsetXBox.value = Number(model.windowOffsetX || 0)
         offsetYBox.value = Number(model.windowOffsetY || 0)
@@ -294,8 +278,6 @@ Item {
             ? Number(model.compactTransparency) : 82
         miniSlider.value = model.miniTransparency !== undefined
             ? Number(model.miniTransparency) : 30
-        floatingSlider.value = model.floatingTransparency !== undefined
-            ? Number(model.floatingTransparency) : 8
         Qt.callLater(function () { pageRoot.accentReady = true })
     }
 }

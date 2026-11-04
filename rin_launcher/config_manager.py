@@ -210,9 +210,9 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "autoCheckUpdates": True,
     "updateMirror": "github",
     "updateMirrorAuto": True,
-    # 小窗形态：normal / mini / floating。迷你与悬浮球都由同一个窗口变形而来。
+    # 小窗形态：normal（完整启动台）/ mini（单行工具条）。
     "compactMode": "normal",
-    # 贴角位置与像素偏移；悬浮球始终固定在右下角，不受这两个值影响。
+    # 贴角位置与像素偏移，两种形态都适用。
     "windowCorner": "bottom-right",
     "windowOffsetX": 0,
     "windowOffsetY": 0,
@@ -220,7 +220,6 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # 完整版默认 82% 透明，与 1.1.10 的云母观感一致。
     "compactTransparency": 82,
     "miniTransparency": 30,
-    "floatingTransparency": 8,
     # auto = 检测到 Wallpaper Engine 时用 Acrylic，否则 Mica。
     "backdropMode": "auto",
     # 全局去掉 Windows 快捷方式小箭头（改 HKCU，重启资源管理器后生效）。
@@ -545,7 +544,7 @@ class ConfigManager(QObject):
                 old_version = 1
             new_keys = {
                 "compactMode", "windowCorner", "windowOffsetX", "windowOffsetY",
-                "compactTransparency", "miniTransparency", "floatingTransparency",
+                "compactTransparency", "miniTransparency",
                 "backdropMode", "shortcutArrowGlobal",
             }
             needs_rewrite = (
@@ -606,8 +605,10 @@ class ConfigManager(QObject):
             settings["updateChannel"] = "stable"
         if settings.get("tileSize") not in ("small", "medium", "large"):
             settings["tileSize"] = "medium"
-        if settings.get("compactMode") not in ("normal", "mini", "floating"):
-            settings["compactMode"] = "normal"
+        if settings.get("compactMode") not in ("normal", "mini"):
+            # 悬浮球已下线：旧配置里的 floating 退回迷你模式，其余非法值回完整模式。
+            settings["compactMode"] = (
+                "mini" if settings.get("compactMode") == "floating" else "normal")
         if settings.get("windowCorner") not in ("bottom-right", "bottom-left"):
             settings["windowCorner"] = "bottom-right"
         if settings.get("backdropMode") not in ("auto", "mica", "acrylic"):
@@ -615,8 +616,7 @@ class ConfigManager(QObject):
         settings["windowOffsetX"] = _clamp_int(settings.get("windowOffsetX"), 0, -2000, 2000)
         settings["windowOffsetY"] = _clamp_int(settings.get("windowOffsetY"), 0, -2000, 2000)
         for key, default in (("compactTransparency", 82),
-                             ("miniTransparency", 30),
-                             ("floatingTransparency", 8)):
+                             ("miniTransparency", 30)):
             settings[key] = _clamp_int(settings.get(key), default, 0, 90)
         settings["shortcutArrowGlobal"] = bool(settings.get("shortcutArrowGlobal", True))
         settings["autoCheckUpdates"] = bool(settings.get("autoCheckUpdates", True))
@@ -1399,6 +1399,9 @@ class ConfigManager(QObject):
             # U 盘入口由迷你模式的快捷开关自动提供，不再允许手动新增。
             return False
         row = ROW_PANEL if int(row) <= ROW_PANEL else ROW_STORAGE
+        if row == ROW_STORAGE:
+            # 存储行两张卡片（存储位置 + U 盘）钉死：不新增、不删除、不移动。
+            return False
         if row == ROW_PANEL and self._panel_full():
             self.showToast.emit(f"面板最多放 {PANEL_CAPACITY} 格，先删一格再加。", "warning")
             return False
@@ -1415,7 +1418,8 @@ class ConfigManager(QObject):
         类型也可以改：``kind`` 变了就按新类型重建字段，旧的无关字段会被丢掉。
         """
         target = self._row_slot(row, index)
-        if target is None:
+        if target is None or int(row) == ROW_STORAGE:
+            # 存储行只允许通过 setLauncherStoragePath 改路径，卡片本身不动。
             return False
         slot = dict(slot)
         # 已经存在的 U 盘槽位保持只读：允许删除，但不能改成别的类型，
@@ -1435,7 +1439,7 @@ class ConfigManager(QObject):
     @Slot(int, int, result=bool)
     def deleteLauncherSlot(self, row: int, index: int) -> bool:
         target = self._row_slot(row, index)
-        if target is None:
+        if target is None or int(row) == ROW_STORAGE:
             return False
         self._slots().remove(target)
         return self.save(changed="launcher")
@@ -1444,7 +1448,7 @@ class ConfigManager(QObject):
     def moveLauncherSlot(self, row: int, index: int, delta: int) -> bool:
         """在第 ``row`` 行内前后挪一格。"""
         target = self._row_slot(row, index)
-        if target is None:
+        if target is None or int(row) == ROW_STORAGE:
             return False
         slots = self._slots()
         position = slots.index(target)
@@ -1493,7 +1497,7 @@ class ConfigManager(QObject):
                 self.applyShellPreferences()
             if any(key in settings for key in (
                     "compactMode", "windowCorner", "windowOffsetX", "windowOffsetY",
-                    "compactTransparency", "miniTransparency", "floatingTransparency",
+                    "compactTransparency", "miniTransparency",
                     "backdropMode")):
                 self.settingsChanged.emit()
             mode_changed = ("accentColorMode" in settings
@@ -1755,8 +1759,13 @@ class ConfigManager(QObject):
     @Slot("QVariantMap", result=bool)
     def completeOobe(self, settings: dict) -> bool:
         """OOBE 完成：保存设置并把 first-run 写回 false。"""
-        if settings:
-            self.updateSettings(dict(settings))
+        payload = dict(settings or {})
+        # 启动方式不走 updateSettings（要碰注册表 / 任务计划），单独提出来。
+        startup = payload.pop("startupMode", None)
+        if payload:
+            self.updateSettings(payload)
+        if startup in ("off", "normal", "admin"):
+            self.setStartupMode(str(startup))
         ok = app_mode.mark_first_run_done(self.app_mode_path.parent)
         if not ok:
             # 安装目录不可写：退到用户数据目录的一份覆盖配置，下次启动仍然生效。

@@ -24,6 +24,8 @@ FluentWindowBase {
     readonly property int lastStep: 2
     property var model: ({})
     property bool saving: false
+    // 用户在这一页选的形态，与第二页的「启动台形态」共用。
+    property string pendingMode: "normal"
 
     signal closeRequested()
 
@@ -43,6 +45,9 @@ FluentWindowBase {
         animationSwitch.checked = model.animationEnabled !== false
         minimizeSwitch.checked = model.startMinimized === true
         arrowSwitch.checked = model.shortcutArrowGlobal !== false
+        pendingMode = model.compactMode === "mini" ? "mini" : "normal"
+        modeCombo.currentIndex = pendingMode === "mini" ? 1 : 0
+        startupSwitch.checked = (model.startupMode || "off") !== "off"
     }
 
     Component.onCompleted: {
@@ -74,7 +79,8 @@ FluentWindowBase {
             "startMinimized": minimizeSwitch.checked,
             "animationEnabled": animationSwitch.checked,
             "shortcutArrowGlobal": arrowSwitch.checked,
-            "compactMode": "normal"
+            "compactMode": oobe.pendingMode,
+            "startupMode": startupSwitch.checked ? "normal" : "off"
         })
         ConfigManager.completeOobe(payload)
         saving = false
@@ -144,28 +150,53 @@ FluentWindowBase {
                             wrapMode: Text.Wrap
                             typography: Typography.Body
                             color: Theme.currentTheme.colors.textSecondaryColor
-                            text: qsTr("一个常驻桌面的启动台。先花一分钟认识三种形态，之后随时可以在「更多」菜单里切换。")
+                            text: qsTr("一个常驻桌面的启动台。先选一种形态，之后随时可以在「更多」菜单里切换。")
                         }
                     }
                 }
 
                 Repeater {
                     model: [
-                        { icon: "ic_fluent_apps_20_regular", title: qsTr("完整启动台"),
-                          text: qsTr("贴在主屏右下角，固定应用、存储位置和系统控制都在这里。") },
-                        { icon: "ic_fluent_dock_row_20_regular", title: qsTr("迷你模式"),
-                          text: qsTr("收成单行工具条，只留下最常用的三个应用和存储 / U 盘开关。") },
-                        { icon: "ic_fluent_record_20_regular", title: qsTr("悬浮球"),
-                          text: qsTr("常驻右下角、不抢焦点；点一下展开正常模式、迷你模式和更多菜单。") }
+                        { mode: "normal", icon: "ic_fluent_apps_20_regular",
+                          title: qsTr("完整启动台"),
+                          text: qsTr("贴在主屏右下角：固定应用、存储位置与系统控制都在这一块。") },
+                        { mode: "mini", icon: "ic_fluent_dock_row_20_regular",
+                          title: qsTr("迷你模式"),
+                          text: qsTr("收成单行工具条：常驻应用、存储与 U 盘开关，占地方最小。") }
                     ]
                     delegate: Frame {
+                        id: modeCard
                         Layout.fillWidth: true
                         implicitHeight: 92
                         radius: Theme.currentTheme.appearance.windowRadius
+                        readonly property bool chosen: oobe.pendingMode === modelData.mode
+                        // 选中的那一张用强调色描边，右上角给个勾。
+                        border.width: chosen ? 2 : 1
+                        border.color: chosen
+                            ? Theme.currentTheme.colors.primaryColor
+                            : Theme.currentTheme.colors.windowBorderColor
+
+                        MouseArea {
+                            anchors.fill: parent
+                            cursorShape: Qt.PointingHandCursor
+                            onClicked: oobe.pendingMode = modelData.mode
+                        }
+
+                        AppIcon {
+                            anchors.right: parent.right
+                            anchors.top: parent.top
+                            anchors.margins: 10
+                            z: 2
+                            visible: modeCard.chosen
+                            iconKey: "ic_fluent_checkmark_circle_20_filled"
+                            iconSize: 18
+                            tint: Theme.currentTheme.colors.primaryColor
+                        }
 
                         RowLayout {
                             anchors.fill: parent
                             anchors.margins: 14
+                            anchors.rightMargin: 36
                             spacing: 14
 
                             AppIcon {
@@ -255,6 +286,29 @@ FluentWindowBase {
                     iconKey: "ic_fluent_settings_20_regular"
 
                     FormRow {
+                        label: qsTr("启动台形态")
+                        description: qsTr("之后可以在「更多」菜单里随时切换")
+                        ComboBox {
+                            id: modeCombo
+                            Layout.preferredWidth: 180
+                            model: [qsTr("完整启动台"), qsTr("迷你模式")]
+                            onActivated: function (index) {
+                                oobe.pendingMode = ["normal", "mini"][index]
+                            }
+                        }
+                    }
+
+                    FormRow {
+                        label: qsTr("开机自动启动")
+                        description: qsTr("登录 Windows 后自动打开启动台")
+                        Switch {
+                            id: startupSwitch
+                            checkedText: qsTr("开")
+                            uncheckedText: qsTr("关")
+                        }
+                    }
+
+                    FormRow {
                         label: qsTr("启动时最小化")
                         description: qsTr("登录后只留托盘图标；需要时按热键唤出")
                         Switch {
@@ -315,7 +369,20 @@ FluentWindowBase {
                     wrapMode: Text.Wrap
                     typography: Typography.Body
                     color: Theme.currentTheme.colors.textSecondaryColor
-                    text: qsTr("启动台会出现在主屏右下角。右键任意一格可以编辑，标题栏的「…」里可以切换迷你模式和悬浮球。")
+                    text: qsTr("启动台会出现在主屏右下角。右键任意一格可以编辑，标题栏的「…」里可以切换形态与设置。")
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    horizontalAlignment: Text.AlignHCenter
+                    wrapMode: Text.Wrap
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.textSecondaryColor
+                    text: qsTr("形态：%1 ｜ 主题：%2 ｜ 磁贴：%3 ｜ 开机自启：%4")
+                        .arg(oobe.pendingMode === "mini" ? qsTr("迷你模式") : qsTr("完整启动台"))
+                        .arg([qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")][themeCombo.currentIndex])
+                        .arg([qsTr("小"), qsTr("中"), qsTr("大")][tileCombo.currentIndex])
+                        .arg(startupSwitch.checked ? qsTr("开") : qsTr("关"))
                 }
 
                 Button {

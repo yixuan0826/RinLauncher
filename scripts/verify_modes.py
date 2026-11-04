@@ -66,7 +66,7 @@ def main() -> int:
         "compactMode": "normal", "windowCorner": "bottom-right",
         "windowOffsetX": 0, "windowOffsetY": 0,
         "compactTransparency": 82, "miniTransparency": 30,
-        "floatingTransparency": 8, "shortcutArrowGlobal": False,
+        "shortcutArrowGlobal": False,
         "startMinimized": False,
     })
     # 迷你模式只取前三个固定应用；没有槽位就看不出单行布局。
@@ -94,21 +94,6 @@ def main() -> int:
         "mode": compact.property("windowMode"),
     }
     report["screenshots"]["mini"] = grab(compact, "mini")
-
-    cm.updateSettings({"compactMode": "floating"})
-    wait(700)
-    launcher.show_compact()
-    wait(500)
-    report["modes"]["floating"] = {
-        "width": compact.width(), "height": compact.height(),
-        "mode": compact.property("windowMode"),
-    }
-    report["screenshots"]["floating"] = grab(compact, "floating")
-    compact.setProperty("ballExpanded", True)
-    wait(500)
-    report["screenshots"]["floating_expanded"] = grab(compact, "floating-expanded")
-    compact.setProperty("ballExpanded", False)
-    wait(300)
 
     cm.updateSettings({"compactMode": "normal"})
     wait(500)

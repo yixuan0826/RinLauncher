@@ -276,6 +276,8 @@ Item {
 
                     SlotListEditor {
                         objectName: "storageSlotList"
+                        // 存储行两张卡片钉死：不能增、删、移；路径由上面的输入框改。
+                        locked: true
                         slots: launcherSettings.storageSlots
                         emptyHint: qsTr("还没有磁盘入口。")
                         unit: qsTr("个入口")
@@ -345,6 +347,9 @@ Item {
     // ------------------------------------------------------------------
     // 打开某一格的编辑器（index 是界面上解析后的序号）。
     function editSlot(row, index) {
+        if (row === rowStorage) {
+            return
+        }
         var shown = shownSlot(row, index)
         if (shown) {
             openSlotEditor(row, shown.rowIndex)
@@ -353,6 +358,9 @@ Item {
 
     // 按「原始列表」下标打开编辑器；index 为 -1 表示新增。
     function openSlotEditor(row, index) {
+        if (row === rowStorage) {
+            return
+        }
         if (index < 0) {
             slotEditor.openFor(row, -1, null)
             return
@@ -391,6 +399,9 @@ Item {
     }
 
     function removeSlot(row, index) {
+        if (row === rowStorage) {
+            return
+        }
         var shown = shownSlot(row, index)
         if (!shown) {
             return

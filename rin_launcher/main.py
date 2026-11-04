@@ -50,7 +50,6 @@ from PySide6.QtWidgets import QApplication
 import RinUI  # noqa: F401
 from rin_launcher import __version__, effects, logging_setup
 from rin_launcher.action_executor import ActionExecutor
-from rin_launcher.ball_watcher import BallWatcher
 from rin_launcher.config_manager import ConfigManager
 from rin_launcher.hotkey import GlobalHotkey
 from rin_launcher.key_recorder import KeyRecorder
@@ -64,7 +63,7 @@ from rin_launcher.tray import TrayIcon
 from rin_launcher.updater import UpdateManager
 from RinUI import RinUIWindow
 from RinUI.core import BackdropEffect, is_windows
-from RinUI.core.config import is_win11
+from RinUI.core.config import RinConfig, is_win11
 
 logger = logging.getLogger(__name__)
 
@@ -139,8 +138,6 @@ class Launcher:
         self.update_manager = UpdateManager(self.config_manager)
         # 按键序列编辑器用：全局录制键盘输入（QML 侧名字是 KeyRecorder）。
         self.key_recorder = KeyRecorder()
-        # 悬浮球展开时临时监听 Esc / 点外部。Launcher 不是 QObject，不挂父子关系。
-        self.ball_watcher = BallWatcher()
         # 单实例消息服务端（见 start_single_instance_server）。
         self._single_server: SingleInstanceServer | None = None
         self._tray_wired = False
@@ -148,7 +145,22 @@ class Launcher:
         # 安全模式：不装全局热键钩子、不跑系统状态轮询与配置监听。
         self.launch_mode = self.config_manager.getLaunchMode()
 
+        self._pin_rinui_backdrop()
         self._wire_config()
+
+    def _pin_rinui_backdrop(self) -> None:
+        """把 RinUI 的全局材质钉在云母。
+
+        RinUI 的 WinEventFilter 会在窗口**激活**时把 ``RinConfig["backdrop_effect"]``
+        刷给所有已注册窗口（``ThemeManager.windows`` 是类级列表）。旧版本设置页
+        写过 acrylic，那份值会一直残留 —— 这就是编辑窗口时有时无的亚克力来源。
+        """
+        try:
+            RinConfig["backdrop_effect"] = (
+                BackdropEffect.Mica.value if is_win11()
+                else BackdropEffect.None_.value)
+        except Exception:
+            logger.debug("Failed to pin RinUI backdrop", exc_info=True)
 
     def _wire_screen(self) -> None:
         """主屏 / 分辨率 / 任务栏变化时重新贴角。"""
@@ -254,7 +266,6 @@ class Launcher:
         context.setContextProperty("KeyRecorder", self.key_recorder)
         context.setContextProperty("SystemControls", self.system_controls)
         context.setContextProperty("UpdateManager", self.update_manager)
-        context.setContextProperty("FloatingBall", self.ball_watcher)
         window.load(entry)
 
         if window.root_window is None:
@@ -264,6 +275,9 @@ class Launcher:
             return None
         if ICON_FILE.is_file():
             window.setIcon(ICON_FILE)
+        # RinUI 刷过全局材质之后，把整套按窗口角色重新铺一遍（启动台回亚克力）。
+        self.apply_backdrop()
+        self._settle_backdrop(window)
         return window
 
     def create_compact_window(self) -> bool:
@@ -277,10 +291,6 @@ class Launcher:
         root.openMainRequested.connect(self.show_page)
         root.hideRequested.connect(self.hide_compact)
         root.quitRequested.connect(self.quit)
-        # 悬浮球展开时，Esc / 点击窗口外都通过全局监听收起。
-        self.ball_watcher.attach(root)
-        self.ball_watcher.collapseRequested.connect(
-            lambda: root.setProperty("ballExpanded", False))
 
         # 小窗不是 RinUI 的 FluentWindow，需要手动把 hwnd 注册给 ThemeManager，
         # 之后才能用和完整窗口同一套云母 / 增强云母。
@@ -594,7 +604,6 @@ class Launcher:
 
     def quit(self) -> None:
         self.hotkey.unregister()
-        self.ball_watcher.setActive(False)
         self.tray.stop()
         self.system_controls.stop()
         self.update_manager.stop()

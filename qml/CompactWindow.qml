@@ -30,32 +30,29 @@ Window {
     readonly property int contentMargin: 16   // 卡片内的内容留白
     // 圆角直接用 RinUI 主题令牌（Win11 默认 8px），不另起一套数值。
     readonly property int cardRadius: Theme.currentTheme.appearance.windowRadius
-    // 三种形态各用各的圆角：完整窗口跟系统令牌，迷你条做成胶囊，悬浮球保持圆形。
-    readonly property int surfaceRadius: floatingMode ? 36
-        : miniMode ? Math.round(height / 2) : cardRadius
+    // 两种形态各用各的圆角：完整窗口跟系统令牌，迷你条做成胶囊。
+    readonly property int surfaceRadius: miniMode
+        ? Math.round(height / 2) : cardRadius
 
     // ── 形态 ──
-    // normal = 完整启动台；mini = 单行工具条；floating = 右下角悬浮球。
+    // normal = 完整启动台；mini = 单行工具条。
     property string windowMode: "normal"
     property string windowCorner: "bottom-right"
     property int offsetX: 0
     property int offsetY: 0
     property int compactTransparency: 82
     property int miniTransparency: 30
-    property int floatingTransparency: 8
-    property bool ballExpanded: false
 
     readonly property bool normalMode: windowMode === "normal"
     readonly property bool miniMode: windowMode === "mini"
-    readonly property bool floatingMode: windowMode === "floating"
-    readonly property int transparencyValue: miniMode ? miniTransparency
-        : floatingMode ? floatingTransparency : compactTransparency
+    readonly property int transparencyValue: miniMode
+        ? miniTransparency : compactTransparency
     // 透明度越大越透；保留 8% 下限，避免文字完全浮在壁纸上。
     readonly property real cardAlpha: Math.max(0.08,
         (100 - Math.max(0, Math.min(90, transparencyValue))) / 100)
 
     // 迷你条：3×44 图标 + 2×96 存储卡 + 36 更多 + 内外边距与间距。
-    width: normalMode ? 400 : (miniMode ? 404 : 72)
+    width: normalMode ? 400 : 404
     // 主屏可用高度由 Python 注入（多显示器下 Screen.* 会跟着窗口所在屏幕跑，
     // 不能用来算「主屏的一半」）。没注入时退回 Screen 的单屏行为。
     property int primaryX: 0
@@ -64,9 +61,7 @@ Window {
     property int primaryHeight: 0
     readonly property int availableHeight: primaryHeight > 0
         ? primaryHeight : Screen.desktopAvailableHeight
-    height: normalMode ? Math.max(400, Math.round(availableHeight / 2))
-        : miniMode ? 56
-        : (ballExpanded ? 216 : 72)
+    height: normalMode ? Math.max(400, Math.round(availableHeight / 2)) : 56
     visible: false
     color: "transparent"
     title: qsTr("启动台")
@@ -139,8 +134,8 @@ Window {
             right = Screen.virtualX + Screen.desktopAvailableWidth
             bottom = Screen.virtualY + Screen.desktopAvailableHeight
         }
-        // 悬浮球始终贴在右下角，不受窗口位置设置影响。
-        if (floatingMode || windowCorner !== "bottom-left") {
+        // 贴左上角或右上角，两种形态都适用。
+        if (windowCorner !== "bottom-left") {
             x = right - width - edgeMargin + offsetX
         } else {
             x = left + edgeMargin + offsetX
@@ -154,27 +149,21 @@ Window {
         }
         var settings = ConfigManager.getSettings()
         var mode = String(settings.compactMode || "normal")
-        windowMode = ["normal", "mini", "floating"].indexOf(mode) >= 0 ? mode : "normal"
+        windowMode = mode === "mini" ? "mini" : "normal"
         windowCorner = String(settings.windowCorner || "bottom-right")
         offsetX = Number(settings.windowOffsetX || 0)
         offsetY = Number(settings.windowOffsetY || 0)
         compactTransparency = Number(settings.compactTransparency)
         miniTransparency = Number(settings.miniTransparency)
-        floatingTransparency = Number(settings.floatingTransparency)
         if (isNaN(compactTransparency)) compactTransparency = 82
         if (isNaN(miniTransparency)) miniTransparency = 30
-        if (isNaN(floatingTransparency)) floatingTransparency = 8
-        if (!floatingMode) {
-            ballExpanded = false
-        }
         snapToCorner()
     }
 
     function setWindowMode(mode) {
-        if (["normal", "mini", "floating"].indexOf(mode) < 0 || mode === windowMode) {
+        if (["normal", "mini"].indexOf(mode) < 0 || mode === windowMode) {
             return
         }
-        ballExpanded = false
         ConfigManager.updateSettings({ "compactMode": mode })
     }
 
@@ -182,23 +171,11 @@ Window {
     onVisibleChanged: {
         if (visible) {
             snapToCorner()
-        } else {
-            // 隐藏时收起悬浮球，免得全局 Esc / 点外部监听一直挂着。
-            ballExpanded = false
         }
     }
     onHeightChanged: snapToCorner()
     onWidthChanged: snapToCorner()
-    onWindowModeChanged: {
-        ballExpanded = false
-        snapToCorner()
-    }
-    onBallExpandedChanged: {
-        if (floatingMode && typeof FloatingBall !== "undefined" && FloatingBall) {
-            FloatingBall.setActive(ballExpanded)
-        }
-        snapToCorner()
-    }
+    onWindowModeChanged: snapToCorner()
 
     // ------------------------------------------------------------------
     // 动画总开关：设置里关掉后把 RinUI 的全局动画时长清成 0。
@@ -235,14 +212,12 @@ Window {
             radius: compact.surfaceRadius
             // 上了云母就走用户设定的透明度，让材质透上来；没上材质时留一个
             // 不透明下限，避免文字直接铺在壁纸上。
-            color: compact.floatingMode
-                ? "transparent"
-                : Qt.rgba(Theme.currentTheme.colors.backgroundColor.r,
-                          Theme.currentTheme.colors.backgroundColor.g,
-                          Theme.currentTheme.colors.backgroundColor.b,
-                          compact.backdropActive
-                              ? compact.cardAlpha
-                              : Math.max(0.62, compact.cardAlpha))
+            color: Qt.rgba(Theme.currentTheme.colors.backgroundColor.r,
+                           Theme.currentTheme.colors.backgroundColor.g,
+                           Theme.currentTheme.colors.backgroundColor.b,
+                           compact.backdropActive
+                               ? compact.cardAlpha
+                               : Math.max(0.62, compact.cardAlpha))
             border.width: 0
         }
 
@@ -744,133 +719,13 @@ Window {
             }
         }
 
-        // ──────────────────────────────────────────────────────────
-        // 悬浮球：置底、无焦点、不可拖拽
-        // ──────────────────────────────────────────────────────────
-        Item {
-            id: floatingContent
-            anchors.fill: parent
-            visible: compact.floatingMode
-
-            // 点击展开区域内的空白处 = 点击菜单外部。
-            MouseArea {
-                anchors.fill: parent
-                onClicked: compact.ballExpanded = false
-            }
-
-            Column {
-                anchors.right: parent.right
-                anchors.bottom: parent.bottom
-                anchors.rightMargin: 4
-                anchors.bottomMargin: 4
-                spacing: 6
-
-                Column {
-                    visible: compact.ballExpanded
-                    spacing: 6
-
-                    Repeater {
-                        model: [
-                            { icon: "ic_fluent_desktop_20_regular", tip: qsTr("正常模式") },
-                            { icon: "ic_fluent_dock_row_20_regular", tip: qsTr("迷你模式") },
-                            { icon: "ic_fluent_more_horizontal_20_regular", tip: qsTr("更多") }
-                        ]
-
-                        delegate: Frame {
-                            id: ballBtn
-                            required property int index
-                            required property var modelData
-                            width: 44
-                            height: 44
-                            padding: 0
-                            radius: 22
-                            color: ballBtnMouse.containsMouse
-                                ? Theme.currentTheme.colors.subtleSecondaryColor
-                                : Theme.currentTheme.colors.cardColor
-                            border.width: 0
-                            scale: ballBtnMouse.pressed ? 0.92
-                                : (ballBtnMouse.containsMouse ? 1.06 : 1)
-
-                            Behavior on scale {
-                                NumberAnimation {
-                                    duration: Utils.animationSpeedFaster
-                                    easing.type: Easing.OutCubic
-                                }
-                            }
-
-                            AppIcon {
-                                anchors.centerIn: parent
-                                iconKey: modelData.icon
-                                iconSize: 20
-                                tint: Theme.currentTheme.colors.textColor
-                            }
-
-                            MouseArea {
-                                id: ballBtnMouse
-                                anchors.fill: parent
-                                hoverEnabled: true
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: {
-                                    if (index === 0) {
-                                        compact.setWindowMode("normal")
-                                    } else if (index === 1) {
-                                        compact.setWindowMode("mini")
-                                    } else {
-                                        compact.popupMoreMenu(ballBtn)
-                                    }
-                                }
-                            }
-
-                            ToolTip.text: modelData.tip
-                            ToolTip.visible: ballBtnMouse.containsMouse
-                        }
-                    }
-                }
-
-                Frame {
-                    width: 64
-                    height: 64
-                    padding: 0
-                    radius: 32
-                    color: Theme.currentTheme.colors.cardColor
-                    // 悬停放大、按下回缩：置底窗口也能看出「点得到」。
-                    scale: ballMouse.pressed ? 0.94
-                        : (ballMouse.containsMouse ? 1.06 : 1)
-
-                    Behavior on scale {
-                        NumberAnimation {
-                            duration: Utils.animationSpeedFaster
-                            easing.type: Easing.OutCubic
-                        }
-                    }
-
-                    AppIcon {
-                        anchors.centerIn: parent
-                        iconKey: "url:" + Qt.resolvedUrl("../assets/icon.png")
-                        iconSize: 48
-                    }
-
-                    MouseArea {
-                        id: ballMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: compact.ballExpanded = !compact.ballExpanded
-                    }
-
-                    ToolTip.text: compact.ballExpanded ? qsTr("收起") : qsTr("Rin Launcher")
-                    ToolTip.visible: ballMouse.containsMouse
-                }
-            }
-        }
-
         // 简易 toast：常驻小窗没有 FloatLayer 那种容器，自绘一条更合适。
         Rectangle {
             id: toast
 
             anchors.horizontalCenter: card.horizontalCenter
             anchors.bottom: card.bottom
-            // 完整模式给底部系统控制条留位置；迷你 / 悬浮球贴着卡片底部即可。
+            // 完整模式给底部系统控制条留位置；迷你条贴着卡片底部即可。
             anchors.bottomMargin: compact.normalMode ? 128 : 6
             z: 900
             width: Math.min(toastText.implicitWidth + 24, card.width - 32)
@@ -943,12 +798,14 @@ Window {
         MenuItem {
             text: qsTr("编辑这一格…")
             icon.name: "ic_fluent_edit_20_regular"
-            enabled: !!slotMenu.slot
+            // 存储行两张卡片是钉死的（路径在设置页改），只有面板格子可编辑。
+            visible: !!slotMenu.slot && slotMenu.slot.row === 0
             onTriggered: compact.editSlot(slotMenu.slot)
         }
         MenuItem {
             text: qsTr("再加一格…")
             icon.name: "ic_fluent_add_20_regular"
+            visible: !!slotMenu.slot && slotMenu.slot.row === 0
             onTriggered: compact.addSlotToRow(slotMenu.slot)
         }
     }
@@ -963,7 +820,7 @@ Window {
         MenuItem {
             text: qsTr("编辑启动台")
             icon.name: "ic_fluent_edit_20_regular"
-            // 完整模式的编辑按钮就在标题栏；迷你 / 悬浮球里必须收进菜单。
+            // 完整模式的编辑按钮就在标题栏；迷你条里必须收进菜单。
             visible: !compact.normalMode
             onTriggered: compact.openMain("launcher")
         }
@@ -978,12 +835,6 @@ Window {
             icon.name: "ic_fluent_dock_row_20_regular"
             visible: compact.windowMode !== "mini"
             onTriggered: compact.setWindowMode("mini")
-        }
-        MenuItem {
-            text: qsTr("悬浮球模式")
-            icon.name: "ic_fluent_record_20_regular"
-            visible: compact.windowMode !== "floating"
-            onTriggered: compact.setWindowMode("floating")
         }
         MenuSeparator {}
         MenuItem {
@@ -1234,23 +1085,33 @@ Window {
 
     // 把菜单摆到屏幕可用区域内：优先按调用方指定的方向，放不下就翻到另一边。
     function popupMenuAt(menu, sceneX, sceneY, alignRight, preferUp) {
+        var screenX = compact.x + sceneX
+        var screenY = compact.y + sceneY
+        // 先 open 再量尺寸：Popup 是惰性实例化的，open 之前 implicitWidth /
+        // implicitHeight 还是 0，拿 0 算位置会把菜单直接甩到屏幕外。
+        menu.x = sceneX
+        menu.y = sceneY
+        menu.open()
         var menuWidth = menu.width > 0 ? menu.width : menu.implicitWidth
         var menuHeight = menu.height > 0 ? menu.height : menu.implicitHeight
         var minX = (primaryWidth > 0 ? primaryX : Screen.virtualX) + 4
         var minY = (primaryHeight > 0 ? primaryY : Screen.virtualY) + 4
         var areaWidth = primaryWidth > 0 ? primaryWidth : Screen.desktopAvailableWidth
         var areaHeight = primaryHeight > 0 ? primaryHeight : Screen.desktopAvailableHeight
-        var screenX = compact.x + sceneX
-        var screenY = compact.y + sceneY
         var x = alignRight ? screenX - menuWidth : screenX
         var y = preferUp ? screenY - menuHeight : screenY
-        // 翻转：上方放不下就向下，下方放不下就向上。
-        if (y < minY || (y + menuHeight > minY + areaHeight && screenY - menuHeight >= minY)) {
+        // 翻转：上方放不下就向下；下方放不下就向上。
+        if (y < minY && screenY + menuHeight <= minY + areaHeight) {
+            y = screenY
+        }
+        if (y + menuHeight > minY + areaHeight && screenY - menuHeight >= minY) {
             y = screenY - menuHeight
         }
         x = Math.min(Math.max(x, minX), Math.max(minX, minX + areaWidth - menuWidth))
         y = Math.min(Math.max(y, minY), Math.max(minY, minY + areaHeight - menuHeight))
-        menu.popup(Qt.point(x - compact.x, y - compact.y))
+        // Popup 的 x/y 是相对父窗口的坐标。
+        menu.x = x - compact.x
+        menu.y = y - compact.y
     }
 
     // 右键菜单的编辑入口：切到启动台页并当场打开这一格的编辑器。

@@ -81,23 +81,22 @@ def test_window_settings_are_normalized(qapp, tmp_path):
     manager = ConfigManager(config_dir=tmp_path, app_mode_root=tmp_path)
     try:
         manager.updateSettings({
-            "compactMode": "nope",
+            "compactMode": "floating",
             "windowCorner": "left-top",
             "windowOffsetX": 99999,
             "compactTransparency": -5,
             "miniTransparency": 999,
-            "floatingTransparency": 20,
             "backdropMode": "glass",
         })
         # 归一化在写盘 / 读盘时发生：重新读一遍才能看到夹紧后的值。
         manager._config = manager._normalize(manager._config)
         settings = manager.getSettings()
-        assert settings["compactMode"] == "normal"
+        # 悬浮球已下线：旧配置里的 floating 迁移为 mini。
+        assert settings["compactMode"] == "mini"
         assert settings["windowCorner"] == "bottom-right"
         assert settings["windowOffsetX"] == 2000
         assert settings["compactTransparency"] == 0
         assert settings["miniTransparency"] == 90
-        assert settings["floatingTransparency"] == 20
         assert settings["backdropMode"] == "auto"
     finally:
         manager.stopWatching()

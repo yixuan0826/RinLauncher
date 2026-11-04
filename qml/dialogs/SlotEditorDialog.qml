@@ -506,6 +506,10 @@ AppDialog {
     // 打开与提交
     // ------------------------------------------------------------------
     function openFor(targetRow, targetIndex, existing) {
+        // 存储行（row 1）两张卡片钉死，永远不打开编辑器；路径在设置页改。
+        if (targetRow === 1) {
+            return
+        }
         row = targetRow
         index = targetIndex
         slot = existing || {}
