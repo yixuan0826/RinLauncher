@@ -34,6 +34,13 @@ AppDialog {
 
     onAboutToShow: reload()
 
+    onVisibleChanged: {
+        if (!visible) {
+            // 关掉对话框再生缩略图，避免边浏览边抽图标把主线程拖卡。
+            ConfigManager.startThumbnailQueue()
+        }
+    }
+
     function reload() {
         selected = ({})
         apps = ConfigManager.startMenuApps

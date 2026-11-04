@@ -62,24 +62,6 @@ jobs:
       - name: Build (onedir)
         run: pyinstaller build.spec
 
-      - name: Mark build channel
-        shell: pwsh
-        run: |
-          $channel = if ("${{ github.ref_name }}" -match '-') { "prerelease" } else { "stable" }
-          $lines = @(
-            "# Rin Launcher 启动配置",
-            "# 布尔项只写 true / false；channel 只写 stable / prerelease。",
-            "first-run==true",
-            "normal-boot==true",
-            "failsafe==false",
-            "debug==false",
-            "channel==$channel",
-            "recovery==false"
-          )
-          # UTF-8 无 BOM；Windows PowerShell 的 utf8 刚好满足。
-          Set-Content -Path dist/RinLauncher/appmodset.conf -Value $lines -Encoding utf8
-          if (-not (Test-Path dist/RinLauncher/appmodset.conf)) { exit 1 }
-
       # 冻结包冒烟：源码测试绿不代表 exe 能起来。恢复窗口只加载一个 QML，
       # 7 秒足够确认进程没在启动阶段崩掉。
       - name: Smoke test frozen package
@@ -104,6 +86,8 @@ jobs:
           New-Item -ItemType Directory -Path $root | Out-Null
           New-Item -ItemType Directory -Path (Join-Path $root "data") | Out-Null
           Set-Content -Path (Join-Path $root "data/user-marker.txt") -Value "keep-me" -Encoding utf8
+          # 旧版本留下的启动配置：升级必须原样保留（否则每次更新都会重走 OOBE）。
+          Set-Content -Path (Join-Path $root "appmodset.conf") -Value "first-run==false" -Encoding utf8
           Expand-Archive -Path smoke-payload.zip -DestinationPath (Join-Path $root "payload")
           $sourceExe = Get-ChildItem (Join-Path $root "payload") -Recurse -Filter RinLauncher.exe |
             Select-Object -First 1
@@ -111,7 +95,8 @@ jobs:
           Copy-Item (Join-Path $sourceExe.DirectoryName "*") $root -Recurse -Force
           if (-not (Test-Path (Join-Path $root "RinLauncher.exe"))) { throw "install did not produce exe" }
           if (-not (Test-Path (Join-Path $root "data/user-marker.txt"))) { throw "install wiped user data" }
-          if (-not (Test-Path (Join-Path $root "appmodset.conf"))) { throw "appmodset.conf missing after install" }
+          $conf = Get-Content (Join-Path $root "appmodset.conf") -Raw
+          if ($conf -notmatch "first-run==false") { throw "upgrade overwrote appmodset.conf" }
           Write-Host "Upgrade dry-run OK"
 
       - name: Package (zip)

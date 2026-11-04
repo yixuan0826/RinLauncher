@@ -20,7 +20,41 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 _CACHE_TTL = 30.0
+# 磁盘缓存跨进程 / 跨重启复用：全量扫描实测要 12 秒，不能每次打开对话框都重扫。
+_DISK_CACHE_TTL = 86400.0
 _cache: tuple[float, list[dict[str, Any]]] | None = None
+_cache_path: Path | None = None
+
+
+def set_cache_path(path: Path | str | None) -> None:
+    """由 ConfigManager 在启动时指定磁盘缓存位置。"""
+    global _cache_path
+    _cache_path = Path(path) if path else None
+
+
+def _load_disk_cache() -> list[dict[str, Any]] | None:
+    if _cache_path is None or not _cache_path.is_file():
+        return None
+    try:
+        data = json.loads(_cache_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if time.time() - float(data.get("stamp") or 0) > _DISK_CACHE_TTL:
+        return None
+    apps = data.get("apps")
+    return apps if isinstance(apps, list) else None
+
+
+def _save_disk_cache(apps: list[dict[str, Any]]) -> None:
+    if _cache_path is None:
+        return
+    try:
+        _cache_path.parent.mkdir(parents=True, exist_ok=True)
+        _cache_path.write_text(
+            json.dumps({"stamp": time.time(), "apps": apps}, ensure_ascii=False),
+            encoding="utf-8")
+    except OSError:
+        logger.debug("开始菜单磁盘缓存写入失败", exc_info=True)
 
 _START_MENU_DIRS = (
     Path(os.environ.get("APPDATA", "")) / "Microsoft" / "Windows" / "Start Menu" / "Programs",
@@ -352,15 +386,33 @@ def _list_wsl() -> list[dict[str, Any]]:
     return apps
 
 
+def cached_start_menu_apps() -> list[dict[str, Any]] | None:
+    """只读缓存（内存 / 磁盘），永不扫盘。界面用它先秒出列表。"""
+    if _cache is not None:
+        return [dict(item) for item in _cache[1]]
+    cached = _load_disk_cache()
+    return [dict(item) for item in cached] if cached is not None else None
+
+
 def list_start_menu_apps(force: bool = False) -> list[dict[str, Any]]:
-    """返回开始菜单里可添加的应用；结果缓存 30 秒。"""
+    """返回开始菜单里可添加的应用。
+
+    ``force=False``：内存缓存（30s）→ 磁盘缓存（1 天）→ 才真正扫盘。
+    ``force=True``：后台刷新用，必定重扫。
+    """
     global _cache
     now = time.monotonic()
     if not force and _cache is not None and now - _cache[0] < _CACHE_TTL:
         return [dict(item) for item in _cache[1]]
+    if not force:
+        cached = _load_disk_cache()
+        if cached is not None:
+            _cache = (now, cached)
+            return [dict(item) for item in cached]
     apps = _list_shortcuts() + _list_uwp() + _list_wsl()
     apps.sort(key=lambda item: str(item.get("name") or "").lower())
     _cache = (now, apps)
+    _save_disk_cache(apps)
     return [dict(item) for item in apps]
 
 

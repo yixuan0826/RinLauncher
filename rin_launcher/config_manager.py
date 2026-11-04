@@ -432,6 +432,8 @@ class ConfigManager(QObject):
     notificationsChanged = Signal()
     # 开始菜单扫描完成（后台线程回到主线程后发）。
     startMenuAppsChanged = Signal()
+    # 加载态单独一个信号：缩略图批量刷新时不用带着整个列表重算。
+    startMenuLoadingChanged = Signal()
     # 工作线程 → GUI 线程的内部通道；QTimer.singleShot 在工作线程里没有事件
     # 循环，不会触发，必须走队列信号。
     _startMenuScanDone = Signal(int, object)
@@ -487,7 +489,15 @@ class ConfigManager(QObject):
         self._config["settings"]["updateChannel"] = app_mode.effective_mode(values).channel
         # 开始菜单：扫描在后台线程里跑，结果回到主线程后才发给界面。
         self._start_menu_apps: list[dict[str, Any]] = []
+        # 开始菜单磁盘缓存：全量扫描实测约 12 秒，不能每次开对话框都重扫。
+        try:
+            start_menu.set_cache_path(self.config_dir / "start-menu-cache.json")
+        except Exception:
+            logger.debug("设置开始菜单缓存路径失败", exc_info=True)
         self._start_menu_loading = False
+        # 列表缓存：QML 每次读 startMenuApps 不再深拷贝几百条。
+        self._start_menu_view: list[dict[str, Any]] | None = None
+        self._start_menu_timeout = 0
         self._start_menu_token = 0
         self._thumb_queue: list[dict[str, Any]] = []
         self._thumb_timer: QTimer | None = None
@@ -2032,9 +2042,11 @@ class ConfigManager(QObject):
     @Property("QVariantList", notify=startMenuAppsChanged)
     def startMenuApps(self) -> list[dict]:
         """最近一次扫描结果（界面绑定这个，不要在主线程里直接扫）。"""
-        return [dict(item) for item in self._start_menu_apps]
+        if self._start_menu_view is None:
+            self._start_menu_view = [dict(item) for item in self._start_menu_apps]
+        return self._start_menu_view
 
-    @Property(bool, notify=startMenuAppsChanged)
+    @Property(bool, notify=startMenuLoadingChanged)
     def startMenuLoading(self) -> bool:
         return self._start_menu_loading
 
@@ -2048,10 +2060,32 @@ class ConfigManager(QObject):
         """后台重新扫描开始菜单，完成后经 ``startMenuAppsChanged`` 通知。"""
         if self._start_menu_loading:
             return
+        # 先用内存 / 磁盘缓存秒开（不扫盘），再后台强制刷新。
+        quick = start_menu.cached_start_menu_apps()
+        if quick:
+            self._start_menu_apps = quick
+            self._start_menu_view = None
+            self.startMenuAppsChanged.emit()
         self._start_menu_loading = True
+        self.startMenuLoadingChanged.emit()
         self._start_menu_token += 1
         token = self._start_menu_token
         self.startMenuAppsChanged.emit()
+
+        # 超时兜底：扫描卡住时也要把加载态放掉，否则对话框永远转圈。
+        self._start_menu_timeout += 1
+        timeout_token = self._start_menu_timeout
+
+        def expire() -> None:
+            if (timeout_token != self._start_menu_timeout
+                    or not self._start_menu_loading):
+                return
+            logger.warning("开始菜单扫描超时，先按空结果返回")
+            self._start_menu_loading = False
+            self.startMenuLoadingChanged.emit()
+            self.startMenuAppsChanged.emit()
+
+        QTimer.singleShot(20000, expire)
 
         def worker() -> None:
             try:
@@ -2068,15 +2102,13 @@ class ConfigManager(QObject):
         if token != self._start_menu_token:
             return
         self._start_menu_apps = apps
+        self._start_menu_view = None
         self._start_menu_loading = False
+        self.startMenuLoadingChanged.emit()
         self.startMenuAppsChanged.emit()
-        # 缩略图在 GUI 线程里分批生成：QFileIconProvider 不能在工作线程用。
+        # 缩略图不在打开对话框的瞬间跑：先备好队列，等界面关闭后由
+        # startThumbnailQueue() 启动，避免一边浏览一边抽图标卡主线程。
         self._thumb_queue = [app for app in apps if self._needs_thumb(app)]
-        if self._thumb_queue and self._thumb_timer is None:
-            self._thumb_timer = QTimer(self)
-            self._thumb_timer.setInterval(45)
-            self._thumb_timer.timeout.connect(self._build_thumb_batch)
-            self._thumb_timer.start()
 
     def _needs_thumb(self, app: dict[str, Any]) -> bool:
         return bool(app.get("source") or app.get("target")) and not app.get("thumb")
@@ -2095,6 +2127,16 @@ class ConfigManager(QObject):
         key = uuid.uuid5(uuid.NAMESPACE_URL, raw).hex
         return self.thumbnail_dir / f"{key}.png"
 
+    @Slot()
+    def startThumbnailQueue(self) -> None:
+        """对话框关闭后再生缩略图：GUI 线程分批，不阻塞浏览。"""
+        if not self._thumb_queue or self._thumb_timer is not None:
+            return
+        self._thumb_timer = QTimer(self)
+        self._thumb_timer.setInterval(200)
+        self._thumb_timer.timeout.connect(self._build_thumb_batch)
+        self._thumb_timer.start()
+
     def _build_thumb_batch(self) -> None:
         if not self._thumb_queue:
             if self._thumb_timer is not None:
@@ -2103,7 +2145,7 @@ class ConfigManager(QObject):
                 self._thumb_timer = None
             return
         changed = False
-        for _ in range(6):
+        for _ in range(2):
             if not self._thumb_queue:
                 break
             app = self._thumb_queue.pop(0)
@@ -2117,6 +2159,7 @@ class ConfigManager(QObject):
                 app["thumb"] = key
                 changed = True
         if changed:
+            self._start_menu_view = None
             self.startMenuAppsChanged.emit()
 
     def _make_thumb(self, app: dict[str, Any], target: Path | None) -> str:

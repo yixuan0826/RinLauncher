@@ -227,10 +227,5 @@ else:
         icon=str(ICON) if ICON.exists() else None,
     )
 
-# 启动配置必须跟 exe 同级（on‌edir 是 dist/RinLauncher/，onefile 是 dist/）。
-# 放在 datas 里会被塞进 _internal，运行时找不到。
-_CONF_SOURCE = ROOT / "appmodset.conf"
-if _CONF_SOURCE.is_file():
-    _CONF_TARGET = Path(DISTPATH) / ("RinLauncher" if ONEDIR else "") / "appmodset.conf"
-    shutil.copy2(_CONF_SOURCE, _CONF_TARGET)
-    print(f"[spec] appmodset.conf -> {_CONF_TARGET}")
+# 启动配置不进包：首次启动由 rin_launcher.app_mode.load() 自动生成，
+# 覆盖式升级时旧文件原地保留 —— 否则每次更新都会把 first-run 重置回 true。

@@ -764,113 +764,18 @@ Window {
     // ------------------------------------------------------------------
     // 菜单
     // ------------------------------------------------------------------
-    // 某一格的右键菜单：先是最常用的「打开」，再是编辑入口。
-    Menu {
-        id: slotMenu
-
-        objectName: "slotMenu"
-        position: Position.None
-        // 小窗只有 400×456 / 404×56 / 72×72，Item 类型的 Popup 会被窗口
-        // 裁掉一半；改成独立弹出窗口，菜单才能完整铺在窗口外。
-        popupType: Popup.Window
-        property var slot: null
-
-        MenuItem {
-            text: slotMenu.slot && slotMenu.slot.kind === "usb"
-                ? qsTr("打开可移动磁盘")
-                : slotMenu.slot && slotMenu.slot.kind === "path"
-                    ? qsTr("打开这个位置")
-                    : qsTr("打开")
-            icon.name: "ic_fluent_open_20_regular"
-            onTriggered: compact.runSlot(slotMenu.slot)
-        }
-
-        MenuItem {
-            text: qsTr("以管理员身份打开")
-            icon.name: "ic_fluent_shield_20_regular"
-            visible: !!slotMenu.slot && slotMenu.slot.kind === "action"
-                && (slotMenu.slot.type === "file" || slotMenu.slot.type === "cmd")
-            onTriggered: compact.runSlotAsAdmin(slotMenu.slot)
-        }
-
-        MenuSeparator {}
-
-        MenuItem {
-            text: qsTr("编辑这一格…")
-            icon.name: "ic_fluent_edit_20_regular"
-            // 存储行两张卡片是钉死的（路径在设置页改），只有面板格子可编辑。
-            visible: !!slotMenu.slot && slotMenu.slot.row === 0
-            onTriggered: compact.editSlot(slotMenu.slot)
-        }
-        MenuItem {
-            text: qsTr("再加一格…")
-            icon.name: "ic_fluent_add_20_regular"
-            visible: !!slotMenu.slot && slotMenu.slot.row === 0
-            onTriggered: compact.addSlotToRow(slotMenu.slot)
-        }
+    // 小窗菜单统一用独立窗口渲染：QQC2 的 Menu 在置底无焦点窗口上会被 Qt
+    // 立刻关掉、坐标也会被重置，做不出可用的浮层。
+    CompactMenuWindow {
+        id: compactMenu
     }
 
-    Menu {
-        id: moreMenu
-
-        objectName: "moreMenu"
-        position: Position.None
-        popupType: Popup.Window
-
-        MenuItem {
-            text: qsTr("编辑启动台")
-            icon.name: "ic_fluent_edit_20_regular"
-            // 完整模式的编辑按钮就在标题栏；迷你条里必须收进菜单。
-            visible: !compact.normalMode
-            onTriggered: compact.openMain("launcher")
-        }
-        MenuItem {
-            text: qsTr("完整模式")
-            icon.name: "ic_fluent_desktop_20_regular"
-            visible: !compact.normalMode
-            onTriggered: compact.setWindowMode("normal")
-        }
-        MenuItem {
-            text: qsTr("迷你模式")
-            icon.name: "ic_fluent_dock_row_20_regular"
-            visible: compact.windowMode !== "mini"
-            onTriggered: compact.setWindowMode("mini")
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("打开设置")
-            icon.name: "ic_fluent_settings_20_regular"
-            onTriggered: compact.openMain("settings")
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("重启")
-            icon.name: "ic_fluent_arrow_sync_20_regular"
-            onTriggered: ConfigManager.restartApplication()
-        }
-        MenuItem {
-            text: qsTr("提权重启")
-            icon.name: "ic_fluent_shield_20_regular"
-            onTriggered: ConfigManager.restartAsAdmin()
-        }
-        MenuSeparator {}
-        MenuItem {
-            // 恢复模式是独立进程：点了就重启过去，不再和当前进程共存。
-            text: qsTr("恢复模式")
-            icon.name: "ic_fluent_wrench_screwdriver_20_regular"
-            onTriggered: ConfigManager.restartWithMode("recovery")
-        }
-        MenuSeparator {}
-        MenuItem {
-            text: qsTr("隐藏小窗")
-            icon.name: "ic_fluent_eye_off_20_regular"
-            onTriggered: compact.hideRequested()
-        }
-        MenuItem {
-            text: qsTr("退出")
-            icon.name: "ic_fluent_power_20_regular"
-            onTriggered: compact.askQuit()
-        }
+    function menuArea() {
+        var width = primaryWidth > 0 ? primaryWidth : Screen.desktopAvailableWidth
+        var height = primaryHeight > 0 ? primaryHeight : Screen.desktopAvailableHeight
+        var x = primaryWidth > 0 ? primaryX : Screen.virtualX
+        var y = primaryHeight > 0 ? primaryY : Screen.virtualY
+        return Qt.rect(x, y, width, height)
     }
 
     // 右键那一刻的场景坐标，供菜单定位。
@@ -1074,26 +979,73 @@ Window {
         compact.openMainRequested(page)
     }
 
+    // 菜单内容一律走独立窗口；屏幕坐标 = 窗口坐标 + 场景坐标。
     function popupMoreMenu(anchor) {
-        // 菜单右缘贴按钮右缘、从锚点**上方**展开：三种形态都贴在屏幕底部，
-        // 向下弹一定出界。position 必须是 None，否则 RinUI 的 Menu 会按锚点
-        // 重算 posX/posY，覆盖掉 popup() 指定的坐标。
         var item = anchor || (miniMode ? miniMoreButton : moreButton)
         var scene = item.mapToItem(null, item.width, 0)
-        popupMenuAt(moreMenu, scene.x, scene.y, true, true)
+        var list = []
+        if (!compact.normalMode) {
+            list.push({ icon: "ic_fluent_edit_20_regular", text: qsTr("编辑启动台"),
+                        action: function () { compact.openMain("launcher") } })
+            list.push({ icon: "ic_fluent_desktop_20_regular", text: qsTr("完整模式"),
+                        action: function () { compact.setWindowMode("normal") } })
+        }
+        if (compact.windowMode !== "mini") {
+            list.push({ icon: "ic_fluent_dock_row_20_regular", text: qsTr("迷你模式"),
+                        action: function () { compact.setWindowMode("mini") } })
+        }
+        list.push({ separator: true })
+        list.push({ icon: "ic_fluent_settings_20_regular", text: qsTr("打开设置"),
+                    action: function () { compact.openMain("settings") } })
+        list.push({ separator: true })
+        list.push({ icon: "ic_fluent_arrow_sync_20_regular", text: qsTr("重启"),
+                    action: function () { ConfigManager.restartApplication() } })
+        list.push({ icon: "ic_fluent_shield_20_regular", text: qsTr("提权重启"),
+                    action: function () { ConfigManager.restartAsAdmin() } })
+        list.push({ separator: true })
+        list.push({ icon: "ic_fluent_wrench_screwdriver_20_regular", text: qsTr("恢复模式"),
+                    action: function () { ConfigManager.restartWithMode("recovery") } })
+        list.push({ separator: true })
+        list.push({ icon: "ic_fluent_eye_off_20_regular", text: qsTr("隐藏小窗"),
+                    action: function () { compact.hideRequested() } })
+        list.push({ icon: "ic_fluent_power_20_regular", text: qsTr("退出"),
+                    action: function () { compact.askQuit() } })
+        compactMenu.openAt(compact.x + scene.x, compact.y + scene.y, list, menuArea())
     }
 
-    // 把菜单摆到屏幕可用区域内：优先按调用方指定的方向，放不下就翻到另一边。
+    // 菜单内容项的真实尺寸：Popup 自己的 width/height 在打开后仍然可能是 0，
+    // 拿它算位置就会把菜单甩到屏幕外（"右对齐"不左移、"向上"不上升）。
+    function menuMetrics(menu) {
+        var width = menu.width
+        var height = menu.height
+        // contentItem 的 implicit 尺寸不含菜单内边距，只能当兜底。
+        var item = menu.contentItem
+        if (item) {
+            if (!(width > 0)) {
+                width = item.implicitWidth
+            }
+            if (!(height > 0)) {
+                height = item.implicitHeight
+            }
+        }
+        if (!(width > 0)) {
+            width = menu.implicitWidth
+        }
+        if (!(height > 0)) {
+            height = menu.implicitHeight
+        }
+        return Qt.point(width, height)
+    }
+
+    // 把菜单摆到屏幕可用区域内：先在关闭状态算好坐标再 open。
+    // 菜单未打开时 implicitWidth / implicitHeight 已经是最终尺寸；open 之后
+    // 再改 x/y 会让 Qt 重新定位（甚至直接关掉菜单），所以只设一次。
     function popupMenuAt(menu, sceneX, sceneY, alignRight, preferUp) {
+        var metrics = menuMetrics(menu)
+        var menuWidth = metrics.x
+        var menuHeight = metrics.y
         var screenX = compact.x + sceneX
         var screenY = compact.y + sceneY
-        // 先 open 再量尺寸：Popup 是惰性实例化的，open 之前 implicitWidth /
-        // implicitHeight 还是 0，拿 0 算位置会把菜单直接甩到屏幕外。
-        menu.x = sceneX
-        menu.y = sceneY
-        menu.open()
-        var menuWidth = menu.width > 0 ? menu.width : menu.implicitWidth
-        var menuHeight = menu.height > 0 ? menu.height : menu.implicitHeight
         var minX = (primaryWidth > 0 ? primaryX : Screen.virtualX) + 4
         var minY = (primaryHeight > 0 ? primaryY : Screen.virtualY) + 4
         var areaWidth = primaryWidth > 0 ? primaryWidth : Screen.desktopAvailableWidth
@@ -1112,6 +1064,7 @@ Window {
         // Popup 的 x/y 是相对父窗口的坐标。
         menu.x = x - compact.x
         menu.y = y - compact.y
+        menu.open()
     }
 
     // 右键菜单的编辑入口：切到启动台页并当场打开这一格的编辑器。
@@ -1129,7 +1082,26 @@ Window {
         if (!slot) {
             return
         }
-        slotMenu.slot = slot
-        popupMenuAt(slotMenu, sceneX, sceneY, false, false)
+        var list = []
+        list.push({
+            icon: "ic_fluent_open_20_regular",
+            text: slot.kind === "usb" ? qsTr("打开可移动磁盘")
+                : slot.kind === "path" ? qsTr("打开这个位置") : qsTr("打开"),
+            action: function () { compact.runSlot(slot) }
+        })
+        if (slot.kind === "action" && (slot.type === "file" || slot.type === "cmd")) {
+            list.push({ icon: "ic_fluent_shield_20_regular",
+                        text: qsTr("以管理员身份打开"),
+                        action: function () { compact.runSlotAsAdmin(slot) } })
+        }
+        // 存储行两张卡片是钉死的（路径在设置页改），只有面板格子有编辑入口。
+        if (slot.row === 0) {
+            list.push({ separator: true })
+            list.push({ icon: "ic_fluent_edit_20_regular", text: qsTr("编辑这一格…"),
+                        action: function () { compact.editSlot(slot) } })
+            list.push({ icon: "ic_fluent_add_20_regular", text: qsTr("再加一格…"),
+                        action: function () { compact.addSlotToRow(slot) } })
+        }
+        compactMenu.openAt(compact.x + sceneX, compact.y + sceneY, list, menuArea())
     }
 }

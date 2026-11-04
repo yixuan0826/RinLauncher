@@ -17,7 +17,8 @@ def test_parse_is_strict_about_booleans_and_unknown_keys():
     assert values["debug"] is True
     # 写坏的项保留默认值，并给出可读诊断。
     assert values["normal-boot"] is True
-    assert values["channel"] == "stable"
+    # 默认通道是预发布（1.2.0 预览期），坏值不应覆盖它。
+    assert values["channel"] == "prerelease"
     assert len(problems) == 3
 
 
@@ -114,3 +115,24 @@ def test_usb_names_parse_powershell_payload(monkeypatch):
     assert names == {"E:": "TransMemory", "F:": "TransMemory", "G:": "USB DISK"}
     # 第二次走缓存，不再启动 PowerShell。
     assert drives.usb_device_names() == names
+
+
+def test_appmodset_generated_on_first_run(tmp_path):
+    """安装包里不再带 appmodset.conf：首次启动要自己生成。"""
+    values, problems, path = app_mode.load(tmp_path)
+    assert path.is_file()
+    assert problems == []
+    assert values["first-run"] is True
+    assert values["channel"] == "prerelease"
+
+
+def test_appmodset_upgrade_keeps_existing_file(tmp_path):
+    """覆盖式升级必须保留旧文件，否则每次更新都会重走 OOBE。"""
+    path = tmp_path / "appmodset.conf"
+    original = "first-run==false\nchannel==prerelease\n"
+    path.write_text(original, encoding="utf-8")
+    values, problems, loaded = app_mode.load(tmp_path)
+    assert loaded == path
+    assert problems == []
+    assert values["first-run"] is False
+    assert path.read_text(encoding="utf-8") == original
