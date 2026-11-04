@@ -75,6 +75,17 @@ jobs:
           Stop-Process -Id $proc.Id -Force
           Write-Host "Frozen recovery smoke test OK"
 
+      # 冒烟启动会在 dist 里生成 data/ 与 appmodset.conf：发布包不能带这两样，
+      # 否则覆盖安装会用 first-run==true 的模板盖掉用户已有的启动配置。
+      - name: Clean runtime files
+        shell: pwsh
+        run: |
+          Remove-Item dist/RinLauncher/data -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item dist/RinLauncher/appmodset.conf -Force -ErrorAction SilentlyContinue
+          if (Test-Path dist/RinLauncher/data) { throw "runtime data still in payload" }
+          if (Test-Path dist/RinLauncher/appmodset.conf) { throw "appmodset.conf still in payload" }
+          Write-Host "Runtime files cleaned"
+
       - name: Upgrade dry-run (cover install)
         shell: pwsh
         run: |
