@@ -14,11 +14,15 @@
 
 from __future__ import annotations
 
+import importlib.util
 import os
 import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+# 无桌面环境也能跑：qmllint 本身不做渲染，但工具链某些路径会碰 Qt。
+os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -38,15 +42,31 @@ def find_qmllint() -> str | None:
     return shutil.which("pyside6-qmllint")
 
 
+def find_rinui_root() -> Path | None:
+    """定位 pip 安装的 RinUI，**不执行它的初始化代码**。
+
+    直接 ``import RinUI`` 会跑包里的 Qt 初始化；GitHub 的 Windows runner 是
+    无交互会话，那里会直接抛异常（本地有桌面，所以一直看不出来）。
+    ``find_spec`` 只解析路径，不执行模块。
+    """
+    spec = importlib.util.find_spec("RinUI")
+    if spec is None or not spec.origin:
+        return None
+    return Path(spec.origin).resolve().parent.parent
+
+
 def main() -> int:
     qmllint = find_qmllint()
     if qmllint is None:
         print("pyside6-qmllint not found; install PySide6 first", file=sys.stderr)
         return 2
 
-    import RinUI
+    rinui_root = find_rinui_root()
+    if rinui_root is None:
+        print("RinUI is not installed; run pip install -r requirements.txt",
+              file=sys.stderr)
+        return 2
 
-    rinui_root = Path(RinUI.__file__).resolve().parent.parent
     env = dict(os.environ)
     env["QML_IMPORT_PATH"] = f"{ROOT}{os.pathsep}{rinui_root}"
 
