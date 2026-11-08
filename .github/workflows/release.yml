@@ -43,23 +43,7 @@ jobs:
         run: pytest tests -q
 
       - name: QML lint
-        shell: pwsh
-        run: |
-          # RinUI 不再是内联目录：导入路径要指向 pip 安装位置。
-          $rinuiRoot = python -c "import RinUI, pathlib; print(pathlib.Path(RinUI.__file__).resolve().parent.parent)"
-          $env:QML_IMPORT_PATH = "$(Get-Location).Path;$rinuiRoot"
-          $files = Get-ChildItem qml -Recurse -Filter *.qml
-          $errors = 0
-          foreach ($file in $files) {
-            $out = & pyside6-qmllint -I . $file.FullName 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "qmllint failed: $($file.FullName)"
-              $out | Write-Host
-              $errors++
-            }
-          }
-          if ($errors -gt 0) { exit 1 }
-          Write-Host "qmllint: $($files.Count) files OK"
+        run: python scripts/lint_qml.py
 
       - name: Build (onedir)
         run: pyinstaller build.spec
