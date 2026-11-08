@@ -35,9 +35,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt pyinstaller pytest ruff
 
-      # 质量门禁在 ci.yml 与本地执行（ruff / pytest / scripts/lint_qml.py）。
-      # 发布流水线只负责构建与上传：runner 上这些检查的失败无法取到日志，
-      # 反复卡住发布而无法定位，不再重复一遍。
+      # 发布前先过同一套门禁：tag 推送也不能绕过测试。
+      - name: Ruff
+        run: ruff check rin_launcher tests scripts --no-cache
+
+      - name: Pytest
+        run: pytest tests -q
+
+      - name: QML lint
+        run: python scripts/lint_qml.py
 
       - name: Build (onedir)
         run: pyinstaller build.spec

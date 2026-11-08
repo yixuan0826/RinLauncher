@@ -31,10 +31,9 @@ def mark(name: str) -> None:
 
 mark("process-imports")
 
+import RinUI  # noqa: E402,F401
 from PySide6.QtCore import QTimer  # noqa: E402
 from PySide6.QtWidgets import QApplication  # noqa: E402
-
-import RinUI  # noqa: E402,F401
 
 mark("pyside-rinui-import")
 

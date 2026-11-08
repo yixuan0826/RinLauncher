@@ -22,12 +22,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+import RinUI  # noqa: F401
 from PySide6.QtCore import QEventLoop, QMetaObject, QObject, Qt, QTimer
 from PySide6.QtGui import QColor, QImage, QPainter
 from PySide6.QtQml import QQmlExpression
 from PySide6.QtWidgets import QApplication
 
-import RinUI  # noqa: F401
 from rin_launcher import __version__
 from rin_launcher.effects import apply_bottom_layer
 from rin_launcher.main import Launcher, _setup_logging
