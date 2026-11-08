@@ -218,7 +218,7 @@ ColumnLayout {
             wrapMode: Text.Wrap
             typography: Typography.Caption
             color: Theme.currentTheme.colors.textSecondaryColor
-            text: qsTr("其他依赖：pycaw、comtypes、pywinrt、PyYAML、darkdetect、pynput、watchdog、pywin32。")
+            text: qsTr("其他依赖：pycaw、comtypes、pywinrt、PyYAML、pynput、watchdog、pywin32。")
         }
     }
 

@@ -42,7 +42,8 @@ WinRT 工作线程改为懒启动后 `launcher-services` 分段 52 → 27 ms。
 - **构建护栏**：`build.spec` 对 pypinyin 与 Windows Toast 的 winrt 模块做
   “缺失即失败”断言，避免静默降级被打进发布包。
 - **CI**：QML lint 从只在 tag 时跑改到 PR / push 也跑；导入路径改为 pip 安装位置
-  （内联目录已删除，旧写法会直接让发布流水线卡住）。
+  （内联目录已删除，旧写法会直接让发布流水线卡住）。`Ruff` / `Pytest` / `QML lint`
+  三道门禁在 CI 与发布流水线都是硬性阻断，跑法与本地完全一致。
 
 ### 改进
 

@@ -1,7 +1,11 @@
 # RinUI 本地补丁清单
 
-本目录是内联的 RinUI（MIT，上游：<https://github.com/RinLit-233-shiroko/Rin-UI>）。
-同步上游时，下面几处本地补丁必须手工保留（或移植后再同步），本文件也一并保留。
+> 历史存档。RinUI 自 1.2.1 起改为 pip 依赖（`rinui==0.5.0`），仓库里不再有内联副本；
+> 下面几处本地补丁的**现状与结论**见文末的对照表，新的兼容层是
+> `qml/components/RinComboBox.qml`。
+
+RinUI 为 MIT，上游：<https://github.com/RinLit-233-shiroko/Rin-UI>。
+内联时代同步上游时，下面几处本地补丁必须手工保留（或移植后再同步）。
 
 ## 1. ComboBox 手动补发 `activated`
 

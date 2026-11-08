@@ -65,7 +65,7 @@
 - [x] GitHub Actions：pytest + ruff 质量门禁（推送到 main / PR 触发）
 - [x] 标签发布流水线：`v*` tag → PyInstaller onedir 构建 → zip 附加到 Release
 - [x] `action_executor` 测试补齐（参数拆分 / 提权闸门 / 动作分发 / 键盘回放）
-- [x] RinUI 本地补丁清单（见 `RinUI/LOCAL_PATCHES.md`）
+- [x] RinUI 本地补丁清单（现归档为 `docs/rinui-local-patches.md`）
 - [x] 清理未使用的 `shutil` 导入与 `pytest-qt` 开发依赖
 
 ## 待办

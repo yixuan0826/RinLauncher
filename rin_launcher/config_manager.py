@@ -2126,7 +2126,7 @@ class ConfigManager(QObject):
             "iconDir": str(self.icon_dir),
             "logDir": str(self.log_dir),
             "logFile": str(log_file),
-            "backend": "RinUI（内联，MIT）",
+            "backend": "RinUI 0.5.0（pip 依赖，MIT）",
         }
         info["diagnostics"] = (
             f"Rin Launcher {APP_VERSION} ({APP_CODENAME}, {channel})\n"

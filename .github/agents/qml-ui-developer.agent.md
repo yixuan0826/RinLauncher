@@ -22,7 +22,7 @@ UI copy and code comments are in Chinese; identifiers are in English.
 | Reusable components | `qml/components/*.qml` |
 | QML module registration | `qmldir` in `qml/`, `qml/pages/`, `qml/dialogs/`, `qml/components/` |
 | Python glue (windows, tray, hotkey, config) | `rin_launcher/` |
-| Vendored fluent QML library (MIT) | `RinUI/` |
+| Fluent QML library (pip `rinui==0.5.0`, MIT) | installed package `RinUI/` |
 | Tests (pytest; no QML automation) | `tests/` |
 
 Pages are wired in `qml/LauncherWindow.qml` via the `pageUrls` map + `Qt.resolvedUrl(...)`.
@@ -40,8 +40,9 @@ Pages are wired in `qml/LauncherWindow.qml` via the `pageUrls` map + `Qt.resolve
 4. **Settings writes** go through the `pending` object + 350 ms debounce timer and
    `flush()`; never write `config.yaml` from a control handler directly. `ConfigManager`
    auto-reloads external edits (0.5 s debounce) and ignores our own writes.
-5. **RinUI is vendored** with a deliberate local patch (ComboBox manually re-emits
-   `activated`). Preserve it; prefer adding to `qml/` over editing `RinUI/`.
+5. **RinUI is a pip dependency** (`rinui==0.5.0`), not a vendored directory. Upstream 0.5.0
+   dropped `activated` on its self-drawn ComboBox popup; `qml/components/RinComboBox.qml`
+   re-emits it. Use `RinComboBox`, never patch files inside site-packages.
 6. **Design system:** colors/typography come from `Theme.currentTheme.*`; icons are
    `ic_fluent_*` or `lawnicons:*` (see `assets/`). Match the spacing and structure of
    neighboring files.
