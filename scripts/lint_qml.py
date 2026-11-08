@@ -102,4 +102,13 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except Exception as exc:  # pragma: no cover - 只用于取 CI 上的诊断
+        import traceback
+
+        if os.environ.get("GITHUB_ACTIONS") == "true":
+            print(f"::error::lint_qml crashed: {type(exc).__name__}: {exc}")
+        traceback.print_exc()
+        exit_code = 1
+    raise SystemExit(exit_code)
