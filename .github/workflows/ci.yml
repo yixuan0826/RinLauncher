@@ -31,7 +31,19 @@ jobs:
         run: ruff check rin_launcher tests scripts
 
       - name: Pytest
-        run: pytest tests -q
+        shell: pwsh
+        run: |
+          # 失败摘要走 ::error:: 才能在匿名状态下从 Annotations 看到。
+          $ErrorActionPreference = 'Continue'
+          $out = & pytest tests -q --tb=line 2>&1
+          $code = $LASTEXITCODE
+          $out | Out-Host
+          if ($code -ne 0) {
+            $out | Where-Object { $_ -match '^(FAILED|ERROR)|Error:|assert' } |
+              Select-Object -First 8 |
+              ForEach-Object { Write-Host "::error::$($_.Trim())" }
+            exit $code
+          }
 
       # QML 有八千多行且没有自动化 UI 测试，lint 必须在 PR 阶段就拦下来，
       # 不能等到打 tag 时才发现（release.yml 里另有同名步骤）。

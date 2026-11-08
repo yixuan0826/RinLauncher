@@ -55,6 +55,8 @@ def main() -> int:
         print("no QML files found", file=sys.stderr)
         return 2
 
+    # CI 上拿不到 job 日志时，注解是唯一能匿名看到的诊断渠道。
+    in_ci = os.environ.get("GITHUB_ACTIONS") == "true"
     failed: list[Path] = []
     for path in files:
         result = subprocess.run(
@@ -63,7 +65,10 @@ def main() -> int:
             env=env, cwd=ROOT, check=False)
         if result.returncode != 0:
             failed.append(path)
-            print(f"--- {path.relative_to(ROOT).as_posix()}", file=sys.stderr)
+            rel = path.relative_to(ROOT).as_posix()
+            if in_ci:
+                print(f"::error file={rel},line=1::qmllint failed")
+            print(f"--- {rel}", file=sys.stderr)
             for stream in (result.stdout, result.stderr):
                 if stream.strip():
                     print(stream.rstrip(), file=sys.stderr)
