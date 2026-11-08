@@ -99,7 +99,7 @@ ColumnLayout {
     // ------------------------------------------------------------------
     FormRow {
         label: qsTr("类型")
-        ComboBox {
+        RinComboBox {
             id: typeCombo
             objectName: "actionTypeCombo"
             Layout.preferredWidth: 200

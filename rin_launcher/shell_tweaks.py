@@ -14,14 +14,11 @@ import json
 import logging
 import subprocess
 import sys
-import time
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_WALLPAPER_CACHE: tuple[float, bool] | None = None
-_WALLPAPER_TTL = 30.0
 
 _SHELL_ICONS = r"Software\Microsoft\Windows\CurrentVersion\Explorer\Shell Icons"
 _VALUE_NAME = "29"
@@ -71,11 +68,6 @@ def _read_value() -> str | None:
             return str(value)
     except OSError:
         return None
-
-
-def is_hidden() -> bool:
-    """当前用户是否已经应用了「无箭头」。"""
-    return bool(_read_value())
 
 
 def set_hidden(hidden: bool, *, data_dir: Path) -> dict[str, Any]:
@@ -152,27 +144,3 @@ def restart_explorer() -> bool:
     except Exception:
         logger.exception("重新启动资源管理器失败")
         return False
-
-
-def wallpaper_engine_running() -> bool:
-    """检测 Wallpaper Engine 是否在跑（决定要不要用 Acrylic 响应动态壁纸）。
-
-    ``tasklist`` 有子进程开销，而透明度滑条会连续触发设置变化；结果缓存 30 秒。
-    """
-    global _WALLPAPER_CACHE
-    if sys.platform != "win32":
-        return False
-    now = time.monotonic()
-    if _WALLPAPER_CACHE and now - _WALLPAPER_CACHE[0] < _WALLPAPER_TTL:
-        return _WALLPAPER_CACHE[1]
-    try:
-        output = subprocess.run(
-            ["tasklist", "/FO", "CSV", "/NH"],
-            capture_output=True, timeout=6,
-            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-        ).stdout.decode("mbcs", errors="replace").lower()
-    except Exception:
-        return False
-    found = "wallpaper32.exe" in output or "wallpaper64.exe" in output
-    _WALLPAPER_CACHE = (now, found)
-    return found

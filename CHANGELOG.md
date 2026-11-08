@@ -3,6 +3,58 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.2.1（1.2.x 维护线）— 2026-11-08
+
+> 1.2.x 维护线。这一版的主题是**按职责拆分**：几个已经膨胀到近千行的核心文件
+> 被拆成各自单一职责的模块，对外行为与界面一律不变。
+
+### 重构：把大文件拆开
+
+三个文件已经涨到六百到近千行，改一处要滚到屏幕外找另一处，评审基本靠通读。
+这一版按「一个文件只回答一个问题」拆开：
+
+| 原文件 | 拆成 | 行数 |
+| --- | --- | --- |
+| `system_controls.py` | `system_audio.py`（音量，pycaw）+ `system_network.py`（Wi-Fi / 热点，WinRT） | 839 → 327 |
+| `CompactWindow.qml` | `CompactStorageRow` / `CompactMiniBar` / `CompactToast` | 965 → 557 |
+| `SlotEditorDialog.qml` | `SlotPreviewCard` / `SlotKindSelector` / `SlotTargetFields` | 606 → 407 |
+
+**意义**：COM 公寓、WinRT 异步操作、QML 布局这三种最容易踩雷的东西，现在各自
+关在一个文件里；改动的影响面从「整个窗口」缩到「一个组件」。`SystemControls`
+暴露给 QML 的属性与槽位（Slot）签名一个字没动，所以小窗和编辑器不需要跟着改。
+
+**效果**：`pytest` 142 项全绿，45 个 QML 文件 qmllint 0 错，真机 10 张截图回归
+通过；无头冷启动 2360 → 2245 ms（OS 缓存冷）/ 1203 ms（热缓存复测），
+WinRT 工作线程改为懒启动后 `launcher-services` 分段 52 → 27 ms。
+
+### 变更
+
+- **RinUI 改用 pip 0.5.0**：删除内联的 `RinUI/` 目录，`requirements.txt` 与
+  `pyproject.toml` 增加 `rinui==0.5.0`；本地补丁清单归档到
+  `docs/rinui-local-patches.md`。
+- **下拉框兼容层**：0.5.0 的 `ComboBox` 用自绘弹层，不再发 `activated`；新增
+  `qml/components/RinComboBox.qml` 把 `itemSelected` 转回 `activated`，替换了
+  9 个文件里的 20 处调用。
+- **依赖升级**：PySide6 6.12.0、watchdog 7.1.0、winrt 投影 4!10.0；给 PySide6 与
+  watchdog 加上限，并补上 `winrt-Windows.Storage.Streams` 声明。
+- **依赖去水**：`darkdetect` 本项目零直接引用（由 `rinui` 传递声明），从两个
+  清单里移除。
+- **构建护栏**：`build.spec` 对 pypinyin 与 Windows Toast 的 winrt 模块做
+  “缺失即失败”断言，避免静默降级被打进发布包。
+- **CI**：QML lint 从只在 tag 时跑改到 PR / push 也跑；导入路径改为 pip 安装位置
+  （内联目录已删除，旧写法会直接让发布流水线卡住）。
+
+### 改进
+
+- **迷你条容量不再被截断**：96px 卡宽下副标题只放容量数字，「剩余」交给悬停提示。
+- **存储占用条平滑过渡**：每 2.5 秒刷新的磁盘占用不再硬跳。
+- **无用代码清理**：无引用的常量、方法与属性共 15 处（已交叉核对 QML 与测试）。
+
+### 性能
+
+- 无头冷启动基准：2360 ms → 2245 ms；热缓存复测 1203 ms。
+- WinRT 工作线程懒启动：恢复模式、只开设置页时不再拉起线程与整条 winrt 导入链。
+
 ## 1.2.0（Hoshimi Miyabi）— 2026-11-04
 
 > 1.2.0 正式版。收敛启动台交互、补齐开始菜单预览图，并做了一轮瘦身。

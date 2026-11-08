@@ -14,8 +14,8 @@ import pytest
 
 import rin_launcher.config_manager as cm
 from rin_launcher import __version__, powershell
-from rin_launcher.updater import (
-    UpdateManager,
+from rin_launcher.updater import UpdateManager
+from rin_launcher.updater_release import (
     clean_release_notes,
     parse_release_notes,
     parse_releases,

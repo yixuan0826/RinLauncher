@@ -245,7 +245,7 @@ FluentWindowBase {
 
                     FormRow {
                         label: qsTr("主题")
-                        ComboBox {
+                        RinComboBox {
                             id: themeCombo
                             Layout.preferredWidth: 180
                             model: [qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")]
@@ -261,7 +261,7 @@ FluentWindowBase {
 
                     FormRow {
                         label: qsTr("磁贴尺寸")
-                        ComboBox {
+                        RinComboBox {
                             id: tileCombo
                             Layout.preferredWidth: 180
                             model: [qsTr("小"), qsTr("中"), qsTr("大")]
@@ -288,7 +288,7 @@ FluentWindowBase {
                     FormRow {
                         label: qsTr("启动台形态")
                         description: qsTr("之后可以在「更多」菜单里随时切换")
-                        ComboBox {
+                        RinComboBox {
                             id: modeCombo
                             Layout.preferredWidth: 180
                             model: [qsTr("完整启动台"), qsTr("迷你模式")]

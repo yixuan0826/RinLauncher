@@ -16,7 +16,6 @@ from typing import Any
 logger = logging.getLogger(__name__)
 
 # 自动备份 7 天一次，保留最近 8 份；手动备份不自动删。
-AUTO_INTERVAL_DAYS = 7
 AUTO_KEEP = 8
 AUTO_PREFIX = "config-auto-"
 MANUAL_PREFIX = "config-manual-"

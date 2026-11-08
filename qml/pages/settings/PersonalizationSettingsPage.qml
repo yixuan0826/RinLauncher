@@ -36,7 +36,7 @@ Item {
 
                 FormRow {
                     label: qsTr("主题模式")
-                    ComboBox {
+                    RinComboBox {
                         id: themeCombo
                         Layout.preferredWidth: 180
                         model: [qsTr("跟随系统"), qsTr("浅色"), qsTr("深色")]
@@ -100,7 +100,7 @@ Item {
                 FormRow {
                     label: qsTr("磁贴尺寸")
                     description: qsTr("小窗面板的目标边长；每行放几格由面板宽度自动算")
-                    ComboBox {
+                    RinComboBox {
                         id: tileSizeCombo
                         Layout.preferredWidth: 180
                         model: [qsTr("小"), qsTr("中"), qsTr("大")]
@@ -133,7 +133,7 @@ Item {
                 FormRow {
                     label: qsTr("启动台形态")
                     description: qsTr("也可以从小窗「更多」菜单里随时切换")
-                    ComboBox {
+                    RinComboBox {
                         id: modeCombo
                         Layout.preferredWidth: 180
                         model: [qsTr("完整启动台"), qsTr("迷你模式")]
@@ -148,7 +148,7 @@ Item {
                 FormRow {
                     label: qsTr("贴角位置")
                     description: qsTr("完整启动台与迷你条都贴着所选角落")
-                    ComboBox {
+                    RinComboBox {
                         id: cornerCombo
                         Layout.preferredWidth: 180
                         model: [qsTr("右下"), qsTr("左下")]

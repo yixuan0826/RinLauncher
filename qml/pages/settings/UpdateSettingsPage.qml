@@ -102,7 +102,7 @@ Item {
                 FormRow {
                     label: qsTr("自动提醒通道")
                     description: qsTr("只影响自动检查时的提示；下面列表里始终包含全部版本")
-                    ComboBox {
+                    RinComboBox {
                         id: channelCombo
                         Layout.preferredWidth: 220
                         model: [qsTr("仅正式版"), qsTr("包含预发布")]
@@ -130,7 +130,7 @@ Item {
 
                 FormRow {
                     label: qsTr("更新源")
-                    ComboBox {
+                    RinComboBox {
                         id: mirrorCombo
                         Layout.preferredWidth: 160
                         model: ["GitHub", "ghfast", "ghproxy"]
@@ -242,7 +242,7 @@ Item {
                 FormRow {
                     label: qsTr("版本列表")
                     description: qsTr("下载并安装任意版本；装回旧版本就是回滚")
-                    ComboBox {
+                    RinComboBox {
                         id: releaseCombo
                         Layout.fillWidth: true
                         Layout.maximumWidth: 420

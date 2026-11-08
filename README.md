@@ -4,8 +4,8 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-就用」，启动台编辑与设置各自独立成窗。当前版本 **1.1.10**（开发代号 **Hoshimi Miyabi**，
-1.2.0 的预览版），完整变更见
+即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.1**（开发代号 **Hoshimi Miyabi**），
+属于 1.2.x 维护线（RinUI 0.5.0 / PySide6 6.12 / 依赖与模块整理），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
@@ -32,8 +32,8 @@
 
 ## 界面与操作
 
-- **小窗**：标题条（编辑 / 更多）→ 双行面板 → 存储区 → 系统控制条。左键启动，
-  右键可编辑 / 提权打开 / 再加一格；「更多」里能打开设置、重启、提权重启、隐藏与退出。
+- **小窗**：标题条（编辑 / 更多）→ 双行面板 → 存储区 → 系统控制条。左键启动；
+  「更多」里能打开设置、重启、提权重启、隐藏与退出；右键菜单已在 1.2.0 移除。
   标题、卡片与系统控制条统一使用 RinUI 的 `Theme.typography` / `windowRadius` 令牌，
   视觉基线对齐 RinUI 官方 Gallery。
 - **存储区**：第一张卡片固定到设置里选的文件夹或磁盘 —— 磁盘显示卷标（如「课件」），
@@ -65,6 +65,9 @@ cd RinLauncher
 pip install -r requirements.txt
 python -m rin_launcher.main
 ```
+
+RinUI 自 1.2.1 起不再内联，由 `requirements.txt` 里的 `rinui==0.5.0` 提供；
+下游对接的本地补丁清单见 `docs/rinui-local-patches.md`。
 
 源码模式的数据目录是 `%APPDATA%\RinLauncher`。
 
@@ -151,10 +154,17 @@ settings:
 ```
 rin_launcher/   Python 后端（配置 / 动作 / 系统控制 / 更新 / 输入法）
 qml/            三个窗口与组件（components / dialogs / pages）
-RinUI/          内联的 RinUI（MIT，本地补丁见 RinUI/LOCAL_PATCHES.md）
+docs/           RinUI 补丁清单等维护文档
 tests/          pytest 回归
 ```
 
+- RinUI 是 pip 依赖（`rinui==0.5.0`），不再内联；旧的那叠本地补丁的结论记在
+  [`docs/rinui-local-patches.md`](docs/rinui-local-patches.md)。
+- 后端按职责分模块：默认值与清洗在 `config_schema`，配置文件监听见
+  `config_watcher`，更新器的 Release 解析在 `updater_release`，音量与 Wi-Fi /
+  热点分别是 `system_audio` 与 `system_network`；`config_manager` 只留 QML 契约与状态。
+- 小窗界面按块拆在 `qml/components/`：`CompactPanel` / `CompactStorageRow` /
+  `CompactMiniBar` / `CompactToast` / `SystemControlBar`。
 - 三个窗口各自使用独立 QML 引擎；编辑 / 设置窗口按需创建。
 - 下拉用 `onActivated: function (index) {...}`；弹窗用 `dialogs/AppDialog.qml`。
 - 检查：`ruff check rin_launcher tests scripts` 与 `pytest -q`。
@@ -164,6 +174,12 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.2.1**（Hoshimi Miyabi，1.2.x 维护线）：依赖全面升级（Python 3.14.10 /
+  PySide6 6.12 / RinUI 0.5.0 pip / watchdog 7.1 / winrt 4!10）；新增 `RinComboBox`
+  补回 0.5.0 丢掉的 `activated`；`config_manager`、`updater`、`system_controls`
+  与三个 QML 大文件按职责拆分（小窗降到 557 行）；清掉无引用代码；构建期
+  校正拼音与 Toast 依赖；WinRT 工作线程改为懒启动；迷你条容量数字不再被截断。
+  详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.1.11**（Hoshimi Miyabi）：迷你模式 / 悬浮球 / OOBE；`appmodset.conf` 取代
   `channel.txt`；窗口位置与三套形态独立透明度；开始菜单异步扫描与缩略图；
   U 盘设备名与多分区合并；系统通知快速注册；Python 3.14。

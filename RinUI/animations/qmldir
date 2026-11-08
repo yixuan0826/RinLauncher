@@ -1,3 +1,0 @@
-module RinUI.Animations
-
-singleton BezierCurve 1.0 BezierCurve.qml

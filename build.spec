@@ -8,8 +8,8 @@
   按名字把用不到的 Qt DLL / QML 模块从 binaries、datas 里剔出去（见
   ``_drop_qt_binaries`` / ``_drop_qt_datas``）。原则是「拿不准就保留」——
   宁可多带几 MB，也不能运行期缺 DLL。
-* **资源**：qml/、RinUI/、assets/ 都不是 Python 模块，必须显式带进 datas，
-  漏掉任何一个都会在运行期找不到资源。
+* **资源**：qml/、assets/ 与 pip 安装的 RinUI（QML/字体/主题）都不是 Python
+  模块，必须显式带进 datas，漏掉任何一个都会在运行期找不到资源。
 
 产物有两种形态：
 
@@ -21,10 +21,17 @@
 
 import os
 import shutil
+from importlib.util import find_spec
 from pathlib import Path
 
 ROOT = Path(SPECPATH)
 ICON = ROOT / "assets" / "icon.ico"
+
+# RinUI 从 1.3 起不再是内联目录，QML / 字体 / 主题还在 wheel 里，
+# 构建时按包内实际路径收集（见 _rinui_data_files）。
+_rinui_spec = find_spec("RinUI")
+RINUI_DIR = (Path(_rinui_spec.origin).resolve().parent
+             if _rinui_spec is not None and _rinui_spec.origin else None)
 
 # 用不到的模块：整包剔掉。Qt 侧只用 Core / Gui / Widgets / Qml / Quick /
 # QuickControls2 / Svg（RinUI 的 Lawnicons 渲染需要 Svg；Qt5Compat 被 RinUI
@@ -149,14 +156,25 @@ def _drop_qt_datas(datas):
     return kept
 
 
+def _rinui_data_files():
+    """RinUI 的 QML / 字体 / 主题文件：pip 包装出来的资源必须显式带进包。"""
+    if RINUI_DIR is None:
+        raise SystemExit("[spec] RinUI 未安装：pip install -r requirements.txt")
+    return [
+        (str(path), str(Path("RinUI") / path.relative_to(RINUI_DIR).parent))
+        for path in RINUI_DIR.rglob("*")
+        if path.is_file() and "__pycache__" not in path.parts
+    ]
+
+
 a = Analysis(
     [str(ROOT / "rin_launcher" / "main.py")],
     pathex=[str(ROOT)],
     binaries=[],
     datas=[
         (str(ROOT / "qml"), "qml"),
-        # RinUI 是内联的普通目录，QML/字体/主题都不是 Python 模块，必须显式带上。
-        (str(ROOT / "RinUI"), "RinUI"),
+        # RinUI 由 pip 提供，逐个文件展开（跳过 __pycache__）。
+        *_rinui_data_files(),
         # QML 里用相对路径引用 Lawnicons，图标与 icon.ico 都在 assets 下。
         (str(ROOT / "assets"), "assets"),
     ],
@@ -198,6 +216,32 @@ a = Analysis(
 # 深度瘦身放在分析之后：hook 已经把 DLL 全收集完，这里只做减法。
 a.binaries = _drop_qt_binaries(a.binaries)
 a.datas = _drop_qt_datas(a.datas)
+
+# 拼音搜索与 Windows Toast 都是「缺包就静默降级」的路径：PyInstaller 只会把
+# 缺失的 hiddenimport 记进 warn-build.txt，构建照样成功。这里把它变成硬错误。
+REQUIRED_MODULES = (
+    "pypinyin",
+    "winrt.windows.data.xml.dom",
+    "winrt.windows.ui.notifications",
+    "winrt.windows.storage.streams",
+)
+
+
+def _assert_required_modules() -> None:
+    # a.pure 是 (name, path, typecode) 的 TOC，不是字符串集合。
+    pure = {str(entry[0]).replace("\\", "/").replace("/", ".") for entry in a.pure}
+    missing = [
+        name for name in REQUIRED_MODULES
+        if not any(mod == name or mod.startswith(f"{name}.") for mod in pure)
+    ]
+    if missing:
+        raise SystemExit(
+            "[spec] 缺少必需依赖：%s（pip install -r requirements.txt）"
+            % ", ".join(missing))
+    print(f"[spec] required modules OK: {len(REQUIRED_MODULES)}")
+
+
+_assert_required_modules()
 
 pyz = PYZ(a.pure)
 

@@ -35,7 +35,7 @@ Item {
 
                 FormRow {
                     label: qsTr("启动方式")
-                    ComboBox {
+                    RinComboBox {
                         id: startupCombo
                         Layout.preferredWidth: 180
                         model: [qsTr("关闭"), qsTr("登录时启动"), qsTr("管理员自启动")]
@@ -215,7 +215,7 @@ Item {
                 FormRow {
                     label: qsTr("日志级别")
                     description: qsTr("重启后生效")
-                    ComboBox {
+                    RinComboBox {
                         id: logCombo
                         Layout.preferredWidth: 160
                         model: ["DEBUG", "INFO", "WARNING", "ERROR"]

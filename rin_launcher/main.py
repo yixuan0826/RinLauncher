@@ -38,16 +38,20 @@ for _stream in (sys.stdout, sys.stderr):
         except Exception:  # 流不支持重配置（被其它程序包了一层）时忽略
             pass
 
-# RinUI is vendored in-tree (MIT), so the package root just has to be importable.
+# RinUI 现在是 pip 依赖（不再是内联目录）；项目根仍要可导入，
+# 直接以脚本方式运行时才能找到 rin_launcher 包。
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
+import RinUI  # noqa: F401
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
+from RinUI import RinUIWindow
+from RinUI.core import BackdropEffect, is_windows
+from RinUI.core.config import RinConfig, is_win11
 
-# RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
-import RinUI  # noqa: F401
 from rin_launcher import __version__, effects, logging_setup
 from rin_launcher.action_executor import ActionExecutor
 from rin_launcher.config_manager import ConfigManager
@@ -61,9 +65,6 @@ from rin_launcher.single_instance import (
 from rin_launcher.system_controls import SystemControls
 from rin_launcher.tray import TrayIcon
 from rin_launcher.updater import UpdateManager
-from RinUI import RinUIWindow
-from RinUI.core import BackdropEffect, is_windows
-from RinUI.core.config import RinConfig, is_win11
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +131,9 @@ class Launcher:
         self.settings: RinUIWindow | None = None
         self.recovery: RinUIWindow | None = None
         self.oobe: RinUIWindow | None = None
+        # 当前已经连过信号的那块主屏：同一个屏不重复断连，否则 PySide 会
+        # 刷“Failed to disconnect”警告（它只是 warning，try/except 抦不住）。
+        self._attached_screen = None
         self.tray = TrayIcon(ICON_FILE)
         self.hotkey = GlobalHotkey()
         # 系统控制（音量 / Wi-Fi / 移动热点），小窗底部那排卡片用。
@@ -182,12 +186,17 @@ class Launcher:
         screen = QGuiApplication.primaryScreen()
         if screen is None:
             return
-        # 主屏切换后旧屏还在发信号，先断掉再连，避免重复触发。
+        # 主屏没变就别碰信号：同一块屏重复 disconnect 会打印 libpyside 警告。
+        previous, self._attached_screen = self._attached_screen, screen
+        if previous is screen:
+            return
+        if previous is not None:
+            for signal in (previous.availableGeometryChanged, previous.geometryChanged):
+                try:
+                    signal.disconnect(self.sync_primary_screen)
+                except (RuntimeError, TypeError):
+                    pass
         for signal in (screen.availableGeometryChanged, screen.geometryChanged):
-            try:
-                signal.disconnect(self.sync_primary_screen)
-            except (RuntimeError, TypeError):
-                pass
             signal.connect(self.sync_primary_screen)
 
     # ------------------------------------------------------------------
@@ -228,10 +237,6 @@ class Launcher:
     @property
     def safe_mode(self) -> bool:
         return self.launch_mode == "safe" or self.config_manager.app_mode.safe_mode
-
-    @property
-    def diagnostic_mode(self) -> bool:
-        return self.launch_mode == "diagnostic"
 
     @property
     def recovery_only(self) -> bool:

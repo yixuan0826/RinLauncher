@@ -259,7 +259,7 @@ Item {
                         labelWidth: 88
                         description: qsTr("把卡片固定到某块盘；小窗显示卷标")
 
-                        ComboBox {
+                        RinComboBox {
                             objectName: "storageDrivePicker"
                             Layout.fillWidth: true
                             Layout.maximumWidth: 320

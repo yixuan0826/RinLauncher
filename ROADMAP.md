@@ -2,7 +2,29 @@
 
 > 复盘于 2026-10-16（v1.0.0 之后）。按「先基建、后功能、再发布级」推进；
 > 已完成的条目直接从清单移除，历史见 git log。
-> 当前开发线：**1.2.0（Hoshimi Miyabi）**，1.1.7 ~ 1.1.10 是它的预览版。
+> 当前开发线：**1.2.1（1.2.x 维护线）**；1.2.0（Hoshimi Miyabi）已发布，
+> 1.1.7 ~ 1.1.15 是它的预览版。
+
+## 已完成（2026-11-08，1.2.1）
+
+- [x] 依赖全面升级：Python 3.14.10 / PySide6 6.12.0 / watchdog 7.1 / winrt 4!10
+- [x] RinUI 从内联 0.4.4.1 改成 pip 0.5.0，补丁清单归档到 `docs/rinui-local-patches.md`
+- [x] 新增 `RinComboBox` 包装器：0.5.0 不再发 `activated`，改由弹层 `itemSelected` 转发（9 个文件 20 处）
+- [x] `config_manager.py` 第一批拆分：默认值与清洗规则 → `config_schema.py`，监听器 → `config_watcher.py`
+- [x] `updater.py` 拆分：Release 列表与 Markdown 解析 → `updater_release.py`
+- [x] 无用代码清理：无引用的常量、方法与属性共 14 处（已交叉核对 QML / 测试）
+- [x] 构建期依赖断言：拼音搜索与 Windows Toast 缺包时直接失败，不再静默降级
+- [x] `system_controls.py` 拆分：音量后端 → `system_audio.py`，Wi-Fi / 热点 →
+  `system_network.py`，外壳只留 QML 契约与线程调度（839 → 327 行）
+- [x] `CompactWindow.qml` 拆分：存储行 / 迷你条 / 自绘提示 → `CompactStorageRow` /
+  `CompactMiniBar` / `CompactToast`（965 → 557 行）
+- [x] `SlotEditorDialog.qml` 拆分：预览卡 / 类型选择 / 目标字段 → `SlotPreviewCard` /
+  `SlotKindSelector` / `SlotTargetFields`（606 → 407 行）
+- [x] WinRT 工作线程懒启动：恢复模式与仅开设置页时不再白起线程和 winrt 导入链
+- [x] 依赖清单去水：`darkdetect` 无直接引用（由 rinui 传递），从本项目声明里移除
+- [x] 迷你条存储卡 / U 盘卡副标题改为纯容量数字，96px 卡宽下不再被省略号吃掉
+- [x] CI 增加 QML lint（不再只在 tag 时跑）；导入路径改为 pip 安装位置
+- [x] 归档 1.1.12-pre / 1.1.13-pre / 1.1.15-pre / 1.2.0（细节见 CHANGELOG）
 
 ## 已完成（2026-11-03，1.1.11-pre）
 

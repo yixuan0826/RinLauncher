@@ -20,6 +20,10 @@ import "dialogs"
 // 窗口是「沉底」的桌面挂件：无边框、不抢焦点、不进任务栏，也不盖在别的窗口
 // 之上 —— 它贴在主显示器右下角，被普通窗口盖住，像桌面上的一块部件。
 // 高度固定为桌面可用高度的一半（见 rin_launcher/effects.py）。
+//
+// 界面按块拆在 components/ 下：CompactPanel（格子板）、CompactStorageRow
+// （存储 + 磁盘）、SystemControlBar（音量 / Wi-Fi / 热点）、CompactMiniBar
+// （迷你条）、CompactToast（自绘提示）。这里只留窗口形态、位置与交互。
 Window {
     id: compact
 
@@ -34,7 +38,6 @@ Window {
     readonly property int surfaceRadius: miniMode
         ? Math.round(height / 2) : cardRadius
 
-    // ── 形态 ──
     // normal = 完整启动台；mini = 单行工具条。
     property string windowMode: "normal"
     property string windowCorner: "bottom-right"
@@ -93,17 +96,8 @@ Window {
     property var usbDevices: []
     // 全局磁贴尺寸档位：small / medium / large。
     property string tileSizeMode: "medium"
-
-    // 存储行卡片宽度：单卡铺开，两张平分，再多就固定 160 起横向滚动。
-    // 之前统一 202，两张卡（存储 + 一个磁盘）就会顶出可视区、还剩半截在滚动里。
-    readonly property real storageCardWidth: {
-        var count = 1 + storageSlots.length
-        if (count <= 1) {
-            return Math.min(320, storageRow.width)
-        }
-        return Math.max(160, Math.min(202,
-            (storageRow.width - (count - 1) * 8) / count))
-    }
+    // 面板 + 存储行的内容签名：一致就不重建格子，避免每 2.5 秒闪一下。
+    property string slotsSignature: ""
 
     function applyTileSize() {
         if (typeof ConfigManager === "undefined" || !ConfigManager) {
@@ -222,7 +216,6 @@ Window {
         }
 
         ColumnLayout {
-            id: normalContent
             anchors.fill: card
             anchors.margins: compact.contentMargin
             visible: compact.normalMode
@@ -230,7 +223,6 @@ Window {
 
             // ── 标题条 ──
             Item {
-                id: titleBar
                 Layout.fillWidth: true
                 Layout.preferredHeight: 48
 
@@ -259,7 +251,6 @@ Window {
                     Item { Layout.fillWidth: true }
 
                     ToolButton {
-                        id: editButton
                         Layout.preferredWidth: 32
                         Layout.preferredHeight: 32
                         icon.name: "ic_fluent_edit_20_regular"
@@ -305,195 +296,12 @@ Window {
             }
 
             // ── 第三行：存储位置 + 磁盘入口 ──
-            Item {
+            CompactStorageRow {
                 Layout.fillWidth: true
-                Layout.preferredHeight: 72
-
-                Flickable {
-                    id: storageRow
-                    objectName: "storageRow"
-                    anchors.fill: parent
-                    clip: true
-                    contentWidth: storageContent.implicitWidth
-                    contentHeight: height
-                    boundsBehavior: Flickable.StopAtBounds
-                    interactive: contentWidth > width + 1
-
-                    Row {
-                        id: storageContent
-
-                        x: Math.max(0, (storageRow.width - implicitWidth) / 2)
-                        y: Math.max(0, (storageRow.height - implicitHeight) / 2)
-                        spacing: 8
-
-                        // 固定的存储卡片（不是槽位，第三行的头一张）。
-                        // 只有这一张时铺开占满整行，配了磁盘卡之后再退回等宽，
-                        // 免得右边空一大块、或者单卡被 202 卡住溢出滚动。
-                        Frame {
-                            width: compact.storageCardWidth
-                            height: 66
-                            padding: 0
-                            radius: compact.cardRadius
-                            // 云母已经定义了卡片的边界，再描一圈边就显得脏。
-                            border.width: 0
-
-                            MouseArea {
-                                anchors.fill: parent
-                                cursorShape: Qt.PointingHandCursor
-                                onClicked: compact.openStorage()
-                            }
-
-                            RowLayout {
-                                anchors.fill: parent
-                                anchors.leftMargin: 12
-                                anchors.rightMargin: 12
-                                anchors.topMargin: 8
-                                anchors.bottomMargin: 8
-                                spacing: 10
-
-                                AppIcon {
-                                    Layout.alignment: Qt.AlignVCenter
-                                    iconKey: "ic_fluent_storage_20_regular"
-                                    iconSize: 24
-                                    tint: Theme.currentTheme.colors.textColor
-                                }
-
-                                ColumnLayout {
-                                    Layout.fillWidth: true
-                                    Layout.alignment: Qt.AlignVCenter
-                                    spacing: 3
-
-                                    RowLayout {
-                                        Layout.fillWidth: true
-                                        spacing: 6
-
-                                        Text {
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                            font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
-                                            font.weight: Font.DemiBold
-                                            color: Theme.currentTheme.colors.textColor
-                                            text: compact.storage.label || qsTr("存储位置")
-                                        }
-
-                                        Text {
-                                            font.pixelSize: Theme.currentTheme.typography.captionSize
-                                            color: Theme.currentTheme.colors.textSecondaryColor
-                                            // 这一行很窄：带上总量会把左边的目录名挤成
-                                            // 「w...e」，总量留给提示气泡，进度条本身也表达了占比。
-                                            text: compact.storage.available
-                                                ? qsTr("剩余 %1").arg(compact.storage.free)
-                                                : qsTr("容量未知")
-                                        }
-                                    }
-
-                                    Rectangle {
-                                        Layout.fillWidth: true
-                                        Layout.preferredHeight: 6
-                                        radius: 3
-                                        color: Theme.currentTheme.colors.controlSecondaryColor
-
-                                        Rectangle {
-                                            height: parent.height
-                                            radius: parent.radius
-                                            width: parent.width * Math.min(100,
-                                                Math.max(0, compact.storage.percent || 0)) / 100
-                                            color: Theme.currentTheme.colors.primaryColor
-                                        }
-                                    }
-                                }
-                            }
-
-                            ToolTip.text: compact.storage.available
-                                ? qsTr("%1\n剩余 %2 / 共 %3")
-                                    .arg(compact.storage.path)
-                                    .arg(compact.storage.free)
-                                    .arg(compact.storage.total)
-                                : String(compact.storage.path || "")
-                        }
-
-                        // 磁盘槽位：U 盘与「指定的硬盘」是各自独立的两格。
-                        Repeater {
-                            model: compact.storageSlots
-
-                            delegate: Frame {
-                                id: diskCard
-
-                                width: compact.storageCardWidth
-                                height: 66
-                                padding: 0
-                                radius: Theme.currentTheme.appearance.windowRadius
-                                border.width: 0
-                                opacity: modelData.exists === false ? 0.55 : 1
-
-                                MouseArea {
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: compact.runSlot(modelData)
-                                }
-
-                                RowLayout {
-                                    anchors.fill: parent
-                                    anchors.leftMargin: 12
-                                    anchors.rightMargin: 12
-                                    spacing: 10
-
-                                    AppIcon {
-                                        Layout.alignment: Qt.AlignVCenter
-                                        iconKey: modelData.icon || ""
-                                        iconSize: 24
-                                        tint: modelData.exists === false
-                                            ? Theme.currentTheme.colors.textSecondaryColor
-                                            : Theme.currentTheme.colors.textColor
-                                    }
-
-                                    ColumnLayout {
-                                        Layout.fillWidth: true
-                                        Layout.alignment: Qt.AlignVCenter
-                                        spacing: 2
-
-                                        Text {
-                                            id: diskLabel
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideRight
-                                            font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
-                                            font.weight: Font.DemiBold
-                                            color: Theme.currentTheme.colors.textColor
-                                            text: modelData.name || qsTr("磁盘")
-                                        }
-                                        Text {
-                                            Layout.fillWidth: true
-                                            elide: Text.ElideMiddle
-                                            font.pixelSize: Theme.currentTheme.typography.captionSize
-                                            color: Theme.currentTheme.colors.textSecondaryColor
-                                            text: compact.slotDetail(modelData)
-                                        }
-
-                                        // U 盘与磁盘都给出占用条；多分区容量由后端合并。
-                                        Rectangle {
-                                            Layout.fillWidth: true
-                                            Layout.preferredHeight: 4
-                                            radius: 2
-                                            visible: modelData.exists !== false
-                                                && Number(modelData.percent || 0) > 0
-                                            color: Theme.currentTheme.colors.controlSecondaryColor
-
-                                            Rectangle {
-                                                height: parent.height
-                                                radius: parent.radius
-                                                width: parent.width
-                                                    * Math.min(100, Math.max(0,
-                                                        Number(modelData.percent || 0))) / 100
-                                                color: Theme.currentTheme.colors.primaryColor
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
+                storage: compact.storage
+                slots: compact.storageSlots
+                onStorageActivated: compact.openStorage()
+                onSlotActivated: compact.runSlot(slot)
             }
 
             // ── 底部：系统控制（音量 / Wi-Fi / 热点） ──
@@ -507,230 +315,25 @@ Window {
         // ──────────────────────────────────────────────────────────
         // 迷你模式：单行工具条
         // ──────────────────────────────────────────────────────────
-        Item {
-            id: miniContent
+        CompactMiniBar {
             anchors.fill: parent
             visible: compact.miniMode
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 6
-                spacing: 6
-
-                // 前三个固定应用：只显示图标，不显示文字。
-                Repeater {
-                    model: compact.panelSlots.slice(0, 3)
-
-                    delegate: Frame {
-                        Layout.preferredWidth: 44
-                        Layout.preferredHeight: 44
-                        padding: 0
-                        // 迷你条整体是胶囊，内部 44 高的卡片直接取半高做圆角。
-                        radius: 22
-                        border.width: 0
-                        color: miniMouse.containsMouse
-                            ? Theme.currentTheme.colors.subtleSecondaryColor
-                            : Theme.currentTheme.colors.cardColor
-
-                        AppIcon {
-                            anchors.centerIn: parent
-                            iconKey: modelData.icon || "ic_fluent_apps_20_regular"
-                            iconSize: 22
-                            tint: Theme.currentTheme.colors.textColor
-                            placeholder: "ic_fluent_apps_20_regular"
-                        }
-
-                        MouseArea {
-                            id: miniMouse
-                            anchors.fill: parent
-                            hoverEnabled: true
-                            cursorShape: Qt.PointingHandCursor
-                            onClicked: compact.runSlot(modelData)
-                        }
-
-                        ToolTip.text: modelData.name || ""
-                        ToolTip.visible: miniMouse.containsMouse
-                    }
-                }
-
-                // 固定存储位置：与 Wi-Fi 开关同样的卡片样式。
-                Frame {
-                    Layout.preferredWidth: 96
-                    Layout.preferredHeight: 44
-                    padding: 0
-                    radius: 22
-                    border.width: 0
-                    color: storageMouse.containsMouse
-                        ? Theme.currentTheme.colors.subtleSecondaryColor
-                        : Theme.currentTheme.colors.cardColor
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
-
-                        AppIcon {
-                            Layout.alignment: Qt.AlignVCenter
-                            iconKey: "ic_fluent_storage_20_regular"
-                            iconSize: 20
-                            tint: Theme.currentTheme.colors.textColor
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: 0
-                            Text {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.currentTheme.typography.captionSize
-                                font.weight: Font.DemiBold
-                                color: Theme.currentTheme.colors.textColor
-                                text: compact.storage.label || qsTr("存储")
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.currentTheme.typography.captionSize - 1
-                                color: Theme.currentTheme.colors.textSecondaryColor
-                                text: compact.storage.available
-                                    ? qsTr("剩余 %1").arg(compact.storage.free)
-                                    : qsTr("不可用")
-                            }
-                        }
-                    }
-
-                    MouseArea {
-                        id: storageMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: compact.openStorage()
-                    }
-                    ToolTip.text: String(compact.storage.path || "")
-                    ToolTip.visible: storageMouse.containsMouse
-                }
-
-                // U 盘快捷开关：没有设备时置灰禁用，不隐藏，位置稳定。
-                Frame {
-                    Layout.preferredWidth: 96
-                    Layout.preferredHeight: 44
-                    padding: 0
-                    radius: 22
-                    border.width: 0
-                    opacity: compact.usbDevices.length > 0 ? 1 : 0.55
-                    color: usbMouse.containsMouse && compact.usbDevices.length > 0
-                        ? Theme.currentTheme.colors.subtleSecondaryColor
-                        : Theme.currentTheme.colors.cardColor
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 8
-                        anchors.rightMargin: 8
-                        spacing: 6
-
-                        AppIcon {
-                            Layout.alignment: Qt.AlignVCenter
-                            iconKey: "ic_fluent_usb_plug_20_regular"
-                            iconSize: 20
-                            tint: Theme.currentTheme.colors.textColor
-                        }
-                        ColumnLayout {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            spacing: 0
-                            Text {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.currentTheme.typography.captionSize
-                                font.weight: Font.DemiBold
-                                color: Theme.currentTheme.colors.textColor
-                                text: compact.usbDevices.length > 0
-                                    ? (compact.usbDevices[0].name || qsTr("U 盘"))
-                                    : qsTr("U 盘")
-                            }
-                            Text {
-                                Layout.fillWidth: true
-                                elide: Text.ElideRight
-                                font.pixelSize: Theme.currentTheme.typography.captionSize - 1
-                                color: Theme.currentTheme.colors.textSecondaryColor
-                                text: compact.usbDevices.length > 0
-                                    ? qsTr("剩余 %1").arg(compact.usbDevices[0].free || "?")
-                                    : qsTr("没有检测到")
-                            }
-                        }
-                    }
-
-                    MouseArea {
-                        id: usbMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        enabled: compact.usbDevices.length > 0
-                        cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                        onClicked: ConfigManager.openRemovableDrive()
-                    }
-                    ToolTip.text: compact.usbDevices.length > 0
-                        ? qsTr("%1 · 剩余 %2")
-                            .arg(compact.usbDevices[0].name || "U 盘")
-                            .arg(compact.usbDevices[0].free || "?")
-                        : qsTr("没有检测到 U 盘")
-                    ToolTip.visible: usbMouse.containsMouse
-                }
-
-                Item { Layout.fillWidth: true }
-
-                ToolButton {
-                    id: miniMoreButton
-                    Layout.preferredWidth: 36
-                    Layout.preferredHeight: 36
-                    Layout.alignment: Qt.AlignVCenter
-                    icon.name: "ic_fluent_more_vertical_20_regular"
-                    ToolTip.text: qsTr("更多")
-                    ToolTip.visible: hovered
-                    onClicked: compact.popupMoreMenu(miniMoreButton)
-                }
-            }
+            panelSlots: compact.panelSlots
+            storage: compact.storage
+            usbDevices: compact.usbDevices
+            onSlotActivated: compact.runSlot(slot)
+            onStorageActivated: compact.openStorage()
+            onMoreRequested: compact.popupMoreMenu(anchor)
         }
 
-        // 简易 toast：常驻小窗没有 FloatLayer 那种容器，自绘一条更合适。
-        Rectangle {
+        // 常驻小窗没有 FloatLayer 那种容器，自绘一条提示更合适。
+        CompactToast {
             id: toast
-
-            anchors.horizontalCenter: card.horizontalCenter
-            anchors.bottom: card.bottom
+            anchors.horizontalCenter: parent.horizontalCenter
+            anchors.bottom: parent.bottom
             // 完整模式给底部系统控制条留位置；迷你条贴着卡片底部即可。
             anchors.bottomMargin: compact.normalMode ? 128 : 6
-            z: 900
-            width: Math.min(toastText.implicitWidth + 24, card.width - 32)
-            height: 32
-            radius: Theme.currentTheme.appearance.windowRadius
-            color: Theme.currentTheme.colors.primaryColor
-            opacity: 0
-            visible: opacity > 0
-
-            Behavior on opacity {
-                NumberAnimation { duration: 160 }
-            }
-
-            Text {
-                id: toastText
-                anchors.centerIn: parent
-                width: parent.width - 20
-                horizontalAlignment: Text.AlignHCenter
-                elide: Text.ElideRight
-                color: "white"
-                font.pixelSize: Theme.currentTheme.typography.captionSize
-                text: ""
-            }
-
-            Timer {
-                id: toastTimer
-                interval: 2600
-                onTriggered: toast.opacity = 0
-            }
         }
-
-        // 提权 / 退出确认已改成独立窗口（见文件末尾的 ConfirmDialog），小窗里不再自绘遮罩。
     }
 
 
@@ -788,9 +391,7 @@ Window {
         function onConfigChanged() { compact.applyAccentColor() }
 
         function onShowToast(message, _severity) {
-            toastText.text = message
-            toast.opacity = 1
-            toastTimer.restart()
+            toast.show(message)
         }
     }
 
@@ -800,6 +401,7 @@ Window {
     function reload() {
         // 一次取回全部槽位再按块分 —— 重复调用 getLauncherSlots() 会重复解析。
         var slots = ConfigManager.getLauncherSlots()
+        slotsSignature = slotSignature(slots)
         panelSlots = filterRow(slots, 0)
         storageSlots = filterRow(slots, 1)
         storage = ConfigManager.getStorageInfo()
@@ -818,7 +420,9 @@ Window {
     function refreshLive() {
         storage = ConfigManager.refreshStorageInfo()
         var slots = ConfigManager.getLauncherSlots()
-        if (slotSignature(slots) !== slotSignature(panelSlots.concat(storageSlots))) {
+        var signature = slotSignature(slots)
+        if (signature !== compact.slotsSignature) {
+            compact.slotsSignature = signature
             panelSlots = filterRow(slots, 0)
             storageSlots = filterRow(slots, 1)
         }
@@ -911,18 +515,6 @@ Window {
         ConfigManager.openPath(compact.storage.path || "")
     }
 
-    function slotDetail(slot) {
-        if (!slot) return ""
-        if (slot.kind === "usb") {
-            if (slot.exists === false) return qsTr("没有检测到")
-            return qsTr("剩余 %1").arg(slot.free || "?")
-        }
-        if (slot.kind === "path" && slot.pathType === "file") {
-            return slot.exists === false ? qsTr("文件不可用") : String(slot.path || "")
-        }
-        return slot.exists === false ? qsTr("路径不可用") : String(slot.path || "")
-    }
-
     // 小窗是独立的 QML 根，够不到完整窗口，跨窗口的请求统一走信号交给 Python。
     function openMain(page) {
         compact.openMainRequested(page)
@@ -930,7 +522,7 @@ Window {
 
     // 菜单内容一律走独立窗口；屏幕坐标 = 窗口坐标 + 场景坐标。
     function popupMoreMenu(anchor) {
-        var item = anchor || (miniMode ? miniMoreButton : moreButton)
+        var item = anchor || moreButton
         var scene = item.mapToItem(null, item.width, 0)
         var list = []
         if (!compact.normalMode) {

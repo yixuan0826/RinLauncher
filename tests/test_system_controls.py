@@ -50,8 +50,11 @@ class _FakeManager:
 
 
 def _prepare_configuration(monkeypatch):
-    """把只在 Windows 上导入的类型换成可控的假实现。"""
-    from rin_launcher import system_controls as module
+    """把只在 Windows 上导入的类型换成可控的假实现。
+
+    WinRT 类型现在由 ``system_network`` 持有，补丁也要打在那一层。
+    """
+    from rin_launcher import system_network as module
 
     monkeypatch.setattr(
         module, "NetworkOperatorTetheringAccessPointConfiguration",
@@ -59,17 +62,18 @@ def _prepare_configuration(monkeypatch):
     monkeypatch.setattr(
         module, "TetheringWiFiAuthenticationKind",
         types.SimpleNamespace(WPA2=0), raising=False)
+    return module
 
 
 def test_configure_hotspot_handles_async_action_without_result(qapp, monkeypatch):
     """回归：ConfigureAccessPointAsync 是 IAsyncAction，get() 返回 None。"""
-    from rin_launcher import system_controls as module
+    from rin_launcher.system_controls import SystemControls
 
-    _prepare_configuration(monkeypatch)
-    controls = module.SystemControls()
+    module = _prepare_configuration(monkeypatch)
+    controls = SystemControls()
     try:
         manager = _FakeManager()
-        assert controls._configure_hotspot(manager) == (True, "")
+        assert controls._network.configure_hotspot(manager) == (True, "")
         assert manager.configured[0].ssid == module.HOTSPOT_SSID
         assert manager.configured[0].passphrase == module.HOTSPOT_PASSWORD
     finally:
@@ -77,12 +81,13 @@ def test_configure_hotspot_handles_async_action_without_result(qapp, monkeypatch
 
 
 def test_configure_hotspot_detects_configuration_not_applied(qapp, monkeypatch):
-    from rin_launcher import system_controls as module
+    from rin_launcher.system_controls import SystemControls
 
     _prepare_configuration(monkeypatch)
-    controls = module.SystemControls()
+    controls = SystemControls()
     try:
-        ok, message = controls._configure_hotspot(_FakeManager(apply_configuration=False))
+        ok, message = controls._network.configure_hotspot(
+            _FakeManager(apply_configuration=False))
         assert not ok
         assert "SSID" in message
     finally:

@@ -54,12 +54,23 @@ from rin_launcher import (
     toast,
 )
 from rin_launcher import backups as backup_store
+from rin_launcher.config_schema import (
+    DEFAULT_SETTINGS,
+    NOTIFY_CATEGORIES,
+    NOTIFY_CHANNELS,
+    _action_steps,
+    _clamp_int,
+    _derive_action_name,
+    _new_slot,
+    _slot_row,
+)
+from rin_launcher.config_watcher import ConfigWatcher as _ConfigWatcher
 from rin_launcher.elevation import (
     is_admin,
     restart_application,
     restart_elevated_delayed,
 )
-from rin_launcher.icon_store import IconStore, icon_key
+from rin_launcher.icon_store import IconStore
 from rin_launcher.system_theme import read_system_accent_color
 
 logger = logging.getLogger(__name__)
@@ -97,9 +108,6 @@ TOOL_CATALOG: tuple = (
     ("hide", "隐藏小窗", "ic_fluent_eye_off_20_regular"),
     ("quit", "退出程序", "ic_fluent_power_20_regular"),
 )
-# 默认面板：挑几个日常用得上的。
-DEFAULT_TOOL_KEYS: tuple = ("launcherPage", "settings", "configFolder",
-                            "reload", "hide")
 TOOL_ICONS: dict[str, str] = {key: icon for key, _title, icon in TOOL_CATALOG}
 TOOL_TITLES: dict[str, str] = {key: title for key, title, _icon in TOOL_CATALOG}
 
@@ -187,143 +195,7 @@ def resolve_config_dir() -> Path:
     return data_dir
 
 
-DEFAULT_SETTINGS: dict[str, Any] = {
-    "theme": "system",
-    "showTray": True,
-    "startMinimized": False,
-    "startupMode": "off",
-    "globalHotkey": "Ctrl+Space",
-    "animationEnabled": True,
-    "accentColor": "#0078d4",
-    # system = 跟随 Windows 强调色；custom = 使用 accentColor。
-    "accentColorMode": "system",
-    "adminAutoElevate": True,
-    "confirmAdminActions": True,
-    "logLevel": "INFO",
-    # 面板磁贴尺寸：small / medium / large。档位只定「目标边长」，
-    # 每行放几格由小窗宽度自动算（见 qml/components/CompactPanel.qml）。
-    "tileSize": "medium",
-    "autoBackupEnabled": True,
-    "autoBackupIntervalDays": 7,
-    "autoBackupKeep": 8,
-    "updateChannel": "stable",
-    "autoCheckUpdates": True,
-    "updateMirror": "github",
-    "updateMirrorAuto": True,
-    # 小窗形态：normal（完整启动台）/ mini（单行工具条）。
-    "compactMode": "normal",
-    # 贴角位置与像素偏移，两种形态都适用。
-    "windowCorner": "bottom-right",
-    "windowOffsetX": 0,
-    "windowOffsetY": 0,
-    # 三套形态各自的透明度（0 = 不透明，90 = 很透）。上限留给可读性。
-    # 完整版默认 82% 透明，与 1.1.10 的云母观感一致。
-    "compactTransparency": 82,
-    "miniTransparency": 30,
-    # auto = 检测到 Wallpaper Engine 时用 Acrylic，否则 Mica。
-    "backdropMode": "auto",
-    # 全局去掉 Windows 快捷方式小箭头（改 HKCU，重启资源管理器后生效）。
-    "shortcutArrowGlobal": True,
-}
-
-# 通知分两级：功能类别 × 投递渠道。表的定义与归一化在 notifications 模块里，
-# 这里只保留同名引用，避免调用方到处改 import。
-NOTIFY_CATEGORIES = notifications.CATEGORIES
-NOTIFY_CHANNELS = notifications.CHANNELS
-
-
-def _clamp_int(raw: Any, default: int, low: int, high: int) -> int:
-    """把外部写进来的整数夹到安全区间；写坏了就用默认值。"""
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        return default
-    return max(low, min(high, value))
-
-
-def _new_id() -> str:
-    return uuid.uuid4().hex[:8]
-
-
-def _slot_row(item: Any, fallback: int) -> int:
-    """槽位声明的行号；写坏了就退回它在列表里的位置。"""
-    if isinstance(item, dict):
-        try:
-            return int(item.get("row", fallback))
-        except (TypeError, ValueError):
-            pass
-    return fallback
-
-
-def _new_slot(kind: str, row: int, **extra: Any) -> dict[str, Any]:
-    """建一个槽位字典；多出来的键补上默认值，保证结构一致。"""
-    slot = {
-        "kind": kind,
-        "row": row,
-        "label": "",     # 覆盖显示名，空 = 用目标自己的名字
-        "icon": "",      # 覆盖图标，空 = 用目标自己的图标
-    }
-    slot.update(extra)
-    return slot
-
-
-def _step_duration(raw: Any) -> float:
-    """把步骤里的延迟修成 >= 0 的秒数；写坏了就当 0。"""
-    try:
-        return max(0.0, float(raw))
-    except (TypeError, ValueError):
-        return 0.0
-
-
-def _step_vk(raw: Any) -> int:
-    """把步骤里的虚拟键码修成 0-255 的整数；没有或写坏了就当 0（改用名称）。"""
-    try:
-        vk = int(raw)
-    except (TypeError, ValueError):
-        return 0
-    return vk if 0 < vk < 256 else 0
-
-
-def _sanitize_steps(raw: Any) -> list[dict[str, Any]]:
-    """清洗按键序列：只留「按键 / 等待」两种步骤。
-
-    「按键模拟」参考 SystemTools 的「模拟键盘」：一条按键步骤 = 名称（可写组合键，
-    如 ``Ctrl+C``）+ 虚拟键码（可选，执行时优先）+ 动作（单击 / 按住 / 释放）+
-    延迟（这一步执行前的等待，秒）。旧版键鼠模拟里的 mouse 步骤不再支持，
-    读到时直接跳过。
-    """
-    steps: list[dict[str, Any]] = []
-    if not isinstance(raw, list):
-        return steps
-    for step in raw:
-        if not isinstance(step, dict):
-            continue
-        kind = str(step.get("type") or "")
-        if kind == "key":
-            command = str(step.get("action") or "click")
-            if command not in ("press", "release", "click"):
-                command = "click"
-            entry: dict[str, Any] = {
-                "type": "key",
-                "key": str(step.get("key") or ""),
-                "action": command,
-                "duration": _step_duration(step.get("duration")),
-            }
-            vk = _step_vk(step.get("vk"))
-            if vk:
-                entry["vk"] = vk
-            steps.append(entry)
-        elif kind == "wait":
-            steps.append({"type": "wait", "duration": _step_duration(step.get("duration"))})
-    return steps
-
-
-def _action_steps(action: dict[str, Any]) -> list[dict[str, Any]]:
-    """取一份动作的按键序列；兼容旧字段名 keymouse_steps 并顺手清洗。"""
-    raw = action.get("keyboard_steps")
-    if raw is None:
-        raw = action.get("keymouse_steps")
-    return _sanitize_steps(raw)
+# 字段默认值（DEFAULT_SETTINGS）与通知类别/渠道表都在 config_schema.py。
 
 
 def _sanitize_inline_action(raw: Any) -> dict[str, Any] | None:
@@ -347,21 +219,6 @@ def _sanitize_inline_action(raw: Any) -> dict[str, Any] | None:
     return action
 
 
-def _derive_action_name(action: dict[str, Any]) -> str:
-    """内联动作没有名字，按类型从目标里取一个一看就懂的显示名。"""
-    kind = action.get("type")
-    if kind == "keyboard":
-        return "按键动作"
-    if kind == "uwp":
-        return "UWP 应用"
-    target = str(action.get("target") or "").strip().strip('"')
-    if not target:
-        return "未配置动作"
-    if kind == "url":
-        return target
-    return Path(target).name or target
-
-
 def _default_slots() -> list[dict[str, Any]]:
     """首次运行只生成一份空启动台，具体内容交给 OOBE / 用户自己添加。"""
     return []
@@ -380,28 +237,7 @@ def _default_config() -> dict[str, Any]:
     }
 
 
-class _ConfigWatcher:
-    """Debounced listener for edits made to the config file by other programs.
-
-    不继承 ``watchdog.events.FileSystemEventHandler``：watchdog 只要求处理器有
-    ``dispatch(event)``。这样模块导入时就不用把 watchdog 那一整条导入链拉起来，
-    冷启动能省几十毫秒（``Observer`` 在 ``startWatching`` 里才导入）。
-    """
-
-    def __init__(self, on_change: Callable[[], None]):
-        self._on_change = on_change
-        self._last_fired = 0.0
-
-    def dispatch(self, event) -> None:
-        self.on_modified(event)
-
-    def on_modified(self, event) -> None:
-        if event.is_directory or not event.src_path.endswith((".yaml", ".yml")):
-            return
-        now = time.monotonic()
-        if now - self._last_fired > 0.5:
-            self._last_fired = now
-            self._on_change()
+# 监听器在 config_watcher.py；ConfigManager 只在 startWatching 时用观察者。
 
 
 class ConfigManager(QObject):
@@ -525,10 +361,6 @@ class ConfigManager(QObject):
     def app_mode(self) -> app_mode.Mode:
         """本次启动的生效模式（含 appmodset.conf 的诊断信息）。"""
         return app_mode.effective_mode(self._app_mode_values)
-
-    @Slot(result="QStringList")
-    def appModeProblems(self) -> list[str]:
-        return list(self._app_mode_problems)
 
     # ------------------------------------------------------------------
     # Persistence
@@ -763,9 +595,6 @@ class ConfigManager(QObject):
     # ------------------------------------------------------------------
     # Backups (manual + 7-day automatic)
     # ------------------------------------------------------------------
-    def _backup_files(self, prefix: str) -> list[Path]:
-        return backup_store.files(self.backup_dir, prefix)
-
     def _create_backup(self, *, manual: bool, silent: bool = False) -> str:
         if not self.config_file.is_file():
             return ""
@@ -893,22 +722,6 @@ class ConfigManager(QObject):
         return self.getStorageUsage()
 
     # ── 日志 ──────────────────────────────────────────────────────────
-    @Slot(result="QVariantMap")
-    def getLogInfo(self) -> dict[str, Any]:
-        files = logging_setup.collect(self.config_dir, logging_setup.KEEP_DAYS)
-        size = 0
-        for path in files:
-            try:
-                size += path.stat().st_size
-            except OSError:
-                pass
-        return {
-            "dir": str(self.log_dir),
-            "count": len(files),
-            "size": _human_size(size),
-            "files": [path.name for path in files],
-        }
-
     @Slot(result=str)
     def exportLogs(self) -> str:
         """把最近 30 天日志打包成 zip；返回路径（没有日志时为空串）。"""
@@ -1269,10 +1082,6 @@ class ConfigManager(QObject):
         """用户自己的图标库：导入的位图/矢量 + 从程序里抽出来的。"""
         return self._icons.custom()
 
-    def _icon_key(self, path: Path) -> str:
-        """图标在配置里的写法：``file:<绝对路径>``。"""
-        return icon_key(path)
-
     def _icon_notify(self, message: str, severity: str) -> None:
         self.showToast.emit(message, severity)
 
@@ -1285,11 +1094,6 @@ class ConfigManager(QObject):
         """把用户挑的图片复制进图标库，返回它的 icon key。"""
         path = IconStore.pick_image()
         return self._import_icon_file(path) if path else ""
-
-    @staticmethod
-    def _shortcut_target(path: str | Path) -> Path | None:
-        """快捷方式（.lnk）指向的目标；不是快捷方式或解析不出来时返回 None。"""
-        return IconStore.shortcut_target(path)
 
     def _icon_from_path(self, source: Path, notify: bool) -> str:
         """从一个具体文件取图标；取不到返回空串。"""
@@ -1804,17 +1608,6 @@ class ConfigManager(QObject):
             "launchMode": mode.launch_mode,
             "problems": list(self._app_mode_problems),
         }
-
-    @Slot(str, bool, result=bool)
-    def setAppModeFlag(self, key: str, value: bool) -> bool:
-        """修改一个布尔启动项并立即写回 appmodset.conf。"""
-        if key not in ("first-run", "normal-boot", "failsafe", "debug", "recovery"):
-            return False
-        if not app_mode.update(self.app_mode_path.parent, {key: bool(value)}):
-            return False
-        self._app_mode_values[key] = bool(value)
-        self.showToast.emit("启动配置已更新，重启后生效", "info")
-        return True
 
     @Slot(result=bool)
     def resetAppSettings(self) -> bool:

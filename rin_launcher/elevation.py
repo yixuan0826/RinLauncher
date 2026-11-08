@@ -67,23 +67,6 @@ def run_elevated(target: str, params: str = "", cwd: str = "") -> bool:
     return _launch_elevated(target, params, cwd)
 
 
-def restart_elevated() -> bool:
-    """Re-launch this application as administrator, replacing the current process."""
-    if is_admin():
-        return True
-    if sys.platform != "win32":
-        return False
-
-    if getattr(sys, "frozen", False):
-        target, params = sys.executable, _quote(sys.argv[1:])
-    else:
-        target, params = sys.executable, _quote([sys.argv[0], *sys.argv[1:]])
-
-    if _launch_elevated(target, params):
-        os._exit(0)  # the elevated copy owns the session from here on
-    return False
-
-
 def _restart_target() -> tuple[str, list[str], str]:
     """返回 (可执行文件, 参数, 工作目录)；打包与源码模式都适用。
 

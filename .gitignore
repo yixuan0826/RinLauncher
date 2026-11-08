@@ -13,9 +13,5 @@ venv/
 # PyInstaller
 *.manifest
 
-# RinUI 是内联进来的（不是子模块），库本体必须提交；只有它运行期写在
-# <cwd>/RinUI/config/ 下的那份 JSON 配置是运行时产物。
-/RinUI/config/
-
 # Runtime
 launcher.log

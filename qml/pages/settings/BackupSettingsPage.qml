@@ -47,7 +47,7 @@ Item {
                 FormRow {
                     label: qsTr("自动备份间隔")
                     description: qsTr("距上一份自动备份超过这个天数就补一份")
-                    ComboBox {
+                    RinComboBox {
                         id: intervalCombo
                         Layout.preferredWidth: 140
                         model: [qsTr("每天"), qsTr("3 天"), qsTr("7 天"),
@@ -62,7 +62,7 @@ Item {
                 FormRow {
                     label: qsTr("自动备份上限")
                     description: qsTr("达到上限后覆盖最旧的自动备份；手动备份不受影响")
-                    ComboBox {
+                    RinComboBox {
                         id: keepCombo
                         Layout.preferredWidth: 140
                         model: [qsTr("4 份"), qsTr("8 份"), qsTr("16 份"), qsTr("32 份")]

@@ -370,7 +370,7 @@ ColumnLayout {
                 text: qsTr("操作")
             }
 
-            ComboBox {
+            RinComboBox {
                 id: actionCombo
                 objectName: "keyboardActionCombo"
                 width: 110

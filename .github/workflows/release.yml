@@ -45,7 +45,9 @@ jobs:
       - name: QML lint
         shell: pwsh
         run: |
-          $env:QML_IMPORT_PATH = (Get-Location).Path
+          # RinUI 不再是内联目录：导入路径要指向 pip 安装位置。
+          $rinuiRoot = python -c "import RinUI, pathlib; print(pathlib.Path(RinUI.__file__).resolve().parent.parent)"
+          $env:QML_IMPORT_PATH = "$(Get-Location).Path;$rinuiRoot"
           $files = Get-ChildItem qml -Recurse -Filter *.qml
           $errors = 0
           foreach ($file in $files) {

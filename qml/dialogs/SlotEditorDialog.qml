@@ -7,11 +7,14 @@ import "../components"
 
 // 启动台格子编辑器：加一格 / 改一格。
 //
-// 槽位有四种，表单里只显示与当前类型相关的那几行 —— 与其把所有字段都摆出来再
+// 槽位有三种，表单里只显示与当前类型相关的那几行 —— 与其把所有字段都摆出来再
 // 灰掉，不如按类型换表单，少一层判断也少一处看走眼的机会。整个表单可滚动：
 // 按键序列这种越加越长的字段不会再把 footer 挤出卡片。
 // 动作类槽位自带完整定义：类型 / 目标 / 参数 / 工作目录 / 管理员 / 按键序列
 // 全写在这一格里，不依赖任何外部条目库。
+//
+// 纯排版的三段拆在 components/ 下：SlotPreviewCard（预览卡）、
+// SlotKindSelector（类型卡片）、SlotTargetFields（内置功能 / 固定位置字段）。
 AppDialog {
     id: editor
 
@@ -24,9 +27,6 @@ AppDialog {
 
     // ── 表单状态 ──
     property string kind: "action"
-    property string toolKey: ""
-    property string path: ""
-    property string pathType: "disk"
     property string label: ""
     property string iconKey: ""
 
@@ -97,43 +97,87 @@ AppDialog {
                 width: formScroller.width
                 spacing: 12
 
-        Button {
-            Layout.fillWidth: true
-            highlighted: true
-            text: qsTr("从开始菜单导入…")
-            icon.name: "ic_fluent_apps_20_regular"
-            onClicked: startMenuPicker.open()
-        }
-
-        // ── 预览 ──
-        Frame {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 92
-
-            RowLayout {
-                anchors.fill: parent
-                anchors.margins: 14
-                spacing: 14
-
-                AppIcon {
-                    Layout.alignment: Qt.AlignVCenter
-                    iconKey: editor.iconKey.length > 0 ? editor.iconKey : editor.previewIcon
-                    iconSize: 40
-                    tint: Theme.currentTheme.colors.textColor
+                Button {
+                    Layout.fillWidth: true
+                    highlighted: true
+                    text: qsTr("从开始菜单导入…")
+                    icon.name: "ic_fluent_apps_20_regular"
+                    onClicked: startMenuPicker.open()
                 }
 
-                ColumnLayout {
-                    Layout.fillWidth: true
-                    Layout.alignment: Qt.AlignVCenter
-                    spacing: 2
+                // ── 预览 ──
+                SlotPreviewCard {
+                    iconKey: editor.iconKey.length > 0
+                        ? editor.iconKey : editor.previewIcon
+                    previewTitle: editor.previewName
+                    previewDetail: editor.previewDetail
+                }
 
-                    Text {
+                // ── 类型：三张可选卡片，比下拉框更直观 ──
+                SlotKindSelector {
+                    current: editor.kind
+                    options: editor.kindOptions
+                    onPicked: function (kind) { editor.kind = kind }
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: 1
+                    color: Theme.currentTheme.colors.cardBorderColor
+                }
+
+                // ── 动作字段：这一格自带完整定义 ──
+                ActionForm {
+                    id: inlineAction
+                    objectName: "slotActionForm"
+                    visible: editor.kind === "action"
+                }
+
+                // ── 内置功能 / 固定位置 ──
+                SlotTargetFields {
+                    id: targetFields
+                    kind: editor.kind
+                    toolNames: editor.toolNames
+                    toolKeys: editor.toolKeys
+                    drives: editor.drives
+                }
+
+                FormRow {
+                    label: qsTr("显示名")
+                    description: qsTr("留空就用目标自己的名字")
+                    TextField {
                         Layout.fillWidth: true
-                        wrapMode: Text.NoWrap
-                        elide: Text.ElideRight
-                        font.bold: true
-                        color: Theme.currentTheme.colors.textColor
-                        text: editor.previewName
+                        Layout.maximumWidth: 320
+                        placeholderText: qsTr("（可选）")
+                        text: editor.label
+                        onTextChanged: editor.label = text
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("图标")
+                    description: qsTr("留空就用目标自己的图标")
+                    ToolButton {
+                        icon.name: "ic_fluent_icons_20_regular"
+                        ToolTip.text: qsTr("从图标库中选择")
+                        onClicked: {
+                            iconPicker.current = editor.iconKey
+                            iconPicker.open()
+                        }
+                    }
+                    ToolButton {
+                        icon.name: "ic_fluent_image_add_20_regular"
+                        ToolTip.text: qsTr("从文件获取图标（程序 / 快捷方式 / 图片）")
+                        onClicked: {
+                            iconPicker.current = editor.iconKey
+                            iconPicker.openTab(3)
+                        }
+                    }
+                    AppIcon {
+                        Layout.alignment: Qt.AlignVCenter
+                        iconKey: editor.iconKey
+                        iconSize: 22
+                        placeholder: "ic_fluent_dismiss_20_regular"
                     }
                     Text {
                         Layout.fillWidth: true
@@ -141,247 +185,15 @@ AppDialog {
                         elide: Text.ElideMiddle
                         typography: Typography.Caption
                         color: Theme.currentTheme.colors.textSecondaryColor
-                        text: editor.previewDetail
+                        text: editor.iconKey
+                    }
+                    ToolButton {
+                        icon.name: "ic_fluent_delete_20_regular"
+                        ToolTip.text: qsTr("清除图标")
+                        enabled: editor.iconKey.length > 0
+                        onClicked: editor.iconKey = ""
                     }
                 }
-            }
-        }
-
-        // ── 类型：四张可选卡片，比下拉框更直观 ──
-        ColumnLayout {
-            Layout.fillWidth: true
-            spacing: 1
-
-            Text {
-                Layout.fillWidth: true
-                typography: Typography.BodyStrong
-                color: Theme.currentTheme.colors.textColor
-                text: qsTr("这一格用来做什么？")
-            }
-
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.Wrap
-                typography: Typography.Caption
-                color: Theme.currentTheme.colors.textSecondaryColor
-                text: editor.kindHint
-            }
-        }
-
-        RowLayout {
-            Layout.fillWidth: true
-            spacing: 8
-
-            Repeater {
-                model: editor.kindOptions
-
-                delegate: Frame {
-                    id: kindTile
-
-                    readonly property bool selected: editor.kind === modelData.kind
-
-                    Layout.fillWidth: true
-                    Layout.preferredHeight: 58
-                    padding: 0
-                    radius: Theme.currentTheme.appearance.windowRadius
-                    border.color: selected
-                        ? Theme.currentTheme.colors.primaryColor
-                        : Theme.currentTheme.colors.cardBorderColor
-                    color: selected
-                        ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
-                                  Theme.currentTheme.colors.primaryColor.g,
-                                  Theme.currentTheme.colors.primaryColor.b, 0.16)
-                        : (kindMouse.containsMouse
-                            ? Theme.currentTheme.colors.subtleSecondaryColor
-                            : Theme.currentTheme.colors.cardColor)
-
-                    RowLayout {
-                        anchors.fill: parent
-                        anchors.leftMargin: 10
-                        anchors.rightMargin: 8
-                        spacing: 8
-
-                        AppIcon {
-                            Layout.alignment: Qt.AlignVCenter
-                            iconKey: modelData.icon
-                            iconSize: 18
-                            // 选中态由边框 / 底色 / 加粗文字表达，图标本身保持单色。
-                            tint: Theme.currentTheme.colors.textColor
-                        }
-
-                        Text {
-                            Layout.fillWidth: true
-                            Layout.alignment: Qt.AlignVCenter
-                            wrapMode: Text.WordWrap
-                            maximumLineCount: 2
-                            elide: Text.ElideRight
-                            typography: Typography.Caption
-                            font.bold: kindTile.selected
-                            color: kindTile.selected
-                                ? Theme.currentTheme.colors.primaryColor
-                                : Theme.currentTheme.colors.textColor
-                            text: modelData.title
-                        }
-                    }
-
-                    MouseArea {
-                        id: kindMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: editor.kind = modelData.kind
-                    }
-
-                    ToolTip.text: modelData.hint
-                    ToolTip.visible: kindMouse.containsMouse
-                    ToolTip.delay: 500
-                }
-            }
-        }
-
-        Rectangle {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 1
-            color: Theme.currentTheme.colors.cardBorderColor
-        }
-
-        // ── 动作字段：这一格自带完整定义 ──
-        ActionForm {
-            id: inlineAction
-            objectName: "slotActionForm"
-            visible: editor.kind === "action"
-        }
-
-        // ── 内置功能 ──
-        FormRow {
-            visible: editor.kind === "tool"
-            label: qsTr("功能")
-            description: qsTr("小窗自带的功能")
-            ComboBox {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 320
-                model: editor.toolNames
-                currentIndex: Math.max(0, editor.toolKeys.indexOf(editor.toolKey))
-                onActivated: function (index) {
-                    editor.toolKey = editor.toolKeys[index] || ""
-                }
-            }
-        }
-
-        // ── 固定位置：磁盘 / 文件位置 ──
-        FormRow {
-            visible: editor.kind === "path"
-            label: qsTr("位置类型")
-            ComboBox {
-                Layout.preferredWidth: 180
-                model: [qsTr("磁盘"), qsTr("文件位置")]
-                currentIndex: editor.pathType === "file" ? 1 : 0
-                onActivated: function (index) {
-                    editor.pathType = index === 1 ? "file" : "disk"
-                }
-            }
-        }
-
-        FormRow {
-            visible: editor.kind === "path" && editor.pathType === "disk"
-            label: qsTr("磁盘")
-            description: qsTr("把卡片固定到某块盘；小窗显示卷标")
-            ComboBox {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 320
-                model: editor.driveLabels
-                onActivated: function (index) {
-                    editor.path = editor.drives[index].path
-                }
-            }
-            ToolButton {
-                icon.name: "ic_fluent_folder_open_20_regular"
-                ToolTip.text: qsTr("选一个文件夹")
-                onClicked: {
-                    var picked = ConfigManager.pickFolder()
-                    if (picked.length > 0) {
-                        editor.path = picked
-                        editor.pathType = "disk"
-                    }
-                }
-            }
-        }
-
-        FormRow {
-            visible: editor.kind === "path" && editor.pathType === "file"
-            label: qsTr("文件位置")
-            description: qsTr("点开时打开所在目录并选中文件")
-            TextField {
-                Layout.fillWidth: true
-                placeholderText: qsTr("例如 C:\\Tools\\notes.txt")
-                text: editor.path
-                onTextChanged: editor.path = text
-            }
-            ToolButton {
-                icon.name: "ic_fluent_document_20_regular"
-                ToolTip.text: qsTr("选一个文件")
-                onClicked: {
-                    var picked = ConfigManager.pickFile()
-                    if (picked.length > 0) {
-                        editor.path = picked
-                        editor.pathType = "file"
-                    }
-                }
-            }
-        }
-
-        FormRow {
-            label: qsTr("显示名")
-            description: qsTr("留空就用目标自己的名字")
-            TextField {
-                Layout.fillWidth: true
-                Layout.maximumWidth: 320
-                placeholderText: qsTr("（可选）")
-                text: editor.label
-                onTextChanged: editor.label = text
-            }
-        }
-
-        FormRow {
-            label: qsTr("图标")
-            description: qsTr("留空就用目标自己的图标")
-            ToolButton {
-                icon.name: "ic_fluent_icons_20_regular"
-                ToolTip.text: qsTr("从图标库中选择")
-                onClicked: {
-                    iconPicker.current = editor.iconKey
-                    iconPicker.open()
-                }
-            }
-            ToolButton {
-                icon.name: "ic_fluent_image_add_20_regular"
-                ToolTip.text: qsTr("从文件获取图标（程序 / 快捷方式 / 图片）")
-                onClicked: {
-                    iconPicker.current = editor.iconKey
-                    iconPicker.openTab(3)
-                }
-            }
-            AppIcon {
-                Layout.alignment: Qt.AlignVCenter
-                iconKey: editor.iconKey
-                iconSize: 22
-                placeholder: "ic_fluent_dismiss_20_regular"
-            }
-            Text {
-                Layout.fillWidth: true
-                wrapMode: Text.NoWrap
-                elide: Text.ElideMiddle
-                typography: Typography.Caption
-                color: Theme.currentTheme.colors.textSecondaryColor
-                text: editor.iconKey
-            }
-            ToolButton {
-                icon.name: "ic_fluent_delete_20_regular"
-                ToolTip.text: qsTr("清除图标")
-                enabled: editor.iconKey.length > 0
-                onClicked: editor.iconKey = ""
-            }
-        }
             }
         }
     }
@@ -431,21 +243,6 @@ AppDialog {
         return ""
     }
 
-    readonly property string kindHint: {
-        for (var i = 0; i < kindOptions.length; ++i) {
-            if (kindOptions[i].kind === kind) {
-                return kindOptions[i].hint
-            }
-        }
-        return ""
-    }
-
-    readonly property var driveLabels: drives.map(function (item) {
-        return item.total.length > 0
-            ? "%1（%2，剩余 %3）".arg(item.label).arg(item.kindLabel).arg(item.free)
-            : "%1（%2）".arg(item.label).arg(item.kindLabel)
-    })
-
     readonly property string previewName: {
         if (label.length > 0) {
             return label
@@ -454,10 +251,10 @@ AppDialog {
             return editor.deriveActionName()
         }
         if (kind === "tool") {
-            var ti = toolKeys.indexOf(toolKey)
+            var ti = toolKeys.indexOf(targetFields.toolKey)
             return ti >= 0 ? toolNames[ti] : qsTr("未选择功能")
         }
-        return path.length > 0 ? path : qsTr("未设置路径")
+        return targetFields.path.length > 0 ? targetFields.path : qsTr("未设置路径")
     }
 
     // 内联动作没有名字：按类型从目标里取一个一眼能懂的显示名（与后端一致）。
@@ -486,9 +283,10 @@ AppDialog {
         if (kind === "tool") {
             return qsTr("%1 · 小窗自带").arg(kindTitle)
         }
-        var typeLabel = editor.pathType === "file" ? qsTr("文件位置") : qsTr("磁盘")
+        var typeLabel = targetFields.pathType === "file" ? qsTr("文件位置") : qsTr("磁盘")
         return qsTr("%1 · %2 · %3").arg(kindTitle).arg(typeLabel)
-            .arg(path.length > 0 ? path : qsTr("未设置路径"))
+            .arg(targetFields.path.length > 0
+                 ? targetFields.path : qsTr("未设置路径"))
     }
 
     readonly property string previewIcon: {
@@ -498,7 +296,7 @@ AppDialog {
         if (kind === "tool") {
             return "ic_fluent_wrench_20_regular"
         }
-        return editor.pathType === "file"
+        return targetFields.pathType === "file"
             ? "ic_fluent_document_20_regular" : "ic_fluent_folder_open_20_regular"
     }
 
@@ -517,11 +315,14 @@ AppDialog {
         riskInfo = ({})
 
         kind = slot.kind || "action"
-        toolKey = slot.key || ""
-        path = slot.path || ""
-        pathType = slot.pathType || (path.toLowerCase().match(/\.\w+$/) ? "file" : "disk")
         label = slot.label || ""
         iconKey = slot.icon || ""
+
+        targetFields.toolKey = slot.key || ""
+        targetFields.path = slot.path || ""
+        targetFields.pathType = slot.pathType
+            || (String(targetFields.path).toLowerCase().match(/\.\w+$/)
+                ? "file" : "disk")
 
         // 动作就是这一格自己的定义。
         inlineAction.load(slot.action || {})
@@ -550,11 +351,11 @@ AppDialog {
                 ConfigManager.notify(invalid, "warning")
                 return
             }
-        } else if (kind === "tool" && toolKey.length === 0) {
+        } else if (kind === "tool" && targetFields.toolKey.length === 0) {
             ConfigManager.notify(qsTr("请先选一个内置功能"), "warning")
             return
         }
-        if (kind === "path" && path.trim().length === 0) {
+        if (kind === "path" && targetFields.path.trim().length === 0) {
             ConfigManager.notify(qsTr("请先填一个路径"), "warning")
             return
         }
@@ -564,9 +365,9 @@ AppDialog {
             "kind": kind,
             "label": label.trim(),
             "icon": iconKey,
-            "key": kind === "tool" ? toolKey : "",
-            "path": kind === "path" ? path.trim() : "",
-            "pathType": kind === "path" ? pathType : "",
+            "key": kind === "tool" ? targetFields.toolKey : "",
+            "path": kind === "path" ? targetFields.path.trim() : "",
+            "pathType": kind === "path" ? targetFields.pathType : "",
             "action": kind === "action" ? inlineAction.read() : null
         }
 
