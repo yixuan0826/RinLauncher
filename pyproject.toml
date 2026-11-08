@@ -60,7 +60,4 @@ select = ["E4", "E7", "E9", "F", "W", "I"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-# 系统临时目录可能被 ACL 弄坏（pytest-of-<user> 无法访问时全部 tmp_path 用例
-# 在 setup 阶段就 PermissionError）。固定到仓库内，行为可复现且不受系统 temp 影响。
-addopts = "--basetemp=.pytest-tmp"
 

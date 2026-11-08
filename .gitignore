@@ -9,7 +9,6 @@ dist/
 venv/
 .ruff_cache/
 .pytest_cache/
-.pytest-tmp/
 
 # PyInstaller
 *.manifest
