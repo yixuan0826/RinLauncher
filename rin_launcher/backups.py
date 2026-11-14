@@ -46,7 +46,11 @@ def rotate(backup_dir: Path, config_file: Path, keep: int = 10) -> None:
         logger.exception("Failed to rotate config backups in %s", backup_dir)
         return
     for stale in sorted(backup_dir.glob("config.yaml.bak.*"))[:-keep]:
-        stale.unlink(missing_ok=True)
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            # 一个被占用 / 只读的旧备份不能让整次配置保存失败。
+            logger.debug("无法删除旧备份 %s", stale, exc_info=True)
 
 
 def create(backup_dir: Path, config_file: Path, *, manual: bool) -> Path | None:
@@ -72,7 +76,10 @@ def create(backup_dir: Path, config_file: Path, *, manual: bool) -> Path | None:
 def prune_auto(backup_dir: Path, keep: int) -> None:
     """自动备份只保留最近 *keep* 份；手动备份不动。"""
     for stale in files(backup_dir, AUTO_PREFIX)[:-max(1, keep)]:
-        stale.unlink(missing_ok=True)
+        try:
+            stale.unlink(missing_ok=True)
+        except OSError:
+            logger.debug("无法删除旧自动备份 %s", stale, exc_info=True)
 
 
 def describe(backup_dir: Path) -> dict[str, Any]:

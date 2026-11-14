@@ -26,7 +26,34 @@ FluentWindowBase {
         }
     }
 
-    Component.onCompleted: applyAccentColor()
+    function applyThemeSetting() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var mode = String(ConfigManager.getSettings().theme || "system")
+        Theme.setTheme(mode === "light" ? Theme.mode.Light
+                      : mode === "dark" ? Theme.mode.Dark
+                      : Theme.mode.Auto)
+    }
+
+    // 材质应用失败（DWM 关闭 / 远程桌面）时的实色兜底；由 Python 在
+    // apply_backdrop 里设置。正常 Win11 / Win10 下始终为 false。
+    property bool materialFallback: false
+
+    Rectangle {
+        objectName: "materialFallback"
+        parent: settingsWindow.contentItem
+        anchors.fill: parent
+        z: -0.5
+        radius: Theme.currentTheme.appearance.windowRadius
+        color: Theme.currentTheme.colors.backgroundColor
+        visible: settingsWindow.materialFallback
+    }
+
+    Component.onCompleted: {
+        applyAccentColor()
+        applyThemeSetting()
+    }
 
     // FluentWindowBase 的默认属性是 content（只收 Item），Connections 不能直接
     // 当子对象写；挂到属性上，信号一样能收到。
@@ -34,6 +61,8 @@ FluentWindowBase {
         target: ConfigManager
         function onAccentColorChanged() { applyAccentColor() }
         function onConfigChanged() { applyAccentColor() }
+        // 重置 / 恢复 / 导入会整份替换配置：主题也要跟着重放。
+        function onSettingsChanged() { applyThemeSetting() }
     }
 
     signal closeRequested()

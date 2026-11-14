@@ -16,6 +16,38 @@ Item {
     property bool accentReady: false
     property bool accentUserEditing: false
 
+    // system 模式显示的是 ConfigManager 算出来的实际系统色；model.accentColor
+    // 只是持久化的自定义色，切换「跟随系统」后它不会变。
+    function displayAccent() {
+        // 用户正在选择器里拖动时，色块要跟着走，不能等 350ms 落盘后再刷新。
+        if (pageRoot.accentUserEditing) {
+            var picked = accentPicker.color
+            if (picked && picked.a > 0) {
+                return picked
+            }
+        }
+        var model = (pageRoot.page && pageRoot.page.model) || ({})
+        if ((model.accentColorMode || "custom") === "system") {
+            var system = ConfigManager.accentColor
+            if (system && system.length > 0) {
+                return system
+            }
+        }
+        return model.accentColor || "#0078d4"
+    }
+
+    Connections {
+        target: ConfigManager
+        function onAccentColorChanged() {
+            if (!pageRoot.accentReady || pageRoot.accentUserEditing) return
+            var model = (pageRoot.page && pageRoot.page.model) || ({})
+            if ((model.accentColorMode || "custom") !== "system") return
+            pageRoot.accentReady = false
+            accentPicker.color = pageRoot.displayAccent()
+            pageRoot.accentReady = true
+        }
+    }
+
     Flickable {
         id: flick
         anchors.fill: parent
@@ -72,9 +104,46 @@ Item {
 
                         DropDownColorPicker {
                             id: accentPicker
+                            objectName: "accentPicker"
                             Layout.preferredWidth: 150
                             enabled: !followAccentSwitch.checked
-                            onClicked: pageRoot.accentUserEditing = true
+                            // RinUI 的 DropDownColorPicker 把预览色委托给
+                            // Flyout 里的 ColorPicker；Flyout 是懒创建的，
+                            // 首次打开前那个颜色永远是默认红。这里用自己
+                            // 的 contentItem 画真实颜色，避免「跟随系统」
+                            // 显示成红色色块。
+                            contentItem: Row {
+                                anchors.centerIn: parent
+                                spacing: 8
+
+                                Rectangle {
+                                    objectName: "accentSwatch"
+                                    width: 32
+                                    height: 22
+                                    radius: Theme.currentTheme.appearance.smallRadius
+                                    color: pageRoot.displayAccent()
+                                    border.width: 1
+                                    border.color: Theme.currentTheme.colors.dividerBorderColor
+                                }
+
+                                Text {
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    text: String(pageRoot.displayAccent()).toUpperCase()
+                                    color: Theme.currentTheme.colors.textColor
+                                    font.pixelSize: 12
+                                }
+                            }
+                            onClicked: {
+                                // Flyout 打开后 ColorPicker 才实例化；延后一拍
+                                // 回填，避免它带着默认红出现在用户面前。
+                                pageRoot.accentReady = false
+                                pageRoot.accentUserEditing = false
+                                Qt.callLater(function () {
+                                    accentPicker.color = pageRoot.displayAccent()
+                                    pageRoot.accentReady = true
+                                    pageRoot.accentUserEditing = true
+                                })
+                            }
                             onColorChanged: {
                                 if (!pageRoot.accentReady || !pageRoot.accentUserEditing) return
                                 if (!pageRoot.page || pageRoot.page.syncing) return
@@ -259,13 +328,13 @@ Item {
     }
 
     function reload() {
-        var model = page.model
+        var model = page.model || ({})
         pageRoot.accentReady = false
         pageRoot.accentUserEditing = false
         themeCombo.currentIndex = Math.max(0,
             ["system", "light", "dark"].indexOf(model.theme))
         followAccentSwitch.checked = (model.accentColorMode || "custom") === "system"
-        accentPicker.color = model.accentColor || "#0078d4"
+        accentPicker.color = displayAccent()
         tileSizeCombo.currentIndex = Math.max(0,
             ["small", "medium", "large"].indexOf(model.tileSize || "medium"))
         animationSwitch.checked = model.animationEnabled !== false
@@ -278,6 +347,11 @@ Item {
             ? Number(model.compactTransparency) : 82
         miniSlider.value = model.miniTransparency !== undefined
             ? Number(model.miniTransparency) : 30
-        Qt.callLater(function () { pageRoot.accentReady = true })
+        // DropDownColorPicker 在自己的 Component.onCompleted 里还会把颜色
+        // 重置成默认红；延后一拍再回填，才能让「跟随系统」显示真实系统色。
+        Qt.callLater(function () {
+            accentPicker.color = pageRoot.displayAccent()
+            pageRoot.accentReady = true
+        })
     }
 }

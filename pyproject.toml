@@ -29,6 +29,9 @@ dependencies = [
     "winrt-Windows.Networking.Connectivity>=4.1.0; sys_platform == 'win32'",
     "winrt-Windows.Networking.NetworkOperators>=4.1.0; sys_platform == 'win32'",
     "winrt-Windows.Storage.Streams>=4.1.0; sys_platform == 'win32'",
+    # 系统强调色（UISettings / UIColorType.Accent）。
+    "winrt-Windows.UI>=4.1.0; sys_platform == 'win32'",
+    "winrt-Windows.UI.ViewManagement>=4.1.0; sys_platform == 'win32'",
     # Windows 原生 Toast（通知渠道里的「Windows 通知」）。
     "winrt-Windows.Data.Xml.Dom>=4.1.0; sys_platform == 'win32'",
     "winrt-Windows.UI.Notifications>=4.1.0; sys_platform == 'win32'",

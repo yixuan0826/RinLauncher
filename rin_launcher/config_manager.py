@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -42,8 +43,10 @@ from rin_launcher import __codename__ as APP_CODENAME
 from rin_launcher import __version__ as APP_VERSION
 from rin_launcher import (
     app_mode,
+    atomic,
     autostart,
     drives,
+    ecoqos,
     logging_setup,
     notification_registration,
     notifications,
@@ -129,6 +132,10 @@ ICON_STORE_NAME = "icons"
 # 磁盘容量这种系统调用有成本；小窗每 2 秒轮询一次，缓存留 1.5 秒就够
 # （同一次刷新里不重复问系统，又不会让插拔 U 盘等上半分钟）。
 STORAGE_TTL = 1.5
+# 槽位路径的 exists()/disk_usage() 会卡在断开的网络盘上；GUI 线程每 2.5 秒
+# 解析一次全部槽位，这里给每个路径留一份短缓存，并把网络路径的容量读取跳过。
+PATH_STATE_TTL = 8.0
+UNREACHABLE_NETWORK_TTL = 60.0
 
 # ── 备份 ────────────────────────────────────────────────────────
 # 具体文件操作在 backups.py；这里只保留测试和界面会用到的常量别名。
@@ -179,7 +186,11 @@ def resolve_config_dir() -> Path:
     * 打包的 exe：exe 同级的 ``data/``（拷走文件夹数据就跟着走）；目录建不出来
       或不可写（例如被放进 Program Files）时退回 ``%APPDATA%\\RinLauncher``。
     * 源码运行：仍是 ``%APPDATA%\\RinLauncher``，开发习惯不变。
+    * ``RINLAUNCHER_CONFIG_DIR`` 可显式覆盖，供 UI 验收 / 自动化测试使用。
     """
+    override = os.environ.get("RINLAUNCHER_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
     if not getattr(sys, "frozen", False):
         return DEFAULT_CONFIG_DIR
     data_dir = Path(sys.executable).resolve().parent / "data"
@@ -271,6 +282,8 @@ class ConfigManager(QObject):
     # 工作线程 → GUI 线程的内部通道；QTimer.singleShot 在工作线程里没有事件
     # 循环，不会触发，必须走队列信号。
     _startMenuScanDone = Signal(int, object)
+    # watchdog 线程 → GUI 线程：配置热重载只在主线程改 _config。
+    _externalChangeDetected = Signal()
 
     def __init__(self, config_dir: Path | None = None, parent: QObject | None = None,
                  app_mode_root: Path | None = None):
@@ -291,6 +304,7 @@ class ConfigManager(QObject):
         self.action_executor = None
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
         self._observer: Any | None = None
+        self._watcher: _ConfigWatcher | None = None
         self._quiet_until = 0.0  # ignores the watcher echo of our own writes
         self._icons = IconStore(self.icon_dir, BUNDLED_ICON_DIR,
                                 notify=self._icon_notify)
@@ -298,19 +312,26 @@ class ConfigManager(QObject):
         self._storage_cache: tuple[float, dict[str, Any]] | None = None
         # 可移动磁盘缓存：枚举驱动器有系统调用成本，刷新时只问一次。
         self._removable_cache: tuple[float, list[dict[str, Any]]] | None = None
+        # 槽位路径状态缓存：路径文本 -> (时间, exists, is_file, total, free, percent)。
+        self._path_cache: dict[str, tuple[float, bool, bool, int, int, int]] = {}
+        self._unreachable_network_paths: dict[str, float] = {}
         # 设置窗口刚建出来时信号可能还没接上，分类请求先存一份（见 takePendingSettingsSection）。
         self._pending_settings_section: str = ""
         # 托盘气泡的投递出口：main.py 在托盘真正起来之后接进来。
         self._tray_sink: Callable[[str, str], Any] | None = None
         # appmodset.conf：启动模式与发布通道的单一来源。
         values, problems, path = app_mode.load(app_mode_root)
-        # 安装目录不可写时，OOBE 会把 first-run 写到用户数据目录；这里读回来，
-        # 否则「完成了引导但下次还弹」。
+        # 安装目录不可写时，写操作会退到用户数据目录的一份覆盖文件；这里把
+        # 覆盖文件里的所有键读回来（first-run / channel / recovery / failsafe），
+        # 否则「设置成功但重启后又变回去」。
         override = self.config_dir / app_mode.CONF_NAME
-        if override.is_file():
+        if override.is_file() and override.resolve() != path.resolve():
             try:
-                override_values, _, _ = app_mode.load(self.config_dir)
-                values["first-run"] = override_values.get("first-run", values["first-run"])
+                override_values, override_problems, _ = app_mode.load(self.config_dir)
+                for key in app_mode.DEFAULTS:
+                    if key in override_values:
+                        values[key] = override_values[key]
+                problems.extend(f"用户目录覆盖：{item}" for item in override_problems)
             except OSError:
                 logger.debug("读取用户目录 appmodset 覆盖失败", exc_info=True)
         self._app_mode_values = values
@@ -319,6 +340,13 @@ class ConfigManager(QObject):
         self._config = self._load()
         # channel 由 appmodset.conf 决定；设置页的旧字段保留但不再覆盖它。
         self._config["settings"]["updateChannel"] = app_mode.effective_mode(values).channel
+        # 后台线程的 EcoQoS 开关：只影响之后新建的工作线程。
+        ecoqos.set_enabled(bool(self._config["settings"].get("ecoQosEnabled", True)))
+        # 运行时副作用只在「值真的变了」时重放，避免每次 reload 都动计划任务
+        # 或重写注册表。
+        self._applied_startup_mode = str(self._config["settings"].get("startupMode", "off"))
+        self._applied_shell_arrow = bool(
+            self._config["settings"].get("shortcutArrowGlobal", True))
         # 开始菜单：扫描在后台线程里跑，结果回到主线程后才发给界面。
         self._start_menu_apps: list[dict[str, Any]] = []
         # 开始菜单磁盘缓存：全量扫描实测约 12 秒，不能每次开对话框都重扫。
@@ -334,6 +362,7 @@ class ConfigManager(QObject):
         self._thumb_queue: list[dict[str, Any]] = []
         self._thumb_timer: QTimer | None = None
         self._startMenuScanDone.connect(self._apply_start_menu_apps, Qt.QueuedConnection)
+        self._externalChangeDetected.connect(self._onExternalChange, Qt.QueuedConnection)
         # 任务计划状态不再在构造时预热：schtasks 子进程会跟小窗抢启动资源，
         # 等主界面稳定后由 main.py 延迟刷新（或第一次打开设置页时再查）。
         # 7 天一次的自动备份：启动先检查，之后每 6 小时再看一次。
@@ -401,8 +430,52 @@ class ConfigManager(QObject):
                 self.save(config, changed="all")
             return config
         except Exception:
-            logger.exception("Failed to read %s, falling back to defaults", self.config_file)
-            return _default_config()
+            logger.exception("Failed to read %s, trying the latest backup", self.config_file)
+            return self._recover_config()
+
+    def _recover_config(self) -> dict[str, Any]:
+        """配置读不出来时的恢复路径。
+
+        坏文件改名保留（用户还能回传排查），依次尝试最近的
+        ``config.yaml.bak.*`` 与 ``config-*.yaml`` 备份；全都不可用才回退默认值。
+        任何一步失败都不抛异常 —— 启动流程不能被一份坏 YAML 挡住。
+        """
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        broken = self.config_file.with_name(f"config.yaml.broken-{stamp}")
+        try:
+            self.config_file.replace(broken)
+            logger.warning("Preserved broken config as %s", broken.name)
+        except OSError:
+            logger.debug("无法保留坏配置 %s", self.config_file, exc_info=True)
+
+        candidates: list[Path] = []
+        try:
+            candidates.extend(sorted(
+                self.backup_dir.glob("config.yaml.bak.*"),
+                key=lambda path: path.stat().st_mtime, reverse=True))
+        except OSError:
+            logger.debug("无法列举轮转备份", exc_info=True)
+        candidates.extend(reversed(
+            backup_store.files(self.backup_dir, backup_store.ALL_PREFIX)))
+
+        for candidate in candidates:
+            try:
+                with open(candidate, encoding="utf-8") as handle:
+                    raw = yaml.safe_load(handle) or {}
+                if not isinstance(raw, dict) or "launcher" not in raw:
+                    continue
+                config = self._normalize(raw)
+            except Exception:
+                logger.debug("备份不可用: %s", candidate, exc_info=True)
+                continue
+            if self.save(config, changed="all"):
+                logger.warning("Recovered config from %s", candidate)
+                return config
+
+        logger.error("No usable config backup; using defaults")
+        config = _default_config()
+        self.save(config, changed="all")
+        return config
 
     def _normalize(self, data: dict[str, Any]) -> dict[str, Any]:
         # 版本号决定 launcher 的行语义：<3 是老的「三行」模型（0 常用应用 /
@@ -424,6 +497,33 @@ class ConfigManager(QObject):
         settings = {key: value for key, value in raw_settings.items()
                     if key in DEFAULT_SETTINGS}
         settings = {**DEFAULT_SETTINGS, **settings}
+        # ── 类型兜底 ──
+        # 这些键要么会被界面直接拿来运算，要么会进文件系统路径；用户手改
+        # config.yaml 写坏一个值不应该让设置页抛异常。范围型数值统一夹取。
+        for key in ("showTray", "startMinimized", "animationEnabled",
+                    "adminAutoElevate", "confirmAdminActions",
+                    "autoBackupEnabled", "autoCheckUpdates",
+                    "updateMirrorAuto", "shortcutArrowGlobal", "ecoQosEnabled"):
+            settings[key] = bool(settings.get(key, DEFAULT_SETTINGS.get(key, False)))
+        settings["autoBackupKeep"] = _clamp_int(
+            settings.get("autoBackupKeep"), 8, 1, 100)
+        settings["autoBackupIntervalDays"] = _clamp_int(
+            settings.get("autoBackupIntervalDays"), 7, 1, 365)
+        log_level = str(settings.get("logLevel") or "INFO").upper()
+        settings["logLevel"] = (
+            log_level if log_level in ("DEBUG", "INFO", "WARNING", "ERROR")
+            else "INFO")
+        if settings.get("theme") not in ("system", "light", "dark"):
+            settings["theme"] = "system"
+        accent = str(settings.get("accentColor") or "").strip().upper()
+        if accent and not accent.startswith("#"):
+            accent = f"#{accent}"
+        if re.fullmatch(r"#[0-9A-F]{6}|#[0-9A-F]{8}", accent):
+            settings["accentColor"] = (
+                f"#{accent[3:]}" if len(accent) == 9 and accent[1:3] == "FF"
+                else accent)
+        else:
+            settings["accentColor"] = str(DEFAULT_SETTINGS["accentColor"]).upper()
         # 强调色模式：旧配置没有这个键。旧版颜色选择器的默认可写回红色，
         # 读到 #ff0000 且没有显式模式时视为被写坏，迁到「跟随系统」。
         raw_mode = str(raw_settings.get("accentColorMode") or "").strip()
@@ -486,7 +586,9 @@ class ConfigManager(QObject):
         ``legacy_rows`` 为真时按老的「三行」语义迁移：第一行 + 第二行合并成面板
         （第一行的内容排前面），第三行变成存储区。
         """
-        if isinstance(raw.get("slots"), list) and raw["slots"]:
+        # 空列表也是「新格式」：首次运行 deliberately 生成空启动台，不能被
+        # 当成旧格式又塞回一张 U 盘卡（重启后槽位会自己长出来）。
+        if isinstance(raw.get("slots"), list):
             items = list(raw["slots"])
             if legacy_rows:
                 # 稳定按原行号排序：老配置里第一行（0）的槽位要排在第二行（1）
@@ -566,18 +668,23 @@ class ConfigManager(QObject):
         ``changed`` 指哪一块变了：``launcher`` / ``settings`` / ``all``，
         据此只发对应的信号。
         """
-        if config is not None:
-            self._config = config
+        target = config if config is not None else self._config
         self._storage_cache = None
         try:
             if self.config_file.exists():
                 self._rotate_backups()
             self._quiet_until = time.monotonic() + 1.0
-            with open(self.config_file, "w", encoding="utf-8") as handle:
-                yaml.dump(self._config, handle, allow_unicode=True, sort_keys=False, indent=2)
+            text = yaml.dump(target, allow_unicode=True, sort_keys=False, indent=2)
+            if not atomic.atomic_write_text(self.config_file, text):
+                return False
         except Exception:
             logger.exception("Failed to write %s", self.config_file)
             return False
+
+        # 写盘成功之后才替换内存里的配置：写失败时 restore/import 的调用方
+        # 可以保持原状态，界面提示「原配置未改动」才是真的。
+        if config is not None:
+            self._config = config
 
         if changed == "all":
             self.configChanged.emit()
@@ -605,12 +712,7 @@ class ConfigManager(QObject):
             return ""
 
         if not manual:
-            try:
-                keep = max(1, int(self._config["settings"].get(
-                    "autoBackupKeep", AUTO_BACKUP_KEEP)))
-            except (TypeError, ValueError):
-                keep = AUTO_BACKUP_KEEP
-            backup_store.prune_auto(self.backup_dir, keep)
+            backup_store.prune_auto(self.backup_dir, self._backup_keep())
         self.backupChanged.emit()
         if not silent:
             self.showToast.emit(
@@ -618,11 +720,14 @@ class ConfigManager(QObject):
         logger.info("Created %s backup: %s", "manual" if manual else "auto", target)
         return str(target)
 
+    def _backup_keep(self) -> int:
+        """自动备份保留份数：配置被手改坏时也不能让备份页/轮转抛异常。"""
+        return _clamp_int(
+            self._config["settings"].get("autoBackupKeep"), AUTO_BACKUP_KEEP, 1, 100)
+
     def _backup_interval_days(self) -> int:
-        try:
-            return max(1, int(self._config["settings"].get("autoBackupIntervalDays", 7)))
-        except (TypeError, ValueError):
-            return 7
+        return _clamp_int(
+            self._config["settings"].get("autoBackupIntervalDays"), 7, 1, 365)
 
     def _maybe_auto_backup(self) -> None:
         """按设置里的间隔补一份自动备份；启动与每 6 小时各检查一次。"""
@@ -646,7 +751,7 @@ class ConfigManager(QObject):
             "autoKeep": AUTO_BACKUP_KEEP,
             "autoEnabled": bool(self._config["settings"].get("autoBackupEnabled", True)),
             "intervalDays": self._backup_interval_days(),
-            "keepCount": int(self._config["settings"].get("autoBackupKeep", AUTO_BACKUP_KEEP)),
+            "keepCount": self._backup_keep(),
         })
         return info
 
@@ -688,11 +793,11 @@ class ConfigManager(QObject):
             return False
         # 先把当前配置存一份手动备份：恢复错了还能退回来。
         self._create_backup(manual=True, silent=True)
-        self._config = self._normalize(dict(data))
-        if not self.save(changed="all"):
+        candidate = self._normalize(dict(data))
+        if not self.save(candidate, changed="all"):
             self.showToast.emit("恢复失败，原配置未改动", "error")
             return False
-        self.accentColorChanged.emit(self.accentColor)
+        self.applyRuntimeSettings()
         logger.info("Restored backup %s", target.name)
         self.showToast.emit("已恢复备份", "success")
         return True
@@ -807,12 +912,15 @@ class ConfigManager(QObject):
 
     def _write_to(self, path: Path) -> bool:
         try:
-            with open(path, "w", encoding="utf-8") as handle:
-                yaml.dump(self._config, handle, allow_unicode=True, sort_keys=False, indent=2)
-            return True
-        except OSError:
-            logger.exception("Failed to export config to %s", path)
+            text = yaml.dump(
+                self._config, allow_unicode=True, sort_keys=False, indent=2)
+        except yaml.YAMLError:
+            logger.exception("Failed to serialize config for %s", path)
             return False
+        if not atomic.atomic_write_text(path, text):
+            logger.error("Failed to export config to %s", path)
+            return False
+        return True
 
     def _read_from(self, path: Path) -> bool:
         try:
@@ -821,8 +929,17 @@ class ConfigManager(QObject):
         except (OSError, yaml.YAMLError):
             logger.exception("Failed to import config from %s", path)
             return False
-        self._config = self._normalize(data)
-        return self.save(changed="all")
+        if not isinstance(data, dict):
+            self.showToast.emit("这不是 Rin Launcher 的配置文件", "warning")
+            return False
+        candidate = self._normalize(dict(data))
+        # save() 只在写盘成功后替换 self._config；失败时内存状态原封不动。
+        if not self.save(candidate, changed="all"):
+            self.showToast.emit("导入失败，原配置未改动", "error")
+            return False
+        self.applyRuntimeSettings()
+        self.showToast.emit("配置已导入", "success")
+        return True
 
     # ------------------------------------------------------------------
     # Read API (called from QML)
@@ -844,6 +961,51 @@ class ConfigManager(QObject):
         return value or str(DEFAULT_SETTINGS["accentColor"])
 
     # ── 启动台槽位 ────────────────────────────────────────────────────
+    @staticmethod
+    def _is_network_path(path: Path) -> bool:
+        text = str(path)
+        return text.startswith("\\\\") or text.startswith("//")
+
+    def _path_state(self, target: Path) -> tuple[bool, bool, int, int, int]:
+        """路径的 exists/is_file/容量，带 TTL 缓存。
+
+        GUI 线程（小窗 2.5 秒轮询、编辑页每敲一个字符）不能反复对一个断开的
+        UNC 共享做同步 I/O：失败结果也缓存一分钟，网络路径不再读 disk_usage。
+        """
+        key = str(target)
+        now = time.monotonic()
+        cached = self._path_cache.get(key)
+        if cached is not None and now - cached[0] < PATH_STATE_TTL:
+            return cached[1], cached[2], cached[3], cached[4], cached[5]
+        blocked = self._unreachable_network_paths.get(key)
+        if blocked is not None and now - blocked < UNREACHABLE_NETWORK_TTL:
+            return False, False, 0, 0, 0
+
+        started = time.monotonic()
+        try:
+            exists = target.exists()
+            is_file = bool(exists and target.is_file())
+        except OSError:
+            exists = is_file = False
+        if self._is_network_path(target):
+            # 网络路径首查失败或慢：60 秒内不再重试，避免小窗定时器反复卡住。
+            if not exists or time.monotonic() - started > 0.5:
+                self._unreachable_network_paths[key] = now
+
+        total = free = percent = 0
+        usage_path = target.parent if is_file else target
+        if exists and not self._is_network_path(usage_path):
+            try:
+                usage = shutil.disk_usage(usage_path)
+            except OSError:
+                logger.debug("Cannot read usage of %s", usage_path)
+            else:
+                total = usage.total
+                free = usage.free
+                percent = round(usage.used / usage.total * 100) if usage.total else 0
+        self._path_cache[key] = (now, exists, is_file, total, free, percent)
+        return exists, is_file, total, free, percent
+
     def _resolve_slot(self, slot: dict[str, Any]) -> dict[str, Any] | None:
         """把槽位解析成界面直接能画的一条数据；动作不完整时返回 None。"""
         kind = slot["kind"]
@@ -876,21 +1038,11 @@ class ConfigManager(QObject):
             raw = str(slot.get("path") or "")
             expanded = str(Path(raw).expanduser()) if raw else ""
             target = Path(expanded) if expanded else None
-            exists = bool(target) and target.exists()
-            is_file = bool(target) and target.is_file()
+            exists, is_file, total, free, percent = self._path_state(target) if target \
+                else (False, False, 0, 0, 0)
             path_type = str(slot.get("pathType") or ("file" if is_file else "disk"))
-            total_text = free_text = ""
-            percent = 0
-            usage_path = target.parent if is_file and target is not None else target
-            if exists and usage_path is not None:
-                try:
-                    usage = shutil.disk_usage(usage_path)
-                except OSError:
-                    logger.debug("Cannot read usage of %s", usage_path)
-                else:
-                    total_text = _human_size(usage.total)
-                    free_text = _human_size(usage.free)
-                    percent = round(usage.used / usage.total * 100) if usage.total else 0
+            total_text = _human_size(total) if total else ""
+            free_text = _human_size(free) if free else ""
             resolved.update(
                 name=override_label or (
                     target.name if target else "未设置路径"),
@@ -993,15 +1145,20 @@ class ConfigManager(QObject):
             "percent": 0,
             "available": False,
         }
-        try:
-            usage = shutil.disk_usage(path)
-        except OSError:
-            logger.warning("Cannot read disk usage of %s", path)
+        if self._is_network_path(path):
+            # 网络路径不读容量：断开的 SMB 会让 GUI 线程卡到超时。exists()
+            # 也走同一份缓存，失败结果一分钟内不再重试。
+            info["available"] = self._path_state(path)[0]
         else:
-            info["available"] = True
-            info["free"] = _human_size(usage.free)
-            info["total"] = _human_size(usage.total)
-            info["percent"] = round(usage.used / usage.total * 100) if usage.total else 0
+            try:
+                usage = shutil.disk_usage(path)
+            except OSError:
+                logger.warning("Cannot read disk usage of %s", path)
+            else:
+                info["available"] = True
+                info["free"] = _human_size(usage.free)
+                info["total"] = _human_size(usage.total)
+                info["percent"] = round(usage.used / usage.total * 100) if usage.total else 0
 
         self._storage_cache = (now, info)
         return info
@@ -1010,6 +1167,10 @@ class ConfigManager(QObject):
     def refreshStorageInfo(self) -> dict[str, Any]:
         """丢掉缓存重新读一次（磁盘挂载/卸载后手动刷新用）。"""
         self._storage_cache = None
+        self._removable_cache = None
+        # 槽位路径的 exists()/容量也一起刷新，U 盘刚插上时能立刻出现。
+        self._path_cache.clear()
+        self._unreachable_network_paths.clear()
         return self.getStorageInfo()
 
     def _storagePath(self) -> Path:
@@ -1287,6 +1448,16 @@ class ConfigManager(QObject):
     @Slot("QVariantMap", result=bool)
     def updateSettings(self, settings: dict) -> bool:
         settings = dict(settings)
+        if "accentColor" in settings:
+            accent = str(settings.get("accentColor") or "").strip().upper()
+            if accent and not accent.startswith("#"):
+                accent = f"#{accent}"
+            if re.fullmatch(r"#[0-9A-F]{6}|#[0-9A-F]{8}", accent):
+                settings["accentColor"] = (
+                    f"#{accent[3:]}" if len(accent) == 9 and accent[1:3] == "FF"
+                    else accent)
+            else:
+                settings.pop("accentColor", None)
         previous = self._config["settings"]
         old_accent = str(previous.get("accentColor") or "")
         old_mode = str(previous.get("accentColorMode") or "")
@@ -1299,17 +1470,19 @@ class ConfigManager(QObject):
         saved = self.save(changed="settings")
 
         if saved:
+            if "ecoQosEnabled" in settings:
+                ecoqos.set_enabled(bool(self._config["settings"].get(
+                    "ecoQosEnabled", True)))
             if "globalHotkey" in settings:
                 self.hotkeyChanged.emit(str(previous["globalHotkey"]))
             if "showTray" in settings:
                 self.trayEnabledChanged.emit(bool(previous["showTray"]))
             if "shortcutArrowGlobal" in settings:
+                self._applied_shell_arrow = bool(
+                    self._config["settings"].get("shortcutArrowGlobal", True))
                 self.applyShellPreferences()
-            if any(key in settings for key in (
-                    "compactMode", "windowCorner", "windowOffsetX", "windowOffsetY",
-                    "compactTransparency", "miniTransparency",
-                    "backdropMode")):
-                self.settingsChanged.emit()
+            # settingsChanged 已由 save(changed="settings") 发过一次；这里再发
+            # 会让设置页和小窗把同一份配置重载两遍。
             mode_changed = ("accentColorMode" in settings
                             and self._config["settings"].get("accentColorMode") != old_mode)
             if mode_changed or ("accentColor" in settings
@@ -1341,8 +1514,10 @@ class ConfigManager(QObject):
         mode = mode if mode in ("off", "normal", "admin") else "off"
         self._config["settings"]["startupMode"] = mode
         self.save(changed="settings")
-        # 切启动方式是要下判断的路径：拿新鲜的任务状态，别信道缓存。
-        needs_admin = mode == "admin" or autostart.task_exists(force=True)
+        self._applied_startup_mode = mode
+        # 走 30 秒缓存（启动预热 / 上次切换都会更新）：force=True 会在 GUI
+        # 线程里起一个 schtasks 子进程，点一下下拉要卡 70–200ms。
+        needs_admin = mode == "admin" or autostart.task_exists()
         if needs_admin and not is_admin():
             autostart.spawn_apply_elevated(mode)
             return {"mode": mode, "state": autostart.startup_state(), "pending": True}
@@ -1386,14 +1561,54 @@ class ConfigManager(QObject):
 
     @Slot(result=bool)
     def reloadConfig(self) -> bool:
-        """Re-read config.yaml from disk and tell the UI about it."""
+        """Re-read config.yaml from disk and replay every runtime side effect."""
         self._config = self._load()
+        self.applyRuntimeSettings()
+        return True
+
+    def applyRuntimeSettings(self) -> None:
+        """整份配置被替换（reload / restore / import / reset）后的统一收尾。
+
+        分块信号只让界面重画；热键、托盘、启动项、shell 箭头这些 OS 级状态
+        必须在这里重新对齐，否则界面显示的是新值、系统里跑的还是旧值。
+        """
         self._storage_cache = None
+        self._path_cache.clear()
+        self._removable_cache = None
         self.configChanged.emit()
         self.launcherChanged.emit()
         self.settingsChanged.emit()
         self.accentColorChanged.emit(self.accentColor)
-        return True
+        settings = self._config["settings"]
+        ecoqos.set_enabled(bool(settings.get("ecoQosEnabled", True)))
+        self.hotkeyChanged.emit(str(settings.get("globalHotkey", "")))
+        self.trayEnabledChanged.emit(bool(settings.get("showTray", True)))
+        arrow = bool(settings.get("shortcutArrowGlobal", True))
+        if arrow != self._applied_shell_arrow:
+            self._applied_shell_arrow = arrow
+            self.applyShellPreferences()
+        startup = str(settings.get("startupMode", "off"))
+        if startup != self._applied_startup_mode:
+            self._applied_startup_mode = startup
+            self._apply_startup_mode_async(startup)
+
+    def _apply_startup_mode_async(self, mode: str) -> None:
+        """不在 GUI 线程跑 schtasks：查询 / 删除任务计划都放后台线程。"""
+        if sys.platform != "win32":
+            return
+
+        def work() -> None:
+            try:
+                needs_admin = mode == "admin" or autostart.task_exists(force=True)
+                if needs_admin and not is_admin():
+                    autostart.spawn_apply_elevated(mode)
+                    return
+                if not autostart.apply_startup_mode(mode):
+                    logger.warning("应用启动方式失败: %s", mode)
+            except Exception:
+                logger.exception("应用启动方式失败: %s", mode)
+
+        threading.Thread(target=work, name="rin-startup-mode", daemon=True).start()
 
     @Slot(str, str)
     def notify(self, message: str, severity: str = "info") -> None:
@@ -1617,11 +1832,8 @@ class ConfigManager(QObject):
         self._config["notifications"] = notifications.defaults()
         saved = self.save(changed="settings")
         if saved:
-            self.accentColorChanged.emit(self.accentColor)
             self.notificationsChanged.emit()
-            self.hotkeyChanged.emit(str(DEFAULT_SETTINGS["globalHotkey"]))
-            self.trayEnabledChanged.emit(bool(DEFAULT_SETTINGS["showTray"]))
-            self.applyShellPreferences()
+            self.applyRuntimeSettings()
             self.showToast.emit("应用设置已重置", "success")
         return saved
 
@@ -1684,10 +1896,12 @@ class ConfigManager(QObject):
         # 「继续使用」必须先把这两个标记清掉，否则重启后还是恢复进程。
         if mode == "normal" and (self._app_mode_values.get("recovery")
                                  or self._app_mode_values.get("failsafe")):
-            if app_mode.update(self.app_mode_path.parent,
-                               {"recovery": False, "failsafe": False}):
-                self._app_mode_values["recovery"] = False
-                self._app_mode_values["failsafe"] = False
+            if not self._write_app_mode({"recovery": False, "failsafe": False}):
+                # 两个位置都写不进去：重启只会再进恢复模式，先把原因说清楚。
+                self.showToast.emit(
+                    "无法清除恢复标记（安装目录与数据目录不可写），程序不会重启",
+                    "error")
+                return False
         flag = {"recovery": "--recovery", "safe": "--safe-mode",
                 "diagnostic": "--diagnostic"}.get(mode, "")
         extra = [flag] if flag else []
@@ -1723,7 +1937,15 @@ class ConfigManager(QObject):
 
     @Slot(result=bool)
     def resetToDefaults(self) -> bool:
-        return self.save(_default_config(), changed="all")
+        """清空全部配置；先备份，再把热键 / 托盘 / 启动项等副作用收回默认。"""
+        self._create_backup(manual=True, silent=True)
+        if not self.save(_default_config(), changed="all"):
+            self.showToast.emit("重置失败，原配置未改动", "error")
+            return False
+        self.notificationsChanged.emit()
+        self.applyRuntimeSettings()
+        self.showToast.emit("已重置全部配置", "success")
+        return True
 
     @Slot(result=bool)
     def restartApplication(self) -> bool:
@@ -1744,16 +1966,36 @@ class ConfigManager(QObject):
         QCoreApplication.quit()
         return True
 
+    def _write_app_mode(self, updates: dict[str, Any]) -> bool:
+        """写 appmodset.conf；安装目录不可写时退到数据目录的覆盖文件。
+
+        返回是否至少有一处写成功。修改 ``_app_mode_values`` 是让本次进程里
+        的 ``app_mode`` 立即反映新值，不用等重启。
+        """
+        ok = app_mode.update(self.app_mode_path.parent, updates)
+        if not ok:
+            override_dir = self.config_dir
+            if override_dir.resolve() != self.app_mode_path.parent.resolve():
+                ok = app_mode.update(override_dir, updates)
+        if ok:
+            self._app_mode_values.update(updates)
+        return ok
+
     @Slot(str, result=bool)
     def setUpdateChannel(self, channel: str) -> bool:
         channel = channel if channel in ("stable", "prerelease") else "stable"
-        if self._config["settings"].get("updateChannel") == channel:
+        settings = self._config["settings"]
+        if settings.get("updateChannel") == channel:
             return True
-        self._config["settings"]["updateChannel"] = channel
+        previous = settings.get("updateChannel", "stable")
+        settings["updateChannel"] = channel
         # appmodset.conf 是通道的单一来源：界面改了要同步写回去，否则重启后
-        # 又会被文件里的旧值覆盖。
-        if app_mode.update(self.app_mode_path.parent, {"channel": channel}):
-            self._app_mode_values["channel"] = channel
+        # 又会被文件里的旧值覆盖。写不进去时把界面值退回去，不留「看起来
+        # 成功、重启变回去」的假象。
+        if not self._write_app_mode({"channel": channel}):
+            settings["updateChannel"] = previous
+            self.showToast.emit("更新通道没能保存，安装目录与数据目录都不可写", "error")
+            return False
         return self.save(changed="settings")
 
     @Slot(bool, result=bool)
@@ -2160,12 +2402,16 @@ class ConfigManager(QObject):
             logger.exception("watchdog is unavailable; config hot reload is disabled")
             return
         self._observer = Observer()
-        self._observer.schedule(
-            _ConfigWatcher(self._onExternalChange), str(self.config_dir), recursive=False)
+        # 观察器回调只发队列信号：真正读文件 / 改 _config 必须在 GUI 线程做。
+        self._watcher = _ConfigWatcher(self._externalChangeDetected.emit)
+        self._observer.schedule(self._watcher, str(self.config_dir), recursive=False)
         self._observer.start()
         logger.info("Watching %s for external changes", self.config_file)
 
     def stopWatching(self) -> None:
+        if self._watcher is not None:
+            self._watcher.cancel()
+            self._watcher = None
         if self._observer is None:
             return
         self._observer.stop()

@@ -10,16 +10,19 @@
 from __future__ import annotations
 
 import logging
+import os
 
 from PySide6.QtCore import QObject, QSharedMemory, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = logging.getLogger(__name__)
 
+# 源码 UI 验收 / 便携多开测试时给实例名加后缀；正常用户不设这个环境变量。
+_SUFFIX = os.environ.get("RINLAUNCHER_INSTANCE_SUFFIX", "").strip()
 #: 本地套接字名（Windows 上就是命名管道的名字）。
-SERVICE_NAME = "RinLauncher.instance"
+SERVICE_NAME = f"RinLauncher.instance{_SUFFIX}"
 #: 共享内存键（判重用的占位锁）。
-SHARED_KEY = "RinLauncher-single-instance"
+SHARED_KEY = f"RinLauncher-single-instance{_SUFFIX}"
 
 
 def acquire_single_instance() -> QSharedMemory | None:

@@ -213,6 +213,22 @@ Item {
                 }
 
                 FormRow {
+                    label: qsTr("后台任务节能（EcoQoS）")
+                    description: qsTr("更新检查、下载与后台刷新使用 Windows 低功耗调度；界面、热键与按键回放不受影响")
+                    visible: Qt.platform.os === "windows"
+                    Switch {
+                        id: ecoQosSwitch
+                        objectName: "ecoQosSwitch"
+                        checkedText: qsTr("开")
+                        uncheckedText: qsTr("关")
+                        onCheckedChanged: {
+                            if (!pageRoot.page || pageRoot.page.syncing) return
+                            pageRoot.page.apply("ecoQosEnabled", checked)
+                        }
+                    }
+                }
+
+                FormRow {
                     label: qsTr("日志级别")
                     description: qsTr("重启后生效")
                     RinComboBox {
@@ -299,6 +315,7 @@ Item {
         elevateSwitch.checked = model.adminAutoElevate !== false
         confirmAdminSwitch.checked = model.confirmAdminActions !== false
         arrowSwitch.checked = model.shortcutArrowGlobal !== false
+        ecoQosSwitch.checked = model.ecoQosEnabled !== false
         logCombo.currentIndex = Math.max(0,
             ["DEBUG", "INFO", "WARNING", "ERROR"].indexOf(model.logLevel || "INFO"))
         appModeInfo = ConfigManager ? ConfigManager.getAppModeInfo() : ({})

@@ -73,6 +73,9 @@ def task_exists_cached() -> bool:
 def refresh_task_exists_async(on_done=None) -> None:
     """后台线程刷一遍任务状态；完成后调 ``on_done(值)``（回调里发 Qt 信号回主线程）。"""
     def work() -> None:
+        from rin_launcher import ecoqos
+
+        ecoqos.enable_current_thread()
         value = _query_task_exists()
         _store_task_cache(value)
         if on_done is not None:
@@ -87,10 +90,11 @@ def refresh_task_exists_async(on_done=None) -> None:
 def _app_command() -> str:
     """写进任务的启动命令：打包后是 exe 自身，源码运行时用 pythonw + 入口脚本。"""
     if getattr(sys, "frozen", False):
-        return sys.executable
+        # schtasks /TR 的路径含空格时必须整体加引号。
+        return f'"{sys.executable}"'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
-    return f'{runner} "{Path(sys.argv[0]).resolve()}"'
+    return f'"{runner}" "{Path(sys.argv[0]).resolve()}"'
 
 
 def create_task() -> bool:

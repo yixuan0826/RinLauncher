@@ -13,11 +13,37 @@
 from __future__ import annotations
 
 import codecs
+import os
 import subprocess
 from collections.abc import Iterable
 from pathlib import Path
 
 _CREATE_NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
+def _script_environment() -> dict[str, str]:
+    """给 Windows PowerShell 5.1 准备一份能自动加载内置模块的 ModulePath。
+
+    从 PowerShell 7 环境启动本程序时，``PSModulePath`` 会以
+    ``Documents\\PowerShell\\Modules`` 开头；5.1 在某些机器上会先命中不兼容的
+    模块目录，连 ``Get-FileHash`` / ``ConvertFrom-Json`` 都报「无法识别」。
+    把 5.1 自己的模块目录放到最前面即可，其余用户路径保持不动。
+    """
+    env = os.environ.copy()
+    if os.name != "nt":
+        return env
+    system_root = env.get("SystemRoot") or r"C:\Windows"
+    builtin = os.path.join(
+        system_root, "System32", "WindowsPowerShell", "v1.0", "Modules")
+    parts = [part for part in env.get("PSModulePath", "").split(os.pathsep) if part]
+    if not any(os.path.normcase(part) == os.path.normcase(builtin) for part in parts):
+        parts.insert(0, builtin)
+    else:
+        parts.remove(next(part for part in parts
+                          if os.path.normcase(part) == os.path.normcase(builtin)))
+        parts.insert(0, builtin)
+    env["PSModulePath"] = os.pathsep.join(parts)
+    return env
 
 
 def write_script(path: Path, text: str) -> Path:
@@ -42,5 +68,6 @@ def spawn_hidden(script: Path, arguments: Iterable[str] = (),
         ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
          "-WindowStyle", "Hidden", "-File", str(script), *arguments],
         cwd=str(cwd) if cwd is not None else None,
+        env=_script_environment(),
         creationflags=_CREATE_NO_WINDOW,
     )

@@ -3,6 +3,63 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.2.2（1.2.x 维护线）— 2026-11-14
+
+> 稳定性维护版：修 Win10 材质与圆角、系统强调色、配置持久化、热重载、
+> 更新回滚与后台 EcoQoS。Win11 现有视觉与交互不变。
+
+### Win10 显示
+
+- **设置 / 编辑 / OOBE / 恢复窗口不再全透明**：`_pin_rinui_backdrop()` 先
+  `init_config()` 再写 `RinConfig`，Win10 钉 `none`、Win11 钉 `mica`；只在
+  值变化时写盘。
+- **启动台方形 Acrylic 边框**：Win10 用 `SetWindowRgn` 按 `surfaceRadius`
+  裁剪窗口，尺寸 / 形态 / DPI 变化后重设；裁剪失败自动关闭 Acrylic 走不透明
+  回退。
+- **材质失败兜底**：DWM 返回失败时 QML 铺一层实色背景，远程桌面 / DWM 关闭
+  时不再出现全透明窗口。
+- **`rin_ui.json` 损坏恢复**：启动前校验 JSON，坏文件保留为
+  `.corrupt-<时间>`，优先从 `.bak` 恢复；写入不再每次启动重写。
+
+### 系统强调色
+
+- 首选 `UISettings.GetColorValue(UIColorType.Accent)`，失败回退注册表
+  `ColorizationColor → AccentColorMenu → AccentColor`。
+- 灰阶强调色不再被丢弃；设置页「跟随系统」时色块显示实际系统色。
+- 强调色统一为 `#RRGGBB` / `#AARRGGBB`，写入前校验。
+
+### 配置与热重载
+
+- `config.yaml` / `appmodset.conf` / 导出/导入全部改为原子写。
+- 坏配置保留 `.broken-<时间>` 并尝试最近备份，不再静默覆盖为默认值。
+- `autoBackupKeep`（1–100）、`autoBackupIntervalDays`（1–365）等设置做类型
+  与范围兜底；备份页不再因非法值抛异常。
+- `appmodset.conf` 非 UTF-8 字节容错；安装目录不可写时所有键回退到数据目录
+  覆盖文件；更新通道失败不再「看起来成功、重启变回去」。
+- 空启动台不再在第二次启动时自动长出 U 盘槽位。
+- 热重载处理 created / moved，真正防抖，并通过 Qt 队列信号回到 GUI 线程；
+  整份配置替换后统一重放热键、托盘、启动方式、shell 箭头与主题。
+- 小窗路径解析加 TTL 缓存，网络路径跳过容量读取；U 盘 / 磁盘容量文字随
+  刷新更新；重开 OOBE 不再把管理员自启动降级。
+- 快捷方式箭头只把本程序的空白 ICO 视为「已隐藏」，修改前无条件备份原值。
+
+### 更新与恢复
+
+- 更新包携带 `install-manifest.json`（路径 + SHA-256），安装前校验；覆盖前
+  备份当前安装到 `backup-<时间戳>`，失败自动回滚。
+- `updates/update-in-progress.json` 记录复制阶段；中断后启动会提示可在设置
+  页「修复安装（回滚）」。
+- 新增 `repair.ps1`：`-Check` 校验安装清单，`-Restore` 用最近备份恢复。
+- 设置 → 更新新增「安装完整性」检查 / 修复入口。
+
+### EcoQoS
+
+- 新增 `rin_launcher/ecoqos.py`：只对更新检查 / 下载 / 镜像测速 / 任务状态
+  刷新线程启用 `POWER_THROTTLING_EXECUTION_SPEED`；GUI、热键、按键录制与
+  键盘回放永不启用，也不使用 `POWER_THROTTLING_IGNORE_TIMER_RESOLUTION`。
+- 「通用 → 权限与维护」新增「后台任务节能（EcoQoS）」开关，默认开启；
+  Win10 不支持时静默降级。
+
 ## 1.2.1（1.2.x 维护线）— 2026-11-08
 
 > 1.2.x 维护线。这一版的主题是**按职责拆分**：几个已经膨胀到近千行的核心文件

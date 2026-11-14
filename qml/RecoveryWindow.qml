@@ -87,6 +87,28 @@ FluentWindowBase {
         }
     }
 
+    function applyThemeSetting() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var mode = String(ConfigManager.getSettings().theme || "system")
+        Theme.setTheme(mode === "light" ? Theme.mode.Light
+                      : mode === "dark" ? Theme.mode.Dark
+                      : Theme.mode.Auto)
+    }
+
+    property bool materialFallback: false
+
+    Rectangle {
+        objectName: "materialFallback"
+        parent: recoveryWindow.contentItem
+        anchors.fill: parent
+        z: -0.5
+        radius: Theme.currentTheme.appearance.windowRadius
+        color: Theme.currentTheme.colors.backgroundColor
+        visible: recoveryWindow.materialFallback
+    }
+
     function reload() {
         if (typeof ConfigManager === "undefined" || !ConfigManager) {
             return
@@ -161,6 +183,7 @@ FluentWindowBase {
 
     Component.onCompleted: {
         applyAccentColor()
+        applyThemeSetting()
         reload()
     }
 
@@ -170,6 +193,7 @@ FluentWindowBase {
         target: ConfigManager
         function onAccentColorChanged() { recoveryWindow.applyAccentColor() }
         function onConfigChanged() { recoveryWindow.applyAccentColor() }
+        function onSettingsChanged() { recoveryWindow.applyThemeSetting() }
     }
 
     property Connections dataWatcher: Connections {

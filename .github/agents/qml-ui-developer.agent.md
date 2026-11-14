@@ -15,22 +15,27 @@ UI copy and code comments are in Chinese; identifiers are in English.
 
 | Area | Path |
 | --- | --- |
-| Main window (FluentWindow + NavigationView) | `qml/LauncherWindow.qml` |
-| Desktop mini window | `qml/CompactWindow.qml` |
-| Pages | `qml/pages/*.qml` |
+| Desktop launcher window | `qml/CompactWindow.qml` |
+| Settings window | `qml/SettingsWindow.qml` + `qml/pages/SettingsPage.qml` |
+| Launcher editor window | `qml/LauncherEditorWindow.qml` + `qml/pages/LauncherSettingsPage.qml` |
+| OOBE / recovery windows | `qml/OobeWindow.qml`, `qml/RecoveryWindow.qml` |
+| Settings categories | `qml/pages/settings/*.qml` |
 | Dialogs (AppDialog subclasses) | `qml/dialogs/*.qml` |
 | Reusable components | `qml/components/*.qml` |
-| QML module registration | `qmldir` in `qml/`, `qml/pages/`, `qml/dialogs/`, `qml/components/` |
+| QML module registration | `qmldir` in `qml/`, `qml/pages/`, `qml/pages/settings/`, `qml/dialogs/`, `qml/components/` |
 | Python glue (windows, tray, hotkey, config) | `rin_launcher/` |
 | Fluent QML library (pip `rinui==0.5.0`, MIT) | installed package `RinUI/` |
 | Tests (pytest; no QML automation) | `tests/` |
 
-Pages are wired in `qml/LauncherWindow.qml` via the `pageUrls` map + `Qt.resolvedUrl(...)`.
+Settings categories are instantiated in `qml/pages/SettingsPage.qml`; window routing lives in
+`rin_launcher/main.py` (`show_page`, `show_settings`, `show_editor`).
 
 ## Non-negotiable patterns (each one is a known pitfall)
 
-1. **One QML engine per window.** `ThemeManager` lives on `rootContext` and is pinned per
-   engine in `main.py` (`_pin_theme_managers`). Any new window needs the same treatment.
+1. **One QML engine per window.** Each `RinUIWindow(shared_engine=False)` gets its own
+   `ThemeManager`; the app-level backdrop is pinned once in `main.py`
+   (`_pin_rinui_backdrop`) after `RinUI.init_config()`. Any new window needs the same
+   `applyAccentColor()` + `Theme.setTheme()` treatment on `ConfigManager` signals.
 2. **Dropdowns:** `onActivated` must use property syntax
    `onActivated: function (index) { ... }` — the declaration form is not connected, which
    shows up as "selection does nothing".
@@ -39,7 +44,8 @@ Pages are wired in `qml/LauncherWindow.qml` via the `pageUrls` map + `Qt.resolve
    card). Nested dialogs set `parent: <dialog root id>`.
 4. **Settings writes** go through the `pending` object + 350 ms debounce timer and
    `flush()`; never write `config.yaml` from a control handler directly. `ConfigManager`
-   auto-reloads external edits (0.5 s debounce) and ignores our own writes.
+   auto-reloads external edits (debounced `config.yaml` events, moved/created included)
+   on the GUI thread and ignores its own writes.
 5. **RinUI is a pip dependency** (`rinui==0.5.0`), not a vendored directory. Upstream 0.5.0
    dropped `activated` on its self-drawn ComboBox popup; `qml/components/RinComboBox.qml`
    re-emits it. Use `RinComboBox`, never patch files inside site-packages.
@@ -51,7 +57,7 @@ Pages are wired in `qml/LauncherWindow.qml` via the `pageUrls` map + `Qt.resolve
    right folder and must be added to that folder's `qmldir`.
 8. **Windows-only pieces** (UAC elevation, task-scheduler autostart, acrylic, no-focus
    windows) live Python-side; keep non-Windows imports working and `tests/` green.
-9. **Python style:** ruff, line-length 100, target py310, rules `E4, E7, E9, F, W, I`.
+9. **Python style:** ruff, line-length 100, target py314, rules `E4, E7, E9, F, W, I`.
    The GUI shell intentionally catches and logs instead of crashing — keep that philosophy.
 
 ## Workflow

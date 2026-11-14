@@ -59,18 +59,19 @@ def test_accent_color_is_persisted_and_signalled(qapp, tmp_path):
     try:
         # 新配置默认跟随系统；测试固定到自定义模式再验证持久化。
         first.updateSettings({"accentColorMode": "custom"})
-        assert first.accentColor == "#0078d4"
+        assert first.accentColor == "#0078D4"
         colours = []
         first.accentColorChanged.connect(colours.append)
         assert first.updateSettings({"accentColor": "#5175a1"})
-        assert first.accentColor == "#5175a1"
-        assert colours == ["#5175a1"]
+        # 写入时统一大写（QML/Qt 两种写法都能解析）。
+        assert first.accentColor == "#5175A1"
+        assert colours == ["#5175A1"]
     finally:
         first.stopWatching()
 
     second = ConfigManager(config_dir=tmp_path)
     try:
         assert second.getSettings()["accentColorMode"] == "custom"
-        assert second.accentColor == "#5175a1"
+        assert second.accentColor == "#5175A1"
     finally:
         second.stopWatching()

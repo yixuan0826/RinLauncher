@@ -195,6 +195,39 @@ Item {
             }
 
             SettingsGroup {
+                title: qsTr("安装完整性")
+                iconKey: "ic_fluent_wrench_screwdriver_20_regular"
+
+                FormRow {
+                    label: qsTr("安装清单")
+                    description: pageRoot.updater
+                        ? (pageRoot.updater.installationStatus
+                           || qsTr("检查程序文件是否与 install-manifest.json 一致"))
+                        : ""
+                    Button {
+                        text: qsTr("检查")
+                        icon.name: "ic_fluent_checkmark_circle_20_regular"
+                        onClicked: {
+                            if (pageRoot.updater) {
+                                pageRoot.updater.checkInstallation()
+                            }
+                        }
+                    }
+                    Button {
+                        text: qsTr("修复安装（回滚）")
+                        icon.name: "ic_fluent_arrow_reset_20_regular"
+                        enabled: pageRoot.updater ? pageRoot.updater.canRepair : false
+                        onClicked: {
+                            if (!pageRoot.updater) return
+                            pageRoot.page.openConfirm(
+                                qsTr("退出程序并用更新前备份覆盖当前程序文件？data 目录不会被改动。"),
+                                function () { pageRoot.updater.repairInstallation() })
+                        }
+                    }
+                }
+            }
+
+            SettingsGroup {
                 title: qsTr("高级：从文件安装")
                 iconKey: "ic_fluent_folder_zip_20_regular"
 

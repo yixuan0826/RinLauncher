@@ -18,7 +18,7 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "startupMode": "off",
     "globalHotkey": "Ctrl+Space",
     "animationEnabled": True,
-    "accentColor": "#0078d4",
+    "accentColor": "#0078D4",
     # system = 跟随 Windows 强调色；custom = 使用 accentColor。
     "accentColorMode": "system",
     "adminAutoElevate": True,
@@ -44,10 +44,14 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     # 完整版默认 82% 透明，与 1.1.10 的云母观感一致。
     "compactTransparency": 82,
     "miniTransparency": 30,
-    # auto = 检测到 Wallpaper Engine 时用 Acrylic，否则 Mica。
+    # 已废弃：材质由窗口角色决定（启动台 Acrylic，其它窗口 Mica），这个键
+    # 只为兼容旧配置保留，1.3 再决定实现或移除。
     "backdropMode": "auto",
     # 全局去掉 Windows 快捷方式小箭头（改 HKCU，重启资源管理器后生效）。
     "shortcutArrowGlobal": True,
+    # 后台任务（更新检查/下载/镜像测速/任务状态刷新）使用 Windows EcoQoS
+    # 线程级节能调度；GUI、热键与按键回放永不启用。
+    "ecoQosEnabled": True,
 }
 
 # 通知分两级：功能类别 × 投递渠道。表的定义与归一化在 notifications 模块里，

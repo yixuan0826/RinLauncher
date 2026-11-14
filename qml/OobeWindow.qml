@@ -37,6 +37,26 @@ FluentWindowBase {
         }
     }
 
+    function applyThemeSetting() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) return
+        var mode = String(ConfigManager.getSettings().theme || "system")
+        Theme.setTheme(mode === "light" ? Theme.mode.Light
+                      : mode === "dark" ? Theme.mode.Dark
+                      : Theme.mode.Auto)
+    }
+
+    property bool materialFallback: false
+
+    Rectangle {
+        objectName: "materialFallback"
+        parent: oobe.contentItem
+        anchors.fill: parent
+        z: -0.5
+        radius: Theme.currentTheme.appearance.windowRadius
+        color: Theme.currentTheme.colors.backgroundColor
+        visible: oobe.materialFallback
+    }
+
     function reloadControls() {
         themeCombo.currentIndex = Math.max(0,
             ["system", "light", "dark"].indexOf(model.theme || "system"))
@@ -52,6 +72,7 @@ FluentWindowBase {
 
     Component.onCompleted: {
         applyAccentColor()
+        applyThemeSetting()
         model = ConfigManager.getSettings()
         reloadControls()
     }
@@ -63,6 +84,7 @@ FluentWindowBase {
         target: ConfigManager
         function onAccentColorChanged() { oobe.applyAccentColor() }
         function onConfigChanged() { oobe.applyAccentColor() }
+        function onSettingsChanged() { oobe.applyThemeSetting() }
     }
 
     onClosing: function (close) {
@@ -80,7 +102,11 @@ FluentWindowBase {
             "animationEnabled": animationSwitch.checked,
             "shortcutArrowGlobal": arrowSwitch.checked,
             "compactMode": oobe.pendingMode,
-            "startupMode": startupSwitch.checked ? "normal" : "off"
+            // 重新打开 OOBE 时不要把「管理员自启动」降级成普通自启动：
+            // 开关只表达「开 / 关」，具体形态沿用原配置。
+            "startupMode": startupSwitch.checked
+                ? (oobe.model.startupMode === "admin" ? "admin" : "normal")
+                : "off"
         })
         ConfigManager.completeOobe(payload)
         saving = false

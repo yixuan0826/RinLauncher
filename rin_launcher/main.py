@@ -8,9 +8,12 @@ Run with ``python -m rin_launcher.main`` (or ``python rin_launcher/main.py``).
 
 from __future__ import annotations
 
+import json
 import logging
+import shutil
 import sys
 import tempfile
+import time
 import traceback
 from pathlib import Path
 
@@ -45,14 +48,14 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
 import RinUI  # noqa: F401
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QStandardPaths, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 from RinUI import RinUIWindow
 from RinUI.core import BackdropEffect, is_windows
-from RinUI.core.config import RinConfig, is_win11
+from RinUI.core.config import RinConfig, init_config, is_win11
 
-from rin_launcher import __version__, effects, logging_setup
+from rin_launcher import __version__, atomic, effects, logging_setup
 from rin_launcher.action_executor import ActionExecutor
 from rin_launcher.config_manager import ConfigManager
 from rin_launcher.hotkey import GlobalHotkey
@@ -152,17 +155,100 @@ class Launcher:
         self._pin_rinui_backdrop()
         self._wire_config()
 
+    @staticmethod
+    def _rinui_config_path() -> Path:
+        """RinUI 自己算 ``rin_ui.json`` 路径的同一套规则。"""
+        base = QStandardPaths.writableLocation(QStandardPaths.AppLocalDataLocation)
+        root = Path(base) if base else Path.home() / ".RinUI"
+        return root / "RinUI" / "config" / "rin_ui.json"
+
+    @classmethod
+    def _prepare_rinui_config(cls) -> Path:
+        """``init_config()`` 之前先检查 ``rin_ui.json``。
+
+        RinUI 0.5.0 的 ``load_config()`` 直接 ``json.load``：BSOD / 断电留下
+        半截 JSON 时它会抛 ``JSONDecodeError``，把整个启动流程带走。这里在
+        init 之前把坏文件改名保留、优先用 ``.bak`` 恢复，再让 RinUI 自己跑。
+        """
+        path = cls._rinui_config_path()
+        backup = path.with_name(f"{path.name}.bak")
+        if path.is_file():
+            try:
+                with open(path, encoding="utf-8") as handle:
+                    json.load(handle)
+            except (OSError, ValueError):
+                logger.warning("rin_ui.json 无法解析，保留坏文件并尝试恢复")
+                stamp = time.strftime("%Y%m%d-%H%M%S")
+                try:
+                    path.replace(path.with_name(f"{path.name}.corrupt-{stamp}"))
+                except OSError:
+                    logger.debug("无法重命名损坏的 rin_ui.json", exc_info=True)
+                restored = False
+                if backup.is_file():
+                    try:
+                        with open(backup, encoding="utf-8") as handle:
+                            json.load(handle)
+                        shutil.copyfile(backup, path)
+                        restored = True
+                    except (OSError, ValueError):
+                        logger.debug("rin_ui.json.bak 也不可用", exc_info=True)
+                if not restored:
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        logger.debug("无法移除损坏的 rin_ui.json", exc_info=True)
+        try:
+            init_config()
+        except Exception:
+            logger.exception("RinUI init_config failed; backdrop pinning skipped")
+            return path
+        # 当前文件是合法的：留一份 .bak，下一次 BSOD 截断时有东西可回退。
+        try:
+            if path.is_file():
+                shutil.copyfile(path, backup)
+        except OSError:
+            logger.debug("无法备份 rin_ui.json", exc_info=True)
+        return path
+
+    def _install_rinui_atomic_writer(self) -> None:
+        """把 RinUI 的 ``RinConfig.save_config`` 换成原子写。
+
+        RinUI 0.5.0 在每次窗口激活时都会 ``save_config()``，内部是直接
+        ``open("w")``；BSOD / 断电正好撞上就会留下半截 JSON。上游不在本仓库，
+        这里在运行期换掉这一个方法，写入走同目录临时文件 + ``os.replace``。
+        """
+        path = self._rinui_config_path()
+
+        def save_config() -> None:
+            try:
+                text = json.dumps(RinConfig.config, ensure_ascii=False, indent=4)
+            except (TypeError, ValueError):
+                logger.debug("RinUI config is not serializable", exc_info=True)
+                return
+            atomic.atomic_write_text(path, text)
+
+        RinConfig.save_config = save_config
+
     def _pin_rinui_backdrop(self) -> None:
-        """把 RinUI 的全局材质钉在云母。
+        """把 RinUI 的全局材质钉在云母（Win10 钉在不透明）。
 
         RinUI 的 WinEventFilter 会在窗口**激活**时把 ``RinConfig["backdrop_effect"]``
         刷给所有已注册窗口（``ThemeManager.windows`` 是类级列表）。旧版本设置页
         写过 acrylic，那份值会一直残留 —— 这就是编辑窗口时有时无的亚克力来源。
+
+        必须先 ``init_config()``：它会把磁盘上的 ``rin_ui.json`` 读回来，
+        覆盖掉之前写进内存的值。旧代码在 init 之前赋值，于是每次启动都被
+        RinUI 的默认 ``acrylic`` 冲掉 —— Win10 设置窗口全透明的根因。
         """
         try:
-            RinConfig["backdrop_effect"] = (
+            self._prepare_rinui_config()
+            self._install_rinui_atomic_writer()
+            desired = (
                 BackdropEffect.Mica.value if is_win11()
                 else BackdropEffect.None_.value)
+            # 只在值真的不同时写：避免每次启动重写 JSON（BSOD 截断风险）。
+            if RinConfig["backdrop_effect"] != desired:
+                RinConfig["backdrop_effect"] = desired
         except Exception:
             logger.debug("Failed to pin RinUI backdrop", exc_info=True)
 
@@ -306,10 +392,42 @@ class Launcher:
         effects.apply_bottom_layer(root)
         effects.apply_win11_round_corners(root)
         self.apply_backdrop(window)
+        # Win10 的 Acrylic 画在整个矩形窗口上，必须用 region 把圆角外裁掉。
+        # 尺寸 / 形态 / DPI 变化后半径都会变，统一在这些信号里重设。
+        self._update_compact_region()
+        root.widthChanged.connect(self._update_compact_region)
+        root.heightChanged.connect(self._update_compact_region)
+        try:
+            root.screenChanged.connect(self._update_compact_region)
+        except (AttributeError, TypeError):
+            logger.debug("screenChanged is unavailable", exc_info=True)
         # 先把主屏几何灌进去，再让 QML 自己贴边（height 绑定会触发重算）。
         self._wire_screen()
         self.sync_primary_screen()
         return True
+
+    def _update_compact_region(self, *_args) -> None:
+        """Win10：按当前尺寸 / DPR 把小窗裁成与 QML 卡片一致的圆角。"""
+        if self.compact is None or self.compact.root_window is None:
+            return
+        if is_win11():
+            return
+        root = self.compact.root_window
+        try:
+            radius = int(root.property("surfaceRadius") or 8)
+        except (TypeError, ValueError):
+            radius = 8
+        if effects.apply_round_window_region(root, radius):
+            return
+        # region 失败：窗口会留下方形 Acrylic 边框。关掉材质走不透明回退，
+        # 卡片自身的 alpha 下限会把内容衬稳。
+        logger.warning("SetWindowRgn failed; falling back to an opaque compact window")
+        try:
+            dark = bool(self.compact.theme_manager.is_dark_theme())
+        except Exception:
+            dark = False
+        effects.apply_backdrop(root, BackdropEffect.None_.value, dark)
+        root.setProperty("backdropActive", False)
 
     def sync_primary_screen(self, *_args) -> None:
         """把主显示器的可用区域同步给小窗。
@@ -468,10 +586,17 @@ class Launcher:
             ok = effects.apply_backdrop(
                 window.root_window, effect, dark,
                 legacy_acrylic=window is self.compact)
+            applied = bool(ok and effect != BackdropEffect.None_.value)
             if window is self.compact:
-                window.root_window.setProperty(
-                    "backdropActive",
-                    ok and effect != BackdropEffect.None_.value)
+                window.root_window.setProperty("backdropActive", applied)
+                # 小窗的卡片本身就有不透明下限，不需要额外的兜底层。
+                window.root_window.setProperty("materialFallback", False)
+            else:
+                # 材质失败（DWM 关闭 / 远程桌面）时，QML 侧铺一层实色背景，
+                # 否则 RinUI 的 FluentWindowBase 会按 backdropEnabled=true
+                # 把窗口画成全透明。
+                window.root_window.setProperty("materialFallback", not applied
+                                               and effect != BackdropEffect.None_.value)
 
     def _settle_backdrop(self, window: RinUIWindow | None) -> None:
         """窗口可见之后再补一次材质。
@@ -507,6 +632,8 @@ class Launcher:
             return
         root = self.compact.root_window
         root.show()
+        # 窗口刚显示时 DPI / 几何才最终确定，Win10 的圆角裁剪要再补一次。
+        self._update_compact_region()
         # 小窗可见时才需要系统状态轮询；隐藏期间不碰 WinRT。
         if not self.safe_mode:
             self.system_controls.setActive(True)

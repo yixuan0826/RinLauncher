@@ -74,6 +74,60 @@ def apply_bottom_layer(window: Any) -> None:
         logger.debug("Failed to push window to the bottom layer", exc_info=True)
 
 
+def apply_round_window_region(window: Any, radius: int) -> bool:
+    """Win10 上没有 DWM 圆角：用 ``SetWindowRgn`` 把窗口裁成圆角矩形。
+
+    Acrylic 是画在**整个窗口矩形**上的，QML 卡片再圆，四个角外面仍会露出
+    方形材质。Win11 用 ``DWMWA_WINDOW_CORNER_PREFERENCE`` 让 DWM 连材质一起
+    裁；Win10 只能自己建 region。半径按 DPR 换算成物理像素，窗口尺寸 / DPI
+    变化后必须重新调用。
+
+    返回是否成功；失败时调用方应关掉 Acrylic 走不透明回退，避免方形边框。
+    """
+    if sys.platform != "win32":
+        return False
+    hwnd = _hwnd(window)
+    if not hwnd:
+        return False
+    try:
+        ratio = float(window.devicePixelRatio()) if hasattr(
+            window, "devicePixelRatio") else 1.0
+        width = int(round(float(window.width()) * ratio))
+        height = int(round(float(window.height()) * ratio))
+        if width <= 0 or height <= 0:
+            return False
+        physical_radius = max(0, min(
+            int(round(float(radius) * ratio)), min(width, height) // 2))
+        if physical_radius <= 0:
+            return True
+        from ctypes import wintypes
+
+        gdi32 = ctypes.windll.gdi32
+        user32 = ctypes.windll.user32
+        gdi32.CreateRoundRectRgn.argtypes = [ctypes.c_int] * 6
+        gdi32.CreateRoundRectRgn.restype = ctypes.c_void_p
+        gdi32.DeleteObject.argtypes = [ctypes.c_void_p]
+        gdi32.DeleteObject.restype = wintypes.BOOL
+        user32.SetWindowRgn.argtypes = [
+            wintypes.HWND, ctypes.c_void_p, wintypes.BOOL]
+        user32.SetWindowRgn.restype = ctypes.c_int
+        region = gdi32.CreateRoundRectRgn(
+            0, 0, width + 1, height + 1,
+            physical_radius * 2, physical_radius * 2)
+        if not region:
+            logger.debug("CreateRoundRectRgn failed")
+            return False
+        # 成功时窗口系统接管 region，调用方不能再 DeleteObject。
+        if not user32.SetWindowRgn(hwnd, region, True):
+            gdi32.DeleteObject(region)
+            logger.debug("SetWindowRgn failed")
+            return False
+        return True
+    except Exception:
+        logger.debug("Failed to apply round window region", exc_info=True)
+        return False
+
+
 def apply_win11_round_corners(window: Any) -> None:
     """给无边框窗口套上 Win11 的 8px 圆角。
 
@@ -195,16 +249,16 @@ def apply_backdrop(
             return _apply_win10_acrylic(hwnd, effect, dark)
         if build >= _WIN11_22H2_BUILD:
             value = ctypes.c_int(_DWMSBT.get(effect, _DWMSBT["mica"]))
-            dwm.DwmSetWindowAttribute(
+            # 返回值是 HRESULT：DWM 被禁用 / 远程桌面时会失败，必须让调用方
+            # 知道材质没上，否则 QML 会按「已开启」把窗口画成全透明。
+            return dwm.DwmSetWindowAttribute(
                 hwnd, _DWMWA_SYSTEMBACKDROP_TYPE,
-                ctypes.byref(value), ctypes.sizeof(value))
-            return True
+                ctypes.byref(value), ctypes.sizeof(value)) == 0
         if build >= _WIN11_BUILD:
             enable = ctypes.c_int(1 if effect in ("auto", "mica") else 0)
-            dwm.DwmSetWindowAttribute(
+            return dwm.DwmSetWindowAttribute(
                 hwnd, _DWMWA_MICA_EFFECT,
-                ctypes.byref(enable), ctypes.sizeof(enable))
-            return True
+                ctypes.byref(enable), ctypes.sizeof(enable)) == 0
         return _apply_win10_acrylic(hwnd, effect, dark)
     except Exception:
         logger.exception("Failed to apply backdrop %r", effect)
@@ -225,8 +279,10 @@ def _apply_win10_acrylic(hwnd: int, effect: str, dark: bool) -> bool:
         data.Attrib = _WCA_ACCENT_POLICY
         data.pvData = ctypes.cast(ctypes.pointer(accent), ctypes.c_void_p)
         data.cbData = ctypes.sizeof(accent)
-        ctypes.windll.user32.SetWindowCompositionAttribute(hwnd, ctypes.byref(data))
-        return True
+        # 返回 0 表示失败（远程桌面 / 策略禁用 DWM 合成）。
+        return bool(
+            ctypes.windll.user32.SetWindowCompositionAttribute(
+                hwnd, ctypes.byref(data)))
     except Exception:
         logger.debug("Failed to apply Win10 acrylic", exc_info=True)
         return False

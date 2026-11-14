@@ -73,9 +73,11 @@
 ### 稳定性与架构
 
 - [ ] `config_manager.py` 继续拆分：配置归一化 / 动作 sanitize / watchdog 监听 /
-      QML facade 分家（第一批已把磁盘、备份、图标拆走，当前约 1990 行）
-- [ ] 配置 schema 校验：手改 `config.yaml` 出错时给可读提示（现在靠 sanitize 静默兜底）
-- [ ] `updater.py` 拆分：版本解析 / 下载 / 安装脚本生成（当前约 1075 行）
+      QML facade 分家（第一批已把磁盘、备份、图标拆走，当前约 2425 行）
+- [x] 配置 schema 校验：`autoBackupKeep` / `autoBackupIntervalDays` / 颜色 / 布尔
+      字段已做类型与范围兜底，坏 YAML 会保留 `.broken` 并尝试最近备份（1.2.2）
+- [ ] `updater.py` 拆分：版本解析 / 下载 / 安装脚本生成（当前约 1097 行，
+      `updater_release.py` 另 276 行）
 - [ ] autostart 后台回调在 QObject 销毁后仍尝试发信号（测试输出可见
       `Signal source has been deleted`）——回调查发前加防御，避免异常噪音
 

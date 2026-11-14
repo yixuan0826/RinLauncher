@@ -26,7 +26,32 @@ FluentWindowBase {
         }
     }
 
-    Component.onCompleted: applyAccentColor()
+    function applyThemeSetting() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var mode = String(ConfigManager.getSettings().theme || "system")
+        Theme.setTheme(mode === "light" ? Theme.mode.Light
+                      : mode === "dark" ? Theme.mode.Dark
+                      : Theme.mode.Auto)
+    }
+
+    property bool materialFallback: false
+
+    Rectangle {
+        objectName: "materialFallback"
+        parent: editorWindow.contentItem
+        anchors.fill: parent
+        z: -0.5
+        radius: Theme.currentTheme.appearance.windowRadius
+        color: Theme.currentTheme.colors.backgroundColor
+        visible: editorWindow.materialFallback
+    }
+
+    Component.onCompleted: {
+        applyAccentColor()
+        applyThemeSetting()
+    }
 
     // FluentWindowBase 的默认属性是 content（只收 Item），Connections 不能直接
     // 当子对象写；挂到属性上，信号一样能收到。
@@ -34,6 +59,7 @@ FluentWindowBase {
         target: ConfigManager
         function onAccentColorChanged() { applyAccentColor() }
         function onConfigChanged() { applyAccentColor() }
+        function onSettingsChanged() { applyThemeSetting() }
     }
 
     signal closeRequested()

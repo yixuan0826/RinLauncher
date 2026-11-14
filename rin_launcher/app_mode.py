@@ -23,6 +23,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rin_launcher import atomic
+
 logger = logging.getLogger(__name__)
 
 CONF_NAME = "appmodset.conf"
@@ -99,12 +101,13 @@ def parse(text: str) -> tuple[dict[str, Any], list[str]]:
 
 
 def _read_text(path: Path) -> str:
-    """UTF-8 读取并去掉 BOM。
+    """UTF-8 读取并去掉 BOM；坏字节用替换符兜住，绝不抛 UnicodeDecodeError。
 
     冻结包里 ``encoding="utf-8-sig"`` 会触发 ``LookupError``（1.1.6~1.1.8
-    踩过的坑），所以编码器固定用 utf-8，BOM 自己处理。
+    踩过的坑），所以编码器固定用 utf-8，BOM 自己处理。用户用 GBK 编辑器写
+    中文注释时会出现非法字节；这种文件仍要能读出其余键，程序不能启动即崩。
     """
-    return path.read_text(encoding="utf-8").lstrip("\ufeff")
+    return path.read_text(encoding="utf-8", errors="replace").lstrip("\ufeff")
 
 
 def _migrate_channel(root: Path, target: Path) -> None:
@@ -118,12 +121,9 @@ def _migrate_channel(root: Path, target: Path) -> None:
         logger.debug("无法读取 %s，跳过迁移", legacy, exc_info=True)
         return
     channel = "prerelease" if ("pre" in value or "-" in value) else "stable"
-    try:
-        target.write_text(
-            _TEMPLATE.replace("channel==stable", f"channel=={channel}", 1),
-            encoding="utf-8")
-    except OSError:
-        logger.debug("无法写入 %s，跳过迁移", target, exc_info=True)
+    if not atomic.atomic_write_text(
+            target, _TEMPLATE.replace("channel==stable", f"channel=={channel}", 1)):
+        logger.debug("无法写入 %s，跳过迁移", target)
 
 
 def load(root: Path | None = None) -> tuple[dict[str, Any], list[str], Path]:
@@ -132,9 +132,7 @@ def load(root: Path | None = None) -> tuple[dict[str, Any], list[str], Path]:
     path = base / CONF_NAME
     _migrate_channel(base, path)
     if not path.is_file():
-        try:
-            path.write_text(_TEMPLATE, encoding="utf-8")
-        except OSError:
+        if not atomic.atomic_write_text(path, _TEMPLATE):
             logger.warning("%s 写不出来，将只在内存里使用默认值", path)
         return dict(DEFAULTS), [], path
     try:
@@ -142,7 +140,10 @@ def load(root: Path | None = None) -> tuple[dict[str, Any], list[str], Path]:
     except OSError:
         logger.warning("无法读取 %s，使用默认启动配置", path, exc_info=True)
         return dict(DEFAULTS), ["配置文件读取失败"], path
-    return (*parse(text), path)
+    values, problems = parse(text)
+    if "\ufffd" in text:
+        problems.append("配置文件包含无法解码的字节（已按替换字符处理）")
+    return values, problems, path
 
 
 def update(root: Path | None, updates: dict[str, Any]) -> bool:
@@ -178,10 +179,8 @@ def update(root: Path | None, updates: dict[str, Any]) -> bool:
             continue
         text = ("true" if value else "false") if isinstance(value, bool) else str(value)
         lines.append(f"{key}=={text}")
-    try:
-        path.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")
-    except OSError:
-        logger.warning("无法写入 %s", path, exc_info=True)
+    if not atomic.atomic_write_text(path, "\n".join(lines).rstrip() + "\n"):
+        logger.warning("无法写入 %s", path)
         return False
     return True
 

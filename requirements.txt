@@ -21,6 +21,9 @@ winrt-Windows.Networking.Connectivity>=4.1.0; sys_platform == "win32"
 winrt-Windows.Networking.NetworkOperators>=4.1.0; sys_platform == "win32"
 # WinRT 流对象：Connectivity 与 Toast 的投影都靠它，必须显式声明。
 winrt-Windows.Storage.Streams>=4.1.0; sys_platform == "win32"
+# 系统强调色（UISettings / UIColorType.Accent）需要 UI + ViewManagement
+winrt-Windows.UI>=4.1.0; sys_platform == "win32"
+winrt-Windows.UI.ViewManagement>=4.1.0; sys_platform == "win32"
 # Windows 原生 Toast
 winrt-Windows.Data.Xml.Dom>=4.1.0; sys_platform == "win32"
 winrt-Windows.UI.Notifications>=4.1.0; sys_platform == "win32"

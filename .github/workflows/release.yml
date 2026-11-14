@@ -61,6 +61,13 @@ jobs:
           Stop-Process -Id $proc.Id -Force
           Write-Host "Frozen recovery smoke test OK"
 
+          # 正常模式也要能把小窗、托盘、热键这条完整启动链跑起来。
+          $proc = Start-Process -FilePath $exe -PassThru
+          Start-Sleep -Seconds 8
+          if ($proc.HasExited) { throw "frozen exe exited during normal smoke test" }
+          Stop-Process -Id $proc.Id -Force
+          Write-Host "Frozen normal smoke test OK"
+
       # 冒烟启动会在 dist 里生成 data/ 与 appmodset.conf：发布包不能带这两样，
       # 否则覆盖安装会用 first-run==true 的模板盖掉用户已有的启动配置。
       - name: Clean runtime files
@@ -68,9 +75,21 @@ jobs:
         run: |
           Remove-Item dist/RinLauncher/data -Recurse -Force -ErrorAction SilentlyContinue
           Remove-Item dist/RinLauncher/appmodset.conf -Force -ErrorAction SilentlyContinue
+          Remove-Item dist/RinLauncher/updates -Recurse -Force -ErrorAction SilentlyContinue
+          Remove-Item dist/RinLauncher/backup-* -Recurse -Force -ErrorAction SilentlyContinue
           if (Test-Path dist/RinLauncher/data) { throw "runtime data still in payload" }
           if (Test-Path dist/RinLauncher/appmodset.conf) { throw "appmodset.conf still in payload" }
+          Copy-Item scripts/repair.ps1 dist/RinLauncher/repair.ps1 -Force
           Write-Host "Runtime files cleaned"
+
+      - name: Build install manifest
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}" -replace '^v', ''
+          python scripts/build_manifest.py dist/RinLauncher --version $version
+          python scripts/build_manifest.py dist/RinLauncher --check
+          if (-not (Test-Path dist/RinLauncher/install-manifest.json)) { throw "manifest missing" }
+          if (-not (Test-Path dist/RinLauncher/repair.ps1)) { throw "repair.ps1 missing" }
 
       - name: Upgrade dry-run (cover install)
         shell: pwsh

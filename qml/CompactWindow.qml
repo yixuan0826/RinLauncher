@@ -89,6 +89,16 @@ Window {
         }
     }
 
+    function applyThemeSetting() {
+        if (typeof ConfigManager === "undefined" || !ConfigManager) {
+            return
+        }
+        var mode = String(ConfigManager.getSettings().theme || "system")
+        Theme.setTheme(mode === "light" ? Theme.mode.Light
+                      : mode === "dark" ? Theme.mode.Dark
+                      : Theme.mode.Auto)
+    }
+
     // ── 状态 ──
     property var panelSlots: []
     property var storageSlots: []
@@ -367,6 +377,7 @@ Window {
         reload()
         applyAnimationSetting()
         applyAccentColor()
+        applyThemeSetting()
         applyTileSize()
         snapToCorner()
     }
@@ -384,6 +395,7 @@ Window {
             compact.applyAnimationSetting()
             compact.applyTileSize()
             compact.applyWindowSettings()
+            compact.applyThemeSetting()
         }
 
         // 强调色 / 整份配置变化：每个窗口是独立 QML 引擎，都要各自更新。
@@ -410,10 +422,14 @@ Window {
 
     // 老数组和新数组的「可显示信息」一致时就不重建格子，避免每 2.5 秒闪烁。
     function slotSignature(slots) {
+        // free / percent 必须进签名：U 盘和 path 磁盘卡的容量文字直接绑定
+        // 这两个字段，只比较名称/路径会让它们停在插上时的旧值。
         return slots.map(function (slot) {
             return [slot.kind, slot.name, slot.path, slot.icon,
                     slot.enabled === false ? 0 : 1,
-                    slot.available === false ? 0 : 1].join("|")
+                    slot.available === false ? 0 : 1,
+                    slot.free || "", slot.total || "",
+                    slot.percent || 0].join("|")
         }).sort().join("\n")
     }
 

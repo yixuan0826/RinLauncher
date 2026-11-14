@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -57,6 +58,15 @@ def _backup_path(data_dir: Path) -> Path:
     return data_dir / BACKUP_NAME
 
 
+def _is_our_icon(value: str | None, data_dir: Path) -> bool:
+    """注册表值是不是本程序写的空白 ICO（而不是别的工具的自定义箭头）。"""
+    if not value:
+        return False
+    expected = data_dir / "shortcut-arrow-blank.ico"
+    return os.path.normcase(os.path.abspath(value)) == os.path.normcase(
+        os.path.abspath(str(expected)))
+
+
 def _read_value() -> str | None:
     if sys.platform != "win32":
         return None
@@ -83,11 +93,13 @@ def set_hidden(hidden: bool, *, data_dir: Path) -> dict[str, Any]:
     backup = _backup_path(base)
     previous = _read_value()
     if hidden:
-        if previous:
+        if _is_our_icon(previous, base):
             return {"ok": True, "changed": False,
                     "message": "快捷方式小箭头已经是隐藏状态"}
+        # 第一次修改前无条件备份原值：即使原值是别的工具设的自定义箭头，
+        # 之后关闭开关时也能原样还回去，而不是直接删掉。
         try:
-            backup.write_text(json.dumps({"value": None}), encoding="utf-8")
+            backup.write_text(json.dumps({"value": previous}), encoding="utf-8")
         except OSError:
             logger.debug("无法写入箭头备份", exc_info=True)
         icon = _blank_icon(base)
@@ -103,6 +115,10 @@ def set_hidden(hidden: bool, *, data_dir: Path) -> dict[str, Any]:
 
     if not previous:
         return {"ok": True, "changed": False, "message": "快捷方式小箭头本来就是系统默认"}
+    if not _is_our_icon(previous, base):
+        # 不是我们写的值：可能是其它工具的自定义箭头。没有备份就不要删。
+        return {"ok": True, "changed": False,
+                "message": "检测到其它工具设置的快捷方式箭头，未改动"}
     restore = None
     if backup.is_file():
         try:

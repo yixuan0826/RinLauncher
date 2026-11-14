@@ -27,11 +27,28 @@ from pathlib import Path
 ROOT = Path(SPECPATH)
 ICON = ROOT / "assets" / "icon.ico"
 
-# RinUI 从 1.3 起不再是内联目录，QML / 字体 / 主题还在 wheel 里，
+# RinUI 从 1.2.1 起不再是内联目录，QML / 字体 / 主题还在 wheel 里，
 # 构建时按包内实际路径收集（见 _rinui_data_files）。
 _rinui_spec = find_spec("RinUI")
 RINUI_DIR = (Path(_rinui_spec.origin).resolve().parent
              if _rinui_spec is not None and _rinui_spec.origin else None)
+
+# WinRT 投影包把类型表放在 .pywinrt 数据文件里（不是 import 进来的），
+# PyInstaller 不会自动收集；漏掉会在运行时抛「could not read its projection
+# table」。所有 winrt 子包一起带上，体积很小。
+_winrt_spec = find_spec("winrt")
+WINRT_DIR = (Path(next(iter(_winrt_spec.submodule_search_locations)))
+             if _winrt_spec is not None and _winrt_spec.submodule_search_locations
+             else None)
+
+
+def _winrt_data_files():
+    if WINRT_DIR is None:
+        return []
+    return [
+        (str(path), str(Path("winrt") / path.relative_to(WINRT_DIR).parent))
+        for path in WINRT_DIR.rglob("*.pywinrt")
+    ]
 
 # 用不到的模块：整包剔掉。Qt 侧只用 Core / Gui / Widgets / Qml / Quick /
 # QuickControls2 / Svg（RinUI 的 Lawnicons 渲染需要 Svg；Qt5Compat 被 RinUI
@@ -175,6 +192,8 @@ a = Analysis(
         (str(ROOT / "qml"), "qml"),
         # RinUI 由 pip 提供，逐个文件展开（跳过 __pycache__）。
         *_rinui_data_files(),
+        # WinRT 的投影表（.pywinrt）必须作为数据文件带上。
+        *_winrt_data_files(),
         # QML 里用相对路径引用 Lawnicons，图标与 icon.ico 都在 assets 下。
         (str(ROOT / "assets"), "assets"),
     ],
@@ -195,6 +214,9 @@ a = Analysis(
         "winrt.windows.foundation.collections",
         "winrt.windows.networking.connectivity",
         "winrt.windows.networking.networkoperators",
+        # 系统强调色（UISettings / UIColorType.Accent）。
+        "winrt.windows.ui",
+        "winrt.windows.ui.viewmanagement",
         # Windows 原生通知（rin_launcher/toast.py）。
         "winrt.windows.data.xml.dom",
         "winrt.windows.ui.notifications",
@@ -222,6 +244,8 @@ a.datas = _drop_qt_datas(a.datas)
 REQUIRED_MODULES = (
     "pypinyin",
     "winrt.windows.data.xml.dom",
+    "winrt.windows.ui",
+    "winrt.windows.ui.viewmanagement",
     "winrt.windows.ui.notifications",
     "winrt.windows.storage.streams",
 )

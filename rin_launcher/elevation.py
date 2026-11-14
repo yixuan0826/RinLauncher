@@ -136,7 +136,10 @@ def set_run_on_startup(enable: bool) -> bool:
 
     import winreg
 
-    command = sys.executable if getattr(sys, "frozen", False) else _quote([sys.executable, sys.argv[0]])
+    # 冻结包的 exe 路径可能含空格（Program Files / 中文目录）：Run 值里必须
+    # 带引号，否则 Windows 会把路径截成第一个空格。
+    command = (f'"{sys.executable}"' if getattr(sys, "frozen", False)
+               else _quote([sys.executable, sys.argv[0]]))
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:
             if enable:
