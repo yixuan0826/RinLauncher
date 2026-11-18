@@ -240,19 +240,14 @@ ColumnLayout {
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_edit_20_regular"
-                    // U 盘入口是固定功能，没有可编辑的东西。
-                    tip: modelData.kind === "usb"
-                        ? qsTr("U 盘入口不可编辑") : qsTr("编辑这一格")
+                    tip: qsTr("编辑这一格")
                     visible: !list.locked
-                    enabled: modelData.kind !== "usb"
                     onClicked: list.editRequested(index)
                 }
                 MiniIconButton {
                     iconName: "ic_fluent_delete_20_regular"
-                    tip: modelData.kind === "usb"
-                        ? qsTr("U 盘入口不可删除") : qsTr("移除这一格")
+                    tip: qsTr("移除这一格")
                     visible: !list.locked
-                    enabled: modelData.kind !== "usb"
                     danger: true
                     onClicked: list.removeRequested(index)
                 }
@@ -268,11 +263,6 @@ ColumnLayout {
     function describe(slot) {
         if (!slot) {
             return ""
-        }
-        if (slot.kind === "usb") {
-            return slot.available
-                ? qsTr("%1 · 剩余 %2").arg(slot.name || "U 盘").arg(slot.free || "?")
-                : qsTr("当前没有检测到")
         }
         if (slot.kind === "path") {
             var typeLabel = slot.pathType === "file" ? qsTr("文件位置") : qsTr("磁盘")

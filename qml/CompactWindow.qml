@@ -310,6 +310,7 @@ Window {
                 Layout.fillWidth: true
                 storage: compact.storage
                 slots: compact.storageSlots
+                usbDevices: compact.usbDevices
                 onStorageActivated: compact.openStorage()
                 onSlotActivated: compact.runSlot(slot)
             }

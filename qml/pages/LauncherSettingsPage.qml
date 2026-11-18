@@ -276,7 +276,8 @@ Item {
 
                     SlotListEditor {
                         objectName: "storageSlotList"
-                        // 存储行两张卡片钉死：不能增、删、移；路径由上面的输入框改。
+                        // 存储行固定卡片（存储位置 + U 盘）不占槽位；这里只兜底
+                        // 老配置遗留的 path 入口，不能增删移。
                         locked: true
                         slots: launcherSettings.storageSlots
                         emptyHint: qsTr("还没有磁盘入口。")

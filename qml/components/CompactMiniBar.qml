@@ -165,7 +165,7 @@ Item {
                         color: Theme.currentTheme.colors.textSecondaryColor
                         text: root.usbDevices.length > 0
                             ? String(root.usbDevices[0].free || "?")
-                            : qsTr("未插入")
+                            : qsTr("没有检测到")
                     }
                 }
             }

@@ -3,7 +3,7 @@ import QtQuick.Controls 2.15
 import QtQuick.Layouts 2.15
 import RinUI
 
-// 小窗第三行：存储位置卡 + 磁盘 / U 盘槽位卡。
+// 小窗第三行：存储位置卡 + 固定的 U 盘卡 + 老配置遗留的磁盘路径卡。
 //
 // 卡片宽度「单卡铺开、多卡等宽、再多就横向滚动」；盒子固定 72 高（卡 66），
 // 与底部的系统控制条同一节奏。数据由 CompactWindow 在 reload / refreshLive 里喂。
@@ -16,8 +16,10 @@ Item {
 
     // 存储位置（getStorageInfo / refreshStorageInfo 的返回值）。
     property var storage: ({})
-    // 存储行槽位（row === 1）：U 盘、固定的硬盘。
+    // 存储行槽位（row === 1）：老配置遗留的 path 入口。
     property var slots: []
+    // 可移动磁盘（getRemovableDevices 的返回值）：固定卡片，不来自槽位配置。
+    property var usbDevices: []
 
     signal storageActivated()
     signal slotActivated(var slot)
@@ -25,23 +27,16 @@ Item {
     implicitHeight: 72
     readonly property int cardHeight: 66
 
-    // 单卡铺开，两张平分，再多就固定宽度横向滚动。
-    // 之前统一 202，两张卡（存储 + 一个磁盘）就会顶出可视区、还剩半截在滚动里。
+    // 至少两张卡（存储 + U 盘），超过两张就等宽压缩，再多横向滚动。
+    // 之前统一 202，两张卡就会顶出可视区、还剩半截在滚动里。
     readonly property real cardWidth: {
-        var count = 1 + root.slots.length
-        if (count <= 1) {
-            return Math.min(320, scroller.width)
-        }
+        var count = 2 + root.slots.length
         return Math.max(160, Math.min(202,
             (scroller.width - (count - 1) * 8) / count))
     }
 
     function slotDetail(slot) {
         if (!slot) return ""
-        if (slot.kind === "usb") {
-            if (slot.exists === false) return qsTr("没有检测到")
-            return qsTr("剩余 %1").arg(slot.free || "?")
-        }
         if (slot.kind === "path" && slot.pathType === "file") {
             return slot.exists === false ? qsTr("文件不可用") : String(slot.path || "")
         }
@@ -155,7 +150,108 @@ Item {
                     : String(root.storage.path || "")
             }
 
-            // 磁盘槽位：U 盘与「指定的硬盘」是各自独立的两格。
+            // U 盘卡片：内置功能，固定跟在存储卡后面。不占槽位、不可增删改，
+            // 没插盘时留一张灰卡，位置和顺序都不变。
+            Frame {
+                id: usbCard
+                objectName: "storageUsbCard"
+
+                readonly property var device: root.usbDevices.length > 0
+                    ? root.usbDevices[0] : null
+                readonly property int percent: device
+                    ? Math.round(Number(device.percent || 0)) : 0
+
+                width: root.cardWidth
+                height: root.cardHeight
+                padding: 0
+                radius: Theme.currentTheme.appearance.windowRadius
+                border.width: 0
+                opacity: device ? 1 : 0.55
+
+                MouseArea {
+                    anchors.fill: parent
+                    hoverEnabled: true
+                    enabled: usbCard.device !== null
+                    cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
+                    onClicked: ConfigManager.openRemovableDrive()
+                }
+
+                RowLayout {
+                    anchors.fill: parent
+                    anchors.leftMargin: 12
+                    anchors.rightMargin: 12
+                    spacing: 10
+
+                    AppIcon {
+                        Layout.alignment: Qt.AlignVCenter
+                        iconKey: "ic_fluent_usb_plug_20_regular"
+                        iconSize: 24
+                        tint: usbCard.device
+                            ? Theme.currentTheme.colors.textColor
+                            : Theme.currentTheme.colors.textSecondaryColor
+                    }
+
+                    ColumnLayout {
+                        Layout.fillWidth: true
+                        Layout.alignment: Qt.AlignVCenter
+                        spacing: 2
+
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideRight
+                            font.pixelSize: Theme.currentTheme.typography.bodyStrongSize
+                            font.weight: Font.DemiBold
+                            color: Theme.currentTheme.colors.textColor
+                            text: usbCard.device
+                                ? (usbCard.device.name || qsTr("U 盘"))
+                                : qsTr("U 盘")
+                        }
+                        Text {
+                            Layout.fillWidth: true
+                            elide: Text.ElideMiddle
+                            font.pixelSize: Theme.currentTheme.typography.captionSize
+                            color: Theme.currentTheme.colors.textSecondaryColor
+                            text: usbCard.device
+                                ? qsTr("剩余 %1").arg(usbCard.device.free || "?")
+                                : qsTr("没有检测到")
+                        }
+
+                        Rectangle {
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 4
+                            radius: 2
+                            visible: usbCard.device !== null && usbCard.percent > 0
+                            color: Theme.currentTheme.colors.controlSecondaryColor
+
+                            Rectangle {
+                                height: parent.height
+                                radius: parent.radius
+                                width: parent.width
+                                    * Math.min(100, Math.max(0, usbCard.percent)) / 100
+                                color: Theme.currentTheme.colors.primaryColor
+
+                                Behavior on width {
+                                    NumberAnimation {
+                                        duration: 260
+                                        easing.type: Easing.OutCubic
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                ToolTip.text: usbCard.device
+                    ? qsTr("%1\n剩余 %2 / 共 %3 · %4 个分区")
+                        .arg(usbCard.device.name || qsTr("U 盘"))
+                        .arg(usbCard.device.free || "?")
+                        .arg(usbCard.device.total || "?")
+                        .arg(usbCard.device.partitions
+                            ? usbCard.device.partitions.length : 1)
+                    : qsTr("没有检测到 U 盘")
+            }
+
+            // 磁盘槽位：老配置遗留的 path 入口；U 盘由上面的固定卡片承接。
             Repeater {
                 model: root.slots
 

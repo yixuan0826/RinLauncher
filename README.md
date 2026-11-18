@@ -4,7 +4,7 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.2**（开发代号 **Hoshimi Miyabi**），
+即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.3**（开发代号 **Hoshimi Miyabi**），
 属于 1.2.x 维护线（RinUI 0.5.0 / PySide6 6.12 / 稳定性与兼容性修复），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
@@ -15,7 +15,7 @@
 | --- | --- |
 | 🪟 **常驻小窗** | 云母桌面挂件，Win11 圆角（RinUI `windowRadius`，当前 7px），固定右下角、沉底、不抢焦点；Win10 用 `SetWindowRgn` 裁剪同样的圆角 |
 | 🧩 **槽位** | 2 × 5 双行面板（最多 10 格）+ 存储区；每格可设文件 / 命令 / 网址 / 按键 / UWP |
-| 💽 **存储卡片** | 固定到文件夹或整块磁盘；磁盘显示卷标，U 盘槽位自动检测 |
+| 💽 **存储卡片** | 固定到文件夹或整块磁盘；磁盘显示卷标，U 盘是固定的内置卡片并自动检测 |
 | 🎛 **系统控制** | 音量、Wi-Fi、移动热点；状态每 2 秒与系统同步 |
 | 🚀 **开始菜单导入** | 普通 / UWP / WSA / WSL 合并列表；UWP 读包清单、WSA 读快捷方式图标 |
 | ⚡ **冷启动** | winrt / pycaw / watchdog 延迟导入，托盘与热键让首帧先出现 |
@@ -107,7 +107,6 @@ launcher:
   slots:
     - {kind: action, row: 0, label: 记事本, action: {type: file, target: notepad.exe}}
     - {kind: tool, row: 0, key: configFolder}
-    - {kind: usb, row: 1, label: U 盘}
     - {kind: path, row: 1, label: D 盘, path: "D:\\"}
   storagePath: ""          # 空 = 用户主目录；盘根会显示卷标，文件夹显示目录名
 settings:
@@ -122,8 +121,9 @@ settings:
   updateMirrorAuto: true   # 测速后自动选择最快镜像
 ```
 
-槽位 `kind`：`action`（完整动作）/ `tool`（内置功能）/ `path`（路径）/ `usb`（自动检测）；
-`row` 0 = 面板，1 = 存储区。内置功能 key：`launcherPage` `settings` `configFolder`
+槽位 `kind`：`action`（完整动作）/ `tool`（内置功能）/ `path`（路径）；
+`row` 0 = 面板，1 = 存储区。U 盘卡片固定显示在存储区，不占槽位、不可增删改。
+内置功能 key：`launcherPage` `settings` `configFolder`
 `configFile` `reload` `elevate` `hide` `quit`。旧版 `apps` / `tools` / `keymouse` 配置会在读取时自动迁移。
 
 ---
@@ -175,6 +175,9 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.2.3**（Hoshimi Miyabi，1.2.x 维护线）：U 盘入口恢复为固定的内置卡片，
+  固定在存储区第二张，不占配置槽位、不可增删改；老配置里的 `kind: usb` 槽位
+  读取时自动丢弃。测试增至 185 项。详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.2.2**（Hoshimi Miyabi，1.2.x 维护线）：Win10 设置 / 编辑 / OOBE / 恢复窗口
   不再全透明，启动台用 `SetWindowRgn` 裁剪圆角并在失败时回退不透明；系统强调色
   改用 `UISettings` 首选并保留灰阶；`config.yaml` / `appmodset.conf` / `rin_ui.json`

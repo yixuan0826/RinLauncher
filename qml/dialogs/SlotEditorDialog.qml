@@ -231,7 +231,7 @@ AppDialog {
         {"kind": "tool", "title": qsTr("内置功能"), "icon": "ic_fluent_wrench_20_regular",
          "hint": qsTr("设置、重载、隐藏等内置功能")},
         {"kind": "path", "title": qsTr("固定位置"), "icon": "ic_fluent_pin_20_regular",
-         "hint": qsTr("磁盘或文件位置；U 盘由迷你模式自动提供")}
+         "hint": qsTr("磁盘或文件位置；U 盘是固定的内置卡片")}
     ]
 
     readonly property string kindTitle: {

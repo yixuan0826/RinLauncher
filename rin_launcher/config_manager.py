@@ -96,9 +96,10 @@ CONFIG_VERSION = 3
 SLOT_ACTION = "action"   # 一格完整的动作（程序 / 命令 / 网址 / 按键）
 SLOT_TOOL = "tool"       # 内置功能
 SLOT_PATH = "path"       # 打开任意文件 / 文件夹 / 磁盘
-SLOT_USB = "usb"         # 自动检测的可移动磁盘
+# U 盘不占槽位：小窗存储区固定画一张卡（见 CompactStorageRow.qml），
+# 不可增删改。老配置里的 `kind: usb` 读入时直接丢掉。
 
-SLOT_KINDS: tuple = (SLOT_ACTION, SLOT_TOOL, SLOT_PATH, SLOT_USB)
+SLOT_KINDS: tuple = (SLOT_ACTION, SLOT_TOOL, SLOT_PATH)
 
 # 内置功能。(key, 标题, Fluent 图标名)
 TOOL_CATALOG: tuple = (
@@ -119,7 +120,6 @@ SLOT_KIND_LABELS: dict[str, str] = {
     SLOT_ACTION: "动作",
     SLOT_TOOL: "内置功能",
     SLOT_PATH: "打开路径",
-    SLOT_USB: "可移动磁盘（自动检测）",
 }
 
 # 槽位不再引用任何外部条目：动作直接写在槽位里（内联）。
@@ -587,7 +587,7 @@ class ConfigManager(QObject):
         （第一行的内容排前面），第三行变成存储区。
         """
         # 空列表也是「新格式」：首次运行 deliberately 生成空启动台，不能被
-        # 当成旧格式又塞回一张 U 盘卡（重启后槽位会自己长出来）。
+        # 当成旧格式又塞回内置条目（重启后槽位会自己长出来）。
         if isinstance(raw.get("slots"), list):
             items = list(raw["slots"])
             if legacy_rows:
@@ -616,8 +616,6 @@ class ConfigManager(QObject):
         for key in raw.get("tools") or []:
             if key in TOOL_ICONS:
                 migrated.append(_new_slot(SLOT_TOOL, ROW_PANEL, key=str(key)))
-        # 老配置里那个「U 盘」按钮变成独立的 usb 槽位。
-        migrated.append(_new_slot(SLOT_USB, ROW_STORAGE, label="U 盘"))
         if not migrated:
             return _default_slots()
         return migrated
@@ -1057,21 +1055,6 @@ class ConfigManager(QObject):
                 free=free_text,
                 percent=percent,
             )
-        elif kind == SLOT_USB:
-            device = self._removable_devices()
-            first = device[0] if device else {}
-            resolved.update(
-                name=override_label or str(first.get("name") or "U 盘"),
-                icon=override_icon or "ic_fluent_usb_plug_20_regular",
-                path=str(first.get("path") or ""),
-                paths=list(first.get("paths") or []),
-                partitions=list(first.get("partitions") or []),
-                total=str(first.get("total") or ""),
-                free=str(first.get("free") or ""),
-                percent=int(first.get("percent") or 0),
-                exists=bool(first),
-                available=bool(first),
-            )
         if resolved.get("inlineAction"):
             resolved["kindLabel"] = "动作"
         else:
@@ -1366,8 +1349,7 @@ class ConfigManager(QObject):
         """在面板末尾追加一格（或给存储区加一个入口）。面板满时拒绝并提示。"""
         slot = dict(slot)
         kind = str(slot.get("kind") or SLOT_ACTION)
-        if kind not in SLOT_KINDS or kind == SLOT_USB:
-            # U 盘入口由迷你模式的快捷开关自动提供，不再允许手动新增。
+        if kind not in SLOT_KINDS:
             return False
         row = ROW_PANEL if int(row) <= ROW_PANEL else ROW_STORAGE
         if row == ROW_STORAGE:
@@ -1393,12 +1375,8 @@ class ConfigManager(QObject):
             # 存储行只允许通过 setLauncherStoragePath 改路径，卡片本身不动。
             return False
         slot = dict(slot)
-        # 已经存在的 U 盘槽位保持只读：允许删除，但不能改成别的类型，
-        # 也不能把别的格子改成 U 盘。
-        if target.get("kind") == SLOT_USB:
-            return False
         kind = str(slot.get("kind") or target.get("kind") or SLOT_ACTION)
-        if kind not in SLOT_KINDS or kind == SLOT_USB:
+        if kind not in SLOT_KINDS:
             return False
         updated = self._build_slot(kind, int(target.get("row", 0)), slot)
         if updated is None:
@@ -2295,7 +2273,7 @@ class ConfigManager(QObject):
         """执行小窗上的一个槽位。
 
         ``tool`` 类槽位牵扯窗口操作，由 QML 自己处理；这里只管能把活儿干完的
-        ``action`` / ``path`` / ``usb``。
+        ``action`` / ``path``。
         """
         kind = str(slot.get("kind") or "")
         if kind == SLOT_ACTION:
@@ -2311,8 +2289,6 @@ class ConfigManager(QObject):
             payload["name"] = str(slot.get("name") or "")
             self.executeAction(payload)
             return True
-        if kind == SLOT_USB:
-            return self.openRemovableDrive()
         if kind == SLOT_PATH:
             return self.openSlot(str(slot.get("path") or ""))
         return False

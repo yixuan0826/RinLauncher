@@ -51,6 +51,56 @@ def test_default_config_has_no_quick_action_library():
     assert "compactAcrylic" not in config["settings"]
 
 
+def test_usb_card_is_not_a_config_slot(qapp, tmp_path):
+    """U 盘是固定的内置卡片：配置里不许有 usb 槽位，读进来直接丢掉。"""
+    import yaml
+
+    import rin_launcher.config_manager as cm
+
+    assert "usb" not in cm.SLOT_KINDS
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({
+            "version": cm.CONFIG_VERSION,
+            "launcher": {
+                "slots": [
+                    {"kind": "usb", "row": 1, "label": "U 盘"},
+                    {"kind": "path", "row": 1, "path": str(tmp_path),
+                     "pathType": "disk"},
+                ],
+                "storagePath": "",
+            },
+        }, allow_unicode=True, sort_keys=False),
+        encoding="utf-8")
+
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    try:
+        kinds = [slot["kind"] for slot in manager.getLauncherSlots()]
+        assert kinds == ["path"]
+    finally:
+        manager.stopWatching()
+
+
+def test_legacy_tools_migration_does_not_add_usb(qapp, tmp_path):
+    """老格式迁移只翻出内置功能，不再补一张 U 盘槽位。"""
+    import yaml
+
+    import rin_launcher.config_manager as cm
+
+    (tmp_path / "config.yaml").write_text(
+        yaml.safe_dump({
+            "version": 2,
+            "launcher": {"apps": [], "tools": ["settings"]},
+        }, allow_unicode=True, sort_keys=False),
+        encoding="utf-8")
+
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    try:
+        kinds = [slot["kind"] for slot in manager.getLauncherSlots()]
+        assert kinds == ["tool"]
+    finally:
+        manager.stopWatching()
+
+
 def test_accent_color_is_persisted_and_signalled(qapp, tmp_path):
     """强调色以 config.yaml 为准：重启后仍能读回，变化时通知所有窗口。"""
     from rin_launcher.config_manager import ConfigManager
