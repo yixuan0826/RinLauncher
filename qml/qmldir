@@ -4,3 +4,7 @@ module RinLauncher
 CompactWindow 1.0 CompactWindow.qml
 LauncherEditorWindow 1.0 LauncherEditorWindow.qml
 SettingsWindow 1.0 SettingsWindow.qml
+
+# OobeWindow.qml / RecoveryWindow.qml 是特殊入口，由 main.py 以文件路径直接
+# 加载（OOBE_ENTRY / RECOVERY_ENTRY），不通过本模块注册，故不登记在这里。
+

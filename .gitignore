@@ -7,11 +7,19 @@ dist/
 .venv/
 .venv*/
 venv/
+.mypy_cache/
 .ruff_cache/
 .pytest_cache/
 
 # PyInstaller
 *.manifest
 
-# Runtime
-launcher.log
+# Runtime（appmodset.conf 由 app_mode.load() 首次启动时生成，不随仓库分发）
+*.log
+appmodset.conf
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
