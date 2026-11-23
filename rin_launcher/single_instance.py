@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 import os
+import time
 
-from PySide6.QtCore import QObject, QSharedMemory, Signal
+from PySide6.QtCore import QCoreApplication, QObject, QSharedMemory, Signal
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = logging.getLogger(__name__)
@@ -37,23 +38,41 @@ def acquire_single_instance() -> QSharedMemory | None:
     return None
 
 
-def notify_running_instance(timeout_ms: int = 800) -> bool:
-    """给已在运行的实例发一条「亮出小窗」的消息；连不上返回 False。"""
+_COMMANDS = ("show", "quit")
+
+
+def notify_running_instance(command: str = "show", timeout_ms: int = 800) -> bool:
+    """给已在运行的实例发一条命令；没有实例或连不上时返回 False。
+
+    ``show`` 亮出小窗，``quit`` 要求主实例正常退出（安装 / 升级 / 卸载前用）。
+    命令只认这两个值，避免把任意文本塞进主进程。
+    """
+    command = str(command or "").strip().lower()
+    if command not in _COMMANDS:
+        raise ValueError(f"unsupported single-instance command: {command!r}")
     socket = QLocalSocket()
     socket.connectToServer(SERVICE_NAME)
     if not socket.waitForConnected(timeout_ms):
         return False
-    socket.write(b"show\n")
+    socket.write(command.encode("ascii") + b"\n")
     socket.flush()
-    socket.waitForBytesWritten(timeout_ms)
+    # QLocalSocket 在 Windows 上把数据交给命名管道前仍需要一个事件循环节拍：
+    # 只调 waitForBytesWritten() 时它可能一直报 false，随后的 disconnect 会把
+    # 缓冲里的命令一起丢掉。这里小步泵事件，最多等到 timeout_ms。
+    deadline = time.monotonic() + timeout_ms / 1000.0
+    while socket.bytesToWrite() > 0 and time.monotonic() < deadline:
+        socket.waitForBytesWritten(50)
+        QCoreApplication.processEvents()
+    written = socket.bytesToWrite() == 0
     socket.disconnectFromServer()
-    return True
+    return written
 
 
 class SingleInstanceServer(QObject):
-    """主实例里的消息服务端：收到 ``show`` 就发 ``showRequested``。"""
+    """主实例里的消息服务端：收到 ``show`` / ``quit`` 就发对应信号。"""
 
     showRequested = Signal()
+    quitRequested = Signal()
 
     def __init__(self, parent: QObject | None = None) -> None:
         super().__init__(parent)
@@ -69,11 +88,22 @@ class SingleInstanceServer(QObject):
         if socket is None:
             return
         socket.readyRead.connect(lambda s=socket: self._read(s))
+        # 第二个进程发完命令就断开；短命连接有时来不及触发 readyRead，
+        # 在 disconnected 时再读一次，避免 show / quit 被吞掉。
+        socket.disconnected.connect(lambda s=socket: self._read(s))
         socket.disconnected.connect(socket.deleteLater)
         # 连接建立时数据一般已经到了，先读一次；没到就等 readyRead。
         self._read(socket)
 
     def _read(self, socket: QLocalSocket) -> None:
-        payload = bytes(socket.readAll()).decode("utf-8", "replace").strip()
-        if "show" in payload:
+        try:
+            payload = bytes(socket.readAll()).decode("utf-8", "replace").strip()
+        except RuntimeError:
+            # disconnected 与 deleteLater 的先后顺序不保证；对象已销毁时忽略。
+            return
+        commands = {line.strip().lower() for line in payload.splitlines()}
+        # quit 优先：同一批数据里既要求退出又要求显示时，退出不能被 show 吃掉。
+        if "quit" in commands:
+            self.quitRequested.emit()
+        elif "show" in commands:
             self.showRequested.emit()

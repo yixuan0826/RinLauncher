@@ -1,0 +1,6 @@
+# 打包工具链：运行时依赖在 requirements.txt，这里只固定发布构建。
+# Nuitka 4.3.5 与本地 .venv-nuitka 对齐；升级时同步 scripts/build_nuitka.py 的
+# 参数并重跑 zip 体积 / 冷启动冒烟。
+nuitka==4.3.5
+ordered-set==4.1.0
+zstandard==0.25.0

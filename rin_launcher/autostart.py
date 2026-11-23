@@ -18,6 +18,8 @@ import threading
 import time
 from pathlib import Path
 
+from rin_launcher import runtime
+
 logger = logging.getLogger(__name__)
 
 #: 任务计划里那条目的名称（任务计划程序里看到的就是它）。
@@ -89,7 +91,7 @@ def refresh_task_exists_async(on_done=None) -> None:
 
 def _app_command() -> str:
     """写进任务的启动命令：打包后是 exe 自身，源码运行时用 pythonw + 入口脚本。"""
-    if getattr(sys, "frozen", False):
+    if runtime.is_frozen():
         # schtasks /TR 的路径含空格时必须整体加引号。
         return f'"{sys.executable}"'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
@@ -163,7 +165,7 @@ def spawn_apply_elevated(mode: str) -> bool:
     """以管理员身份拉起本程序的无界面辅助分支去调启动项（会弹一次 UAC）。"""
     from rin_launcher.elevation import run_elevated
 
-    if getattr(sys, "frozen", False):
+    if runtime.is_frozen():
         return run_elevated(sys.executable, f"--set-startup-mode={mode}")
     return run_elevated(
         sys.executable,

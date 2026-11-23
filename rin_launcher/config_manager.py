@@ -51,6 +51,7 @@ from rin_launcher import (
     notification_registration,
     notifications,
     risk_rules,
+    runtime,
     search,
     shell_tweaks,
     start_menu,
@@ -141,6 +142,33 @@ UNREACHABLE_NETWORK_TTL = 60.0
 # 具体文件操作在 backups.py；这里只保留测试和界面会用到的常量别名。
 AUTO_BACKUP_KEEP = backup_store.AUTO_KEEP
 
+# 开始菜单缩略图按「来源 + mtime」去重，但图标换了会生成新文件；给磁盘缓存
+# 留一个上限，避免常驻用户几年后 thumbnails/ 无限增长。启动时只清理最旧的
+# 那部分，当前界面引用的图会按需重新生成。
+THUMBNAIL_CACHE_LIMIT = 500
+
+
+def _prune_thumbnail_cache(directory: Path, limit: int = THUMBNAIL_CACHE_LIMIT) -> int:
+    """Delete the oldest ``*.png`` files above ``limit``; return removed count."""
+    if limit <= 0:
+        return 0
+    try:
+        files = sorted(
+            (path for path in directory.glob("*.png") if path.is_file()),
+            key=lambda path: path.stat().st_mtime,
+        )
+    except OSError:
+        logger.debug("无法枚举缩略图缓存", exc_info=True)
+        return 0
+    removed = 0
+    for path in files[:-limit]:
+        try:
+            path.unlink()
+            removed += 1
+        except OSError:
+            logger.debug("无法删除缩略图 %s", path, exc_info=True)
+    return removed
+
 
 # 磁盘探测（卷标 / 类型 / 容量）已搬到 drives.py。保留同名别名，调用点与
 # 测试都不用改；想单独测这部分纯函数直接 import rin_launcher.drives。
@@ -191,9 +219,9 @@ def resolve_config_dir() -> Path:
     override = os.environ.get("RINLAUNCHER_CONFIG_DIR", "").strip()
     if override:
         return Path(override).expanduser()
-    if not getattr(sys, "frozen", False):
+    if not runtime.is_frozen():
         return DEFAULT_CONFIG_DIR
-    data_dir = Path(sys.executable).resolve().parent / "data"
+    data_dir = runtime.app_dir() / "data"
     try:
         data_dir.mkdir(parents=True, exist_ok=True)
     except OSError:
@@ -300,6 +328,7 @@ class ConfigManager(QObject):
         self.icon_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+        _prune_thumbnail_cache(self.thumbnail_dir)
 
         self.action_executor = None
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
@@ -858,9 +887,7 @@ class ConfigManager(QObject):
     # ── 存储占用 / 诊断 ──────────────────────────────────────────────
     def _app_root(self) -> Path:
         """安装目录：打包后是 exe 同级，源码是仓库根目录。"""
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent.parent
+        return runtime.app_dir()
 
     @Slot(result="QVariantMap")
     def getStorageUsage(self) -> dict[str, Any]:

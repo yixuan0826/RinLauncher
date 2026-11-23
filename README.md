@@ -4,8 +4,8 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.3**（开发代号 **Hoshimi Miyabi**），
-属于 1.2.x 维护线（RinUI 0.5.0 / PySide6 6.12 / 稳定性与兼容性修复），完整变更见
+即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.4-pre**（开发代号 **Hoshimi Miyabi**），
+是 1.3.0 的 Nuitka 预发布验证版（RinUI 0.5.0 / PySide6 6.12），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
@@ -72,14 +72,19 @@ RinUI 自 1.2.1 起不再内联，由 `requirements.txt` 里的 `rinui==0.5.0` �
 
 源码模式的数据目录是 `%APPDATA%\RinLauncher`。
 
-**打包**：
+**打包（Nuitka）**：
 
 ```bash
-pip install pyinstaller
-pyinstaller build.spec          # 产物：dist/RinLauncher/
+pip install -r requirements.txt -r requirements-build.txt
+python scripts/build_nuitka.py --upx        # 有 MSVC（CI / 正式构建）
+python scripts/build_nuitka.py --zig --upx  # 本机没有 MSVC 时用 Nuitka 自带 Zig
 ```
 
-应急单文件：`$env:RIN_ONEFILE="1"; pyinstaller build.spec`（启动较慢）。
+产物是 `dist/RinLauncher/`（exe + qml / assets / RinUI / Qt 运行库），发布时由
+CI 生成 `RinLauncher.zip`。构建脚本会裁掉 WebEngine、3D、Charts、OpenGL 等
+未使用 Qt 模块；发布前可用 `scripts/bench_frozen.py` 测冻结包冷启动。
+
+1.2.4-pre 只发布便携 zip，不提供安装器；未签名产物的 SmartScreen 提示属预期。
 
 ---
 
@@ -175,6 +180,10 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.2.4-pre**（Hoshimi Miyabi，1.3.0 预发布）：全面迁移到 Nuitka standalone，
+  新增运行期路径兼容层、`--quit` 单实例命令与 UPX 主 exe 压缩；pypinyin 改为
+  懒加载，裁掉未用 Qt 模块后 zip 约 51.8 MB；更新页拆出底部回滚区。详见
+  [CHANGELOG.md](CHANGELOG.md)。
 - **1.2.3**（Hoshimi Miyabi，1.2.x 维护线）：U 盘入口恢复为固定的内置卡片，
   固定在存储区第二张，不占配置槽位、不可增删改；老配置里的 `kind: usb` 槽位
   读取时自动丢弃。测试增至 185 项。详见 [CHANGELOG.md](CHANGELOG.md)。

@@ -37,7 +37,7 @@ from PySide6.QtCore import Property, QCoreApplication, QObject, QTimer, Signal, 
 from PySide6.QtWidgets import QFileDialog
 
 from rin_launcher import __version__ as APP_VERSION
-from rin_launcher import ecoqos, powershell
+from rin_launcher import ecoqos, powershell, runtime
 from rin_launcher.config_manager import ConfigManager
 from rin_launcher.updater_release import (
     API_ROOT,
@@ -54,6 +54,7 @@ from rin_launcher.updater_release import (
     STATE_READY,
     STATE_UP_TO_DATE,
     USER_AGENT,
+    clean_release_notes,
     parse_release_notes,
     parse_releases,
     release_label,
@@ -102,6 +103,10 @@ class UpdateManager(QObject):
         self._downloaded_version = ""
         self._release_blocks: list[dict[str, Any]] = []
         self._release_url = ""
+        # 回滚列表与「更新版本」选择分开：顶部只负责更新，底部只管旧版本。
+        self._rollback_index = -1
+        self._rollback_blocks: list[dict[str, Any]] = []
+        self._rollback_url = ""
         self._progress = 0.0
         self._silent = False
         self._digest_verified = False
@@ -185,6 +190,53 @@ class UpdateManager(QObject):
     def releaseUrl(self) -> str:
         return self._release_url
 
+    @Property("QVariantList", notify=changed)
+    def rollbackReleases(self) -> list[dict[str, Any]]:
+        """严格低于当前版本的 Release；顶部更新与这里互不影响。"""
+        current = version_tuple(APP_VERSION)
+        return [
+            {key: value for key, value in item.items() if key != "notes"}
+            for item in self._releases
+            if version_tuple(str(item.get("version") or "")) < current
+        ]
+
+    @Property("QStringList", notify=changed)
+    def rollbackLabels(self) -> list[str]:
+        current = version_tuple(APP_VERSION)
+        return [
+            release_label(item) for item in self._releases
+            if version_tuple(str(item.get("version") or "")) < current
+        ]
+
+    @Property(int, notify=changed)
+    def rollbackIndex(self) -> int:
+        return self._rollback_index
+
+    @Property("QVariantMap", notify=changed)
+    def rollbackRelease(self) -> dict[str, Any]:
+        item = self._rollback_release()
+        if item is None:
+            return {}
+        return {key: value for key, value in item.items() if key != "notes"}
+
+    @Property("QVariantList", notify=changed)
+    def rollbackNoteBlocks(self) -> list[dict[str, Any]]:
+        return self._rollback_blocks
+
+    @Property(str, notify=changed)
+    def rollbackNotes(self) -> str:
+        item = self._rollback_release()
+        return clean_release_notes(str((item or {}).get("notes") or ""))
+
+    @Property(str, notify=changed)
+    def rollbackUrl(self) -> str:
+        return self._rollback_url
+
+    @Property(bool, notify=changed)
+    def canDownloadRollback(self) -> bool:
+        item = self._rollback_release()
+        return bool(item and item.get("downloadUrl")) and not self.busy
+
     @Property(float, notify=changed)
     def progress(self) -> float:
         return self._progress
@@ -207,7 +259,7 @@ class UpdateManager(QObject):
     def canInstall(self) -> bool:
         """已下载好、且当前是打包运行，才允许点「安装」。"""
         return (self._state == STATE_READY
-                and bool(getattr(sys, "frozen", False))
+                and bool(runtime.is_frozen())
                 and bool(self._downloaded_version)
                 and self._archive_path(self._downloaded_version).is_file())
 
@@ -218,8 +270,13 @@ class UpdateManager(QObject):
 
     @Property(bool, notify=changed)
     def canDownload(self) -> bool:
+        """顶部只下载「比当前新」的版本；旧版本走底部回滚区。"""
         item = self._current_release()
-        return bool(item and item.get("downloadUrl")) and not self.busy
+        return (
+            bool(item and item.get("downloadUrl"))
+            and version_tuple(str(item.get("version") or "")) > version_tuple(APP_VERSION)
+            and not self.busy
+        )
 
     @Property(str, notify=changed)
     def channel(self) -> str:
@@ -409,6 +466,7 @@ class UpdateManager(QObject):
             0,
         )
         self._select(default_index, announce=False)
+        self._select_rollback(0 if self._rollback_items() else -1)
 
         # 自动检查只提醒、不下载；通道决定「预发布要不要提醒」。
         candidate = next(
@@ -446,16 +504,44 @@ class UpdateManager(QObject):
             return self._releases[self._selected]
         return None
 
+    def _rollback_items(self) -> list[dict[str, Any]]:
+        current = version_tuple(APP_VERSION)
+        return [
+            item for item in self._releases
+            if version_tuple(str(item.get("version") or "")) < current
+        ]
+
+    def _rollback_release(self) -> dict[str, Any] | None:
+        items = self._rollback_items()
+        if 0 <= self._rollback_index < len(items):
+            return items[self._rollback_index]
+        return None
+
+    def _select_rollback(self, index: int) -> None:
+        items = self._rollback_items()
+        if not 0 <= index < len(items):
+            self._rollback_index = -1
+            self._rollback_blocks = []
+            self._rollback_url = ""
+            self.changed.emit()
+            return
+        item = items[index]
+        self._rollback_index = index
+        self._rollback_blocks = parse_release_notes(str(item.get("notes") or ""))
+        self._rollback_url = str(item.get("url") or "")
+        self.changed.emit()
+
     @Slot(int)
     def selectRelease(self, index: int) -> None:
         self._select(int(index))
 
-    @Slot()
-    def downloadSelected(self) -> None:
-        """下载下拉里选中的版本；下载完停在「已下载」，等用户点安装。"""
+    @Slot(int)
+    def selectRollback(self, index: int) -> None:
+        self._select_rollback(int(index))
+
+    def _download_item(self, item: dict[str, Any] | None) -> None:
         if self.busy:
             return
-        item = self._current_release()
         if item is None:
             self.notify.emit("版本列表还没加载，先点「检查更新」", "warning")
             return
@@ -469,6 +555,22 @@ class UpdateManager(QObject):
             self.notify.emit("这就是当前版本，不用重新下载", "info")
             return
         self._downloadStart.emit(self._mirror_url(url), version, str(item.get("digest") or ""))
+
+    @Slot()
+    def downloadSelected(self) -> None:
+        """下载顶部选中的更新版本；下载完停在「已下载」，等用户点安装。"""
+        item = self._current_release()
+        if (item is not None
+                and version_tuple(str(item.get("version") or ""))
+                <= version_tuple(APP_VERSION)):
+            self.notify.emit("旧版本请在页面底部的回滚区选择", "info")
+            return
+        self._download_item(item)
+
+    @Slot()
+    def downloadRollback(self) -> None:
+        """下载底部选中的旧版本；与顶部更新互不改变选择。"""
+        self._download_item(self._rollback_release())
 
     # ------------------------------------------------------------------
     # 下载
@@ -556,7 +658,7 @@ class UpdateManager(QObject):
     # ------------------------------------------------------------------
     @Slot()
     def installUpdate(self) -> None:
-        if not getattr(sys, "frozen", False):
+        if not runtime.is_frozen():
             self.notify.emit("源码模式不支持自动安装更新", "warning")
             return
         if self._state != STATE_READY or not self._downloaded_version:
@@ -570,7 +672,7 @@ class UpdateManager(QObject):
     @Slot()
     def installFromFile(self) -> None:
         """高级用法：手动选一个 RinLauncher.zip（不推荐，仅作备份手段）。"""
-        if not getattr(sys, "frozen", False):
+        if not runtime.is_frozen():
             self.notify.emit("源码模式不支持安装更新", "warning")
             return
         folder = self._updates_dir()
@@ -1047,9 +1149,7 @@ class UpdateManager(QObject):
 
     @staticmethod
     def _app_root() -> Path:
-        if getattr(sys, "frozen", False):
-            return Path(sys.executable).resolve().parent
-        return Path(__file__).resolve().parent.parent
+        return runtime.app_dir()
 
     def _read_last_result(self) -> None:
         """读上一次安装脚本留下的结果：失败原因直接摆到更新页上。"""
@@ -1101,6 +1201,14 @@ class UpdateManager(QObject):
             QDesktopServices.openUrl(QUrl(self._release_url))
 
     @Slot()
+    def openRollbackPage(self) -> None:
+        if self._rollback_url:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtGui import QDesktopServices
+
+            QDesktopServices.openUrl(QUrl(self._rollback_url))
+
+    @Slot()
     def openDownloadFolder(self) -> None:
         from PySide6.QtCore import QUrl
         from PySide6.QtGui import QDesktopServices
@@ -1118,6 +1226,9 @@ class UpdateManager(QObject):
         self._downloaded_version = ""
         self._release_blocks = []
         self._release_url = ""
+        self._rollback_index = -1
+        self._rollback_blocks = []
+        self._rollback_url = ""
         self._progress = 0.0
         self._digest_verified = False
         self._last_error = ""

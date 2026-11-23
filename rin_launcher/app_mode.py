@@ -18,12 +18,11 @@
 from __future__ import annotations
 
 import logging
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from rin_launcher import atomic
+from rin_launcher import atomic, runtime
 
 logger = logging.getLogger(__name__)
 
@@ -56,9 +55,7 @@ recovery==false
 
 def app_root() -> Path:
     """安装目录：冻结包是 exe 同级，源码运行是仓库根。"""
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parent.parent
+    return runtime.app_dir()
 
 
 def _bool_value(raw: str) -> bool | None:

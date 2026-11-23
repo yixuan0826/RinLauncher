@@ -15,7 +15,7 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
-from rin_launcher import ime
+from rin_launcher import ime, runtime
 from rin_launcher.elevation import is_admin, run_elevated
 
 logger = logging.getLogger(__name__)
@@ -109,9 +109,8 @@ class ActionExecutor:
         if not text:
             return ""
         resolved = os.path.expanduser(os.path.expandvars(text))
-        frozen = getattr(sys, "frozen", False)
         replacements = {
-            "{appdir}": str(Path(sys.executable).parent if frozen else Path.cwd()),
+            "{appdir}": str(runtime.app_dir() if runtime.is_frozen() else Path.cwd()),
             "{configdir}": str(self.config_manager.config_dir),
             "{homedir}": str(Path.home()),
             "{tempdir}": os.environ.get("TEMP", "/tmp"),

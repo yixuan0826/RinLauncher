@@ -3,6 +3,36 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.2.4-pre（1.3.0 预发布）— 2026-11-23
+
+> **预发布**：这是 1.3.0 的 Nuitka 打包验证版，不是稳定版。
+> 更新仍走 `RinLauncher.zip`，不提供安装器；未签名，SmartScreen 提示属预期。
+
+### 打包
+
+- **全面迁移到 Nuitka**：发布链从 PyInstaller onedir 切到 Nuitka standalone，
+  产物仍是 `dist/RinLauncher/` + `RinLauncher.zip`，自更新资产名不变。
+- 新增 `rin_launcher/runtime.py`：统一识别 PyInstaller / Nuitka / 源码三种运行
+  形态，修正 Nuitka 下 `sys.frozen` 缺失导致的资源路径和 `data/` 落点问题。
+- 构建后裁掉未使用的 Qt 模块（WebEngine、3D、Charts、OpenGL 软件兜底等）；
+  主 exe 用 UPX `--best` 压缩（Qt DLL 的 A/B 会显著拖慢冷启动，未压）；
+  本机 zip 从 71.4 MB 降到约 51.8 MB。
+- `pypinyin` 改为首次搜索时懒加载，启动路径少约 200 ms；冻结包冷启动
+  中位数约 1.05 s（本机基线约 1.13 s）。
+- CI 改用 `scripts/build_nuitka.py` + `scripts/build_zip.py`，仍执行 Ruff、
+  Pytest、QML lint、冻结包冒烟、清单校验与升级覆盖测试。
+
+### 运行与质量
+
+- 新增单实例 `quit` 命令与 `RinLauncher.exe --quit`：安装 / 卸载 / 升级前可
+  让运行中的实例在 2 秒内正常退出；`show` 行为保持不变。
+- 修复短命本地套接字在 Windows 上偶发丢失命令的问题（发送端泵事件直到写完）。
+- 更新页拆分：顶部版本栏负责状态与检查 / 下载 / 安装；回滚列表独立放到
+  页面底部，只列出低于当前版本的 Release。
+- 修复 `ctypes.wintypes.SHELLEXECUTEINFOW` 在 Python 3.14 不存在导致的提权 /
+  管理员自启动 `AttributeError`。
+- 版本号、更新日志与预发布标记同步到 `1.2.4-pre`；更新列表能正确识别预发布。
+
 ## 1.2.3（1.2.x 维护线）— 2026-11-18
 
 > 维护版：把 U 盘入口恢复成固定的内置卡片。

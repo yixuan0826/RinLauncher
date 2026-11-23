@@ -5,9 +5,8 @@ import RinUI
 
 import "../../components"
 
-// 设置 → 更新：版本列表、下载、安装，以及选中版本的更新说明（Markdown）。
-//
-// 回滚不再依赖 old.zip：在「版本列表」里选一个旧一点的版本重装就行。
+// 设置 → 更新：顶部版本栏负责检查 / 下载 / 安装，页面底部单独负责回滚。
+// 回滚不再依赖 old.zip：在底部旧版本列表里选一个低于当前版本的 Release 重装。
 Item {
     id: pageRoot
 
@@ -19,7 +18,6 @@ Item {
     readonly property bool speedTesting: pageRoot.page && pageRoot.page.updater
         ? pageRoot.page.updater.speedTesting : false
     readonly property var updater: pageRoot.page ? pageRoot.page.updater : null
-    readonly property var releaseLabels: updater ? updater.releaseLabels : []
 
     Flickable {
         id: flick
@@ -36,61 +34,120 @@ Item {
             width: Math.min(flick.width - 48, 860)
             spacing: 18
 
-            // 顶部摘要：版本号与状态先摆出来，下面的设置与版本列表只负责操作。
+            // 顶部版本栏：版本号 + 更新状态 + 检查 / 下载 / 安装。
+            // 回滚是独立流程，放在页面最底部，不复用这里的版本选择。
             Frame {
                 Layout.fillWidth: true
-                implicitHeight: 84
+                implicitHeight: topColumn.implicitHeight + 32
                 radius: Theme.currentTheme.appearance.windowRadius
 
-                RowLayout {
-                    anchors.fill: parent
-                    anchors.leftMargin: 18
-                    anchors.rightMargin: 18
-                    spacing: 24
+                ColumnLayout {
+                    id: topColumn
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 16
+                    spacing: 10
 
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: 2
-                        Text {
-                            typography: Typography.Caption
-                            color: Theme.currentTheme.colors.textSecondaryColor
-                            text: qsTr("当前版本")
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 24
+
+                        ColumnLayout {
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: 2
+                            Text {
+                                typography: Typography.Caption
+                                color: Theme.currentTheme.colors.textSecondaryColor
+                                text: qsTr("当前版本")
+                            }
+                            Text {
+                                typography: Typography.Title
+                                color: Theme.currentTheme.colors.textColor
+                                text: "v" + pageRoot.page.updateCurrentVersion
+                            }
                         }
+
+                        ColumnLayout {
+                            Layout.alignment: Qt.AlignVCenter
+                            spacing: 2
+                            Text {
+                                typography: Typography.Caption
+                                color: Theme.currentTheme.colors.textSecondaryColor
+                                text: qsTr("最新版本")
+                            }
+                            Text {
+                                typography: Typography.Title
+                                color: Theme.currentTheme.colors.textColor
+                                text: pageRoot.page.updateLatestVersion.length > 0
+                                    ? "v" + pageRoot.page.updateLatestVersion : "—"
+                            }
+                        }
+
+                        Item { Layout.fillWidth: true }
+
                         Text {
-                            typography: Typography.Title
-                            color: Theme.currentTheme.colors.textColor
-                            text: "v" + pageRoot.page.updateCurrentVersion
+                            Layout.alignment: Qt.AlignVCenter
+                            Layout.maximumWidth: 420
+                            wrapMode: Text.Wrap
+                            maximumLineCount: 3
+                            elide: Text.ElideRight
+                            color: pageRoot.page.updateState === "error"
+                                ? Theme.currentTheme.colors.systemCriticalColor
+                                : Theme.currentTheme.colors.textSecondaryColor
+                            text: pageRoot.page.updateMessage
                         }
                     }
 
-                    ColumnLayout {
-                        Layout.alignment: Qt.AlignVCenter
-                        spacing: 2
-                        Text {
-                            typography: Typography.Caption
-                            color: Theme.currentTheme.colors.textSecondaryColor
-                            text: qsTr("最新版本")
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+
+                        Button {
+                            text: qsTr("检查更新")
+                            icon.name: "ic_fluent_arrow_sync_20_regular"
+                            enabled: !pageRoot.page.updateBusy
+                            onClicked: pageRoot.checkNow()
                         }
-                        Text {
-                            typography: Typography.Title
-                            color: Theme.currentTheme.colors.textColor
-                            text: pageRoot.page.updateLatestVersion.length > 0
-                                ? "v" + pageRoot.page.updateLatestVersion : "—"
+                        Button {
+                            text: qsTr("下载更新")
+                            icon.name: "ic_fluent_arrow_download_20_regular"
+                            highlighted: pageRoot.updater
+                                ? pageRoot.updater.canDownload : false
+                            enabled: pageRoot.updater
+                                ? pageRoot.updater.canDownload : false
+                            onClicked: pageRoot.downloadNow()
+                        }
+                        Button {
+                            text: pageRoot.updater
+                                && pageRoot.updater.downloadedVersion.length > 0
+                                ? qsTr("安装 v%1").arg(pageRoot.updater.downloadedVersion)
+                                : qsTr("安装")
+                            icon.name: "ic_fluent_checkmark_circle_20_regular"
+                            visible: pageRoot.page.updateCanInstall
+                            enabled: !pageRoot.page.updateBusy
+                            onClicked: pageRoot.installNow()
+                        }
+                        Item { Layout.fillWidth: true }
+                        Button {
+                            text: qsTr("打开下载目录")
+                            icon.name: "ic_fluent_folder_open_20_regular"
+                            onClicked: pageRoot.openDownloadFolder()
+                        }
+                        Button {
+                            text: qsTr("打开 Release")
+                            icon.name: "ic_fluent_open_20_regular"
+                            visible: pageRoot.page.updateReleaseUrl.length > 0
+                            onClicked: pageRoot.openRelease()
                         }
                     }
 
-                    Item { Layout.fillWidth: true }
-
-                    Text {
-                        Layout.alignment: Qt.AlignVCenter
-                        wrapMode: Text.Wrap
-                        maximumLineCount: 2
-                        elide: Text.ElideRight
-                        Layout.maximumWidth: 360
-                        color: pageRoot.page.updateState === "error"
-                            ? Theme.currentTheme.colors.systemCriticalColor
-                            : Theme.currentTheme.colors.textSecondaryColor
-                        text: pageRoot.page.updateMessage
+                    ProgressBar {
+                        Layout.fillWidth: true
+                        visible: pageRoot.page.updateState === "downloading"
+                        value: pageRoot.page.updateProgress
+                        from: 0
+                        to: 1
                     }
                 }
             }
@@ -253,152 +310,6 @@ Item {
             }
 
             SettingsGroup {
-                title: qsTr("版本与状态")
-                iconKey: "ic_fluent_history_20_regular"
-
-                FormRow {
-                    label: qsTr("当前版本")
-                    Text {
-                        color: Theme.currentTheme.colors.textColor
-                        text: "v" + pageRoot.page.updateCurrentVersion
-                    }
-                    Item { Layout.fillWidth: true }
-                    Text {
-                        visible: pageRoot.page.updateLatestVersion.length > 0
-                        typography: Typography.Caption
-                        color: Theme.currentTheme.colors.textSecondaryColor
-                        text: qsTr("最新：v%1").arg(pageRoot.page.updateLatestVersion)
-                    }
-                }
-
-                // 版本列表：选旧版本就是「在线回滚」。
-                FormRow {
-                    label: qsTr("版本列表")
-                    description: qsTr("下载并安装任意版本；装回旧版本就是回滚")
-                    RinComboBox {
-                        id: releaseCombo
-                        Layout.fillWidth: true
-                        Layout.maximumWidth: 420
-                        model: pageRoot.releaseLabels
-                        currentIndex: pageRoot.updater ? pageRoot.updater.selectedIndex : -1
-                        enabled: pageRoot.releaseLabels.length > 0
-                                       && !pageRoot.page.updateBusy
-                        onActivated: function (index) {
-                            if (pageRoot.updater) {
-                                pageRoot.updater.selectRelease(index)
-                            }
-                        }
-                    }
-                    Button {
-                        text: qsTr("刷新列表")
-                        icon.name: "ic_fluent_arrow_sync_20_regular"
-                        enabled: !pageRoot.page.updateBusy
-                        onClicked: pageRoot.checkNow()
-                    }
-                }
-
-                FormRow {
-                    label: qsTr("状态")
-                    ColumnLayout {
-                        Layout.fillWidth: true
-                        spacing: 6
-
-                        Text {
-                            Layout.fillWidth: true
-                            wrapMode: Text.Wrap
-                            color: pageRoot.page.updateState === "error"
-                                ? Theme.currentTheme.colors.systemCriticalColor
-                                : Theme.currentTheme.colors.textColor
-                            text: pageRoot.page.updateMessage
-                        }
-
-                        ProgressBar {
-                            Layout.fillWidth: true
-                            visible: pageRoot.page.updateState === "downloading"
-                            value: pageRoot.page.updateProgress
-                            from: 0
-                            to: 1
-                        }
-                    }
-                }
-
-                // 安装包校验：GitHub API 给了 digest 才能比，没给就直说。
-                FormRow {
-                    label: qsTr("安装包校验")
-                    visible: pageRoot.page.updateState === "ready"
-                    Text {
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        color: pageRoot.page.updater && pageRoot.page.updater.digestVerified
-                            ? Theme.currentTheme.colors.textColor
-                            : Theme.currentTheme.colors.systemCautionColor
-                        text: pageRoot.page.updater && pageRoot.page.updater.digestVerified
-                            ? qsTr("sha256 校验通过")
-                            : qsTr("Release 未提供 digest，本次只能靠 HTTPS 与解包校验")
-                    }
-                }
-
-                // 失败原因：不只是一句「失败了」，把脚本给出的原文摆出来。
-                FormRow {
-                    label: qsTr("错误详情")
-                    visible: pageRoot.updater && pageRoot.updater.lastError.length > 0
-                    Text {
-                        Layout.fillWidth: true
-                        wrapMode: Text.Wrap
-                        color: Theme.currentTheme.colors.systemCriticalColor
-                        text: pageRoot.updater ? pageRoot.updater.lastError : ""
-                    }
-                    ToolButton {
-                        icon.name: "ic_fluent_clipboard_20_regular"
-                        ToolTip.text: qsTr("复制错误详情")
-                        onClicked: {
-                            if (pageRoot.updater) {
-                                ConfigManager.copyText(pageRoot.updater.lastError)
-                            }
-                        }
-                    }
-                }
-
-                FormRow {
-                    label: qsTr("操作")
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 8
-
-                        Button {
-                            text: qsTr("下载所选版本")
-                            icon.name: "ic_fluent_arrow_download_20_regular"
-                            highlighted: pageRoot.updater ? pageRoot.updater.canDownload : false
-                            enabled: pageRoot.updater ? pageRoot.updater.canDownload : false
-                            onClicked: pageRoot.downloadNow()
-                        }
-
-                        Button {
-                            text: pageRoot.page.updateCanInstall
-                                ? qsTr("安装 v%1").arg(pageRoot.updater.downloadedVersion)
-                                : qsTr("安装")
-                            icon.name: "ic_fluent_checkmark_circle_20_regular"
-                            visible: pageRoot.page.updateCanInstall
-                            enabled: !pageRoot.page.updateBusy
-                            onClicked: pageRoot.installNow()
-                        }
-
-                        Button {
-                            text: qsTr("打开下载目录")
-                            icon.name: "ic_fluent_folder_open_20_regular"
-                            onClicked: pageRoot.openDownloadFolder()
-                        }
-                        Button {
-                            text: qsTr("打开 Release")
-                            icon.name: "ic_fluent_open_20_regular"
-                            visible: pageRoot.page.updateReleaseUrl.length > 0
-                            onClicked: pageRoot.openRelease()
-                        }
-                    }
-                }
-            }
-
-            SettingsGroup {
                 title: qsTr("更新说明")
                 iconKey: "ic_fluent_document_text_20_regular"
 
@@ -506,6 +417,85 @@ Item {
                     }
                 }
             }
+            SettingsGroup {
+                title: qsTr("回滚到旧版本")
+                iconKey: "ic_fluent_arrow_undo_20_regular"
+
+                FormRow {
+                    label: qsTr("旧版本")
+                    description: qsTr("只列出低于当前版本的 Release；下载安装后 data/ 会保留")
+                    RinComboBox {
+                        id: rollbackCombo
+                        Layout.fillWidth: true
+                        Layout.maximumWidth: 420
+                        model: pageRoot.updater ? pageRoot.updater.rollbackLabels : []
+                        currentIndex: pageRoot.updater ? pageRoot.updater.rollbackIndex : -1
+                        enabled: pageRoot.updater
+                                 && pageRoot.updater.rollbackLabels.length > 0
+                                 && !pageRoot.page.updateBusy
+                        onActivated: function (index) {
+                            if (pageRoot.updater) {
+                                pageRoot.updater.selectRollback(index)
+                            }
+                        }
+                    }
+                    Button {
+                        text: qsTr("刷新列表")
+                        icon.name: "ic_fluent_arrow_sync_20_regular"
+                        enabled: !pageRoot.page.updateBusy
+                        onClicked: pageRoot.checkNow()
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("操作")
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 8
+                        Button {
+                            text: qsTr("下载旧版本")
+                            icon.name: "ic_fluent_arrow_download_20_regular"
+                            highlighted: pageRoot.updater
+                                ? pageRoot.updater.canDownloadRollback : false
+                            enabled: pageRoot.updater
+                                ? pageRoot.updater.canDownloadRollback : false
+                            onClicked: pageRoot.downloadRollbackNow()
+                        }
+                        Button {
+                            text: pageRoot.updater
+                                && pageRoot.updater.downloadedVersion.length > 0
+                                ? qsTr("安装 v%1").arg(pageRoot.updater.downloadedVersion)
+                                : qsTr("安装")
+                            icon.name: "ic_fluent_checkmark_circle_20_regular"
+                            visible: pageRoot.page.updateCanInstall
+                                && pageRoot.updater
+                                && pageRoot.updater.downloadedVersion
+                                   === (pageRoot.updater.rollbackRelease.version || "")
+                            enabled: !pageRoot.page.updateBusy
+                            onClicked: pageRoot.installNow()
+                        }
+                        Button {
+                            text: qsTr("打开 Release")
+                            icon.name: "ic_fluent_open_20_regular"
+                            visible: pageRoot.updater
+                                && pageRoot.updater.rollbackUrl.length > 0
+                            onClicked: pageRoot.openRollbackRelease()
+                        }
+                    }
+                }
+
+                FormRow {
+                    label: qsTr("回滚说明")
+                    Text {
+                        Layout.fillWidth: true
+                        wrapMode: Text.Wrap
+                        color: Theme.currentTheme.colors.textSecondaryColor
+                        text: pageRoot.updater && pageRoot.updater.rollbackNotes.length > 0
+                            ? pageRoot.updater.rollbackNotes
+                            : qsTr("选择旧版本后显示说明")
+                    }
+                }
+            }
         }
     }
 
@@ -530,6 +520,18 @@ Item {
         }
     }
 
+    function downloadRollbackNow() {
+        if (page.updater) {
+            page.updater.downloadRollback()
+        }
+    }
+
+    function openRollbackRelease() {
+        if (page.updater) {
+            page.updater.openRollbackPage()
+        }
+    }
+
     function openRelease() {
         if (page.updater) {
             page.updater.openReleasePage()
@@ -551,15 +553,4 @@ Item {
         mirrorAutoSwitch.checked = model.updateMirrorAuto !== false
     }
 
-    // 后端选中项变了（刷新列表 / 默认选中新版本）时，下拉跟着走。
-    Connections {
-        target: pageRoot.updater
-
-        function onChanged() {
-            var index = pageRoot.updater ? pageRoot.updater.selectedIndex : -1
-            if (releaseCombo.currentIndex !== index) {
-                releaseCombo.currentIndex = index
-            }
-        }
-    }
 }

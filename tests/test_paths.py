@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import rin_launcher.config_manager as cm
+from rin_launcher import runtime
 
 
 def _fake_frozen(monkeypatch, tmp_path, legacy: str = "legacy") -> None:
@@ -16,7 +17,48 @@ def _fake_frozen(monkeypatch, tmp_path, legacy: str = "legacy") -> None:
 
 def test_dev_mode_keeps_appdata(monkeypatch):
     monkeypatch.delattr(cm.sys, "frozen", raising=False)
+    monkeypatch.setattr(runtime, "_is_compiled", lambda: False)
     assert cm.resolve_config_dir() == cm.DEFAULT_CONFIG_DIR
+
+
+def test_nuitka_is_frozen_without_sys_frozen(monkeypatch, tmp_path):
+    exe = tmp_path / "RinLauncher.exe"
+    exe.write_bytes(b"")
+    monkeypatch.delattr(runtime.sys, "frozen", raising=False)
+    monkeypatch.setattr(runtime, "_is_compiled", lambda: True)
+    monkeypatch.setattr(runtime.sys, "executable", str(exe), raising=False)
+    monkeypatch.delattr(runtime.sys, "_MEIPASS", raising=False)
+
+    assert runtime.is_frozen() is True
+    assert runtime.bundle_root() == tmp_path
+    assert runtime.app_dir() == tmp_path
+
+
+def test_pyinstaller_onefile_separates_resources_and_data(monkeypatch, tmp_path):
+    exe_dir = tmp_path / "app"
+    meipass = tmp_path / "_MEI123"
+    exe = exe_dir / "RinLauncher.exe"
+    exe_dir.mkdir()
+    meipass.mkdir()
+    exe.write_bytes(b"")
+    monkeypatch.setattr(runtime, "_is_compiled", lambda: False)
+    monkeypatch.setattr(runtime.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime.sys, "_MEIPASS", str(meipass), raising=False)
+    monkeypatch.setattr(runtime.sys, "executable", str(exe), raising=False)
+
+    assert runtime.bundle_root() == meipass
+    assert runtime.app_dir() == exe_dir
+
+
+def test_nuitka_config_dir_uses_exe_sibling(monkeypatch, tmp_path):
+    exe = tmp_path / "RinLauncher.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(runtime, "_is_compiled", lambda: True)
+    monkeypatch.setattr(runtime.sys, "executable", str(exe), raising=False)
+    monkeypatch.setattr(cm, "DEFAULT_CONFIG_DIR", tmp_path / "legacy")
+
+    assert cm.resolve_config_dir() == tmp_path / "data"
+    assert (tmp_path / "data").is_dir()
 
 
 def test_frozen_uses_exe_sibling_data_dir(monkeypatch, tmp_path):

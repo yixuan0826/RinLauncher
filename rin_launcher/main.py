@@ -17,19 +17,14 @@ import time
 import traceback
 from pathlib import Path
 
-PROJECT_ROOT = (
-    # 打包后资源都解压在 _MEIPASS（onefile）或 exe 同级（onedir）下，不能再依赖
-    # __file__ 的层级 —— 冻结环境里入口脚本的 __file__ 布局和源码树不一样。
-    Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
-    if getattr(sys, "frozen", False)
-    else Path(__file__).resolve().parent.parent
-)
-COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
-EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
-SETTINGS_ENTRY = PROJECT_ROOT / "qml" / "SettingsWindow.qml"
-RECOVERY_ENTRY = PROJECT_ROOT / "qml" / "RecoveryWindow.qml"
-OOBE_ENTRY = PROJECT_ROOT / "qml" / "OobeWindow.qml"
-ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
+# 入口必须先确定仓库根/资源根，再导入 rin_launcher 包：直接跑
+# ``python rin_launcher/main.py`` 时 sys.path[0] 是 rin_launcher/ 而不是仓库根。
+# Nuitka 不设 sys.frozen，只注入 __compiled__，所以这里先做一次最小引导；
+# 导入 runtime 之后再统一成同一套路径规则。
+if "__compiled__" in globals() or getattr(sys, "frozen", False):
+    _BOOT_ROOT = Path(getattr(sys, "_MEIPASS", Path(sys.executable).resolve().parent))
+else:
+    _BOOT_ROOT = Path(__file__).resolve().parent.parent
 
 # RinUI 启动时会 print 一个带 emoji 的横幅。老终端（cmd.exe 的 GBK 代码页）编码
 # 装不下那个字符时 print 会抛 UnicodeEncodeError，把整个程序带走 —— 这里给两个
@@ -43,8 +38,18 @@ for _stream in (sys.stdout, sys.stderr):
 
 # RinUI 现在是 pip 依赖（不再是内联目录）；项目根仍要可导入，
 # 直接以脚本方式运行时才能找到 rin_launcher 包。
-if str(PROJECT_ROOT) not in sys.path:
-    sys.path.insert(0, str(PROJECT_ROOT))
+if str(_BOOT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_BOOT_ROOT))
+
+from rin_launcher import runtime  # noqa: E402
+
+PROJECT_ROOT = runtime.bundle_root()
+COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
+EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
+SETTINGS_ENTRY = PROJECT_ROOT / "qml" / "SettingsWindow.qml"
+RECOVERY_ENTRY = PROJECT_ROOT / "qml" / "RecoveryWindow.qml"
+OOBE_ENTRY = PROJECT_ROOT / "qml" / "OobeWindow.qml"
+ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
 import RinUI  # noqa: F401
@@ -546,6 +551,7 @@ class Launcher:
         """守着单实例的本地套接字：第二个进程请求「亮出小窗」时照办。"""
         self._single_server = SingleInstanceServer(self.app)
         self._single_server.showRequested.connect(self.show_compact)
+        self._single_server.quitRequested.connect(self.quit)
 
     # ------------------------------------------------------------------
     # OS integration
@@ -782,6 +788,15 @@ def main() -> int:
 
             mode = arg.split("=", 1)[1].strip()
             return 0 if apply_startup_mode(mode) else 1
+
+    # 安装 / 升级 / 卸载前的优雅退出入口。只建 QCoreApplication，不加载 QML、
+    # 不抢单实例锁；没有实例在跑时同样返回 0（调用方无需区分）。
+    if "--quit" in sys.argv[1:]:
+        from PySide6.QtCore import QCoreApplication
+
+        QCoreApplication.instance() or QCoreApplication(sys.argv)
+        notify_running_instance("quit")
+        return 0
 
     app = QApplication(sys.argv)
     app.setApplicationName("Rin Launcher")

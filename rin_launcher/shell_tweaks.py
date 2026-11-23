@@ -18,6 +18,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from rin_launcher import runtime
+
 logger = logging.getLogger(__name__)
 
 
@@ -41,8 +43,8 @@ _BLANK_ICO = bytes([
 
 
 def _data_dir(fallback: Path) -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent / "data"
+    if runtime.is_frozen():
+        return runtime.app_dir() / "data"
     return Path(fallback)
 
 

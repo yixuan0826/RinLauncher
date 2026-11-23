@@ -14,7 +14,9 @@ def test_version_single_source():
     import rin_launcher.config_manager as cm
 
     # 版本号只在包里有唯一来源；这里只校验格式与两处一致，改版本不用改测试。
-    parts = __version__.split(".")
+    # 预发布后缀（1.2.4-pre）只加在核心版本后面，核心仍是三段数字。
+    core = __version__.split("-", 1)[0]
+    parts = core.split(".")
     assert len(parts) == 3 and all(part.isdigit() for part in parts)
     # config_manager 的 APP_VERSION 必须就是包版本本身，不是另一只手维护的副本。
     assert cm.APP_VERSION == __version__

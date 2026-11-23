@@ -2,12 +2,26 @@
 
 from __future__ import annotations
 
+import os
 import shutil
 from pathlib import Path
 
-from rin_launcher.config_manager import ConfigManager
+from rin_launcher.config_manager import ConfigManager, _prune_thumbnail_cache
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_prune_thumbnail_cache_keeps_newest(tmp_path):
+    for index in range(6):
+        path = tmp_path / f"{index}.png"
+        path.write_bytes(b"png")
+        os.utime(path, (index, index))
+
+    removed = _prune_thumbnail_cache(tmp_path, limit=3)
+
+    assert removed == 3
+    assert sorted(path.name for path in tmp_path.glob("*.png")) == [
+        "3.png", "4.png", "5.png"]
 
 
 def test_attach_cached_thumbs_reuses_existing_file(qapp, tmp_path):

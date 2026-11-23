@@ -9,11 +9,21 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-try:  # pragma: no cover - 依赖缺失时只走退化分支
-    from pypinyin import Style, lazy_pinyin
-except Exception:  # pragma: no cover
-    Style = None
-    lazy_pinyin = None
+# pypinyin 的词库导入约 200 ms；启动台搜索大多数时间用不到拼音。
+# 保持模块导入轻量，等第一次真正搜索时再加载（冻结包里同样受益）。
+_PINYIN: tuple[object, object] | None = None
+
+
+def _load_pinyin() -> tuple[object, object]:
+    global _PINYIN
+    if _PINYIN is None:
+        try:  # pragma: no cover - 依赖缺失时只走退化分支
+            from pypinyin import Style, lazy_pinyin
+        except Exception:  # pragma: no cover
+            _PINYIN = (None, None)
+        else:
+            _PINYIN = (Style, lazy_pinyin)
+    return _PINYIN
 
 
 def _variants(text: str) -> list[str]:
@@ -21,10 +31,11 @@ def _variants(text: str) -> list[str]:
     if not base:
         return []
     variants = [base]
+    style, lazy_pinyin = _load_pinyin()
     if lazy_pinyin is not None:
         try:
             variants.append("".join(lazy_pinyin(base)))
-            variants.append("".join(lazy_pinyin(base, style=Style.FIRST_LETTER)))
+            variants.append("".join(lazy_pinyin(base, style=style.FIRST_LETTER)))
         except Exception:
             logger.debug("pinyin conversion failed for %r", base, exc_info=True)
     return variants

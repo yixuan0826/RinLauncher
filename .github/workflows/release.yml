@@ -10,6 +10,7 @@ permissions:
 jobs:
   build-and-release:
     runs-on: windows-latest
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
 
@@ -33,7 +34,10 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt pyinstaller pytest ruff
+          pip install -r requirements.txt -r requirements-build.txt pytest ruff
+
+      - name: Install UPX
+        run: choco install upx -y --no-progress
 
       # 发布前先过同一套门禁：tag 推送也不能绕过测试。
       - name: Ruff
@@ -45,8 +49,8 @@ jobs:
       - name: QML lint
         run: python scripts/lint_qml.py
 
-      - name: Build (onedir)
-        run: pyinstaller build.spec
+      - name: Build (Nuitka standalone + UPX)
+        run: python scripts/build_nuitka.py --upx
 
       # 冻结包冒烟：源码测试绿不代表 exe 能起来。恢复窗口只加载一个 QML，
       # 7 秒足够确认进程没在启动阶段崩掉。
@@ -61,12 +65,17 @@ jobs:
           Stop-Process -Id $proc.Id -Force
           Write-Host "Frozen recovery smoke test OK"
 
-          # 正常模式也要能把小窗、托盘、热键这条完整启动链跑起来。
+          # 正常模式也要能把小窗、托盘、热键这条完整启动链跑起来；
+          # 再用 --quit 验证单实例退出命令（安装 / 升级前的入口）。
           $proc = Start-Process -FilePath $exe -PassThru
           Start-Sleep -Seconds 8
           if ($proc.HasExited) { throw "frozen exe exited during normal smoke test" }
-          Stop-Process -Id $proc.Id -Force
-          Write-Host "Frozen normal smoke test OK"
+          & $exe --quit
+          if (-not $proc.WaitForExit(5000)) {
+            Stop-Process -Id $proc.Id -Force
+            throw "frozen exe ignored --quit"
+          }
+          Write-Host "Frozen normal smoke test OK (--quit)"
 
       # 冒烟启动会在 dist 里生成 data/ 与 appmodset.conf：发布包不能带这两样，
       # 否则覆盖安装会用 first-run==true 的模板盖掉用户已有的启动配置。
@@ -116,7 +125,14 @@ jobs:
           Write-Host "Upgrade dry-run OK"
 
       - name: Package (zip)
-        run: Compress-Archive -Path dist/RinLauncher/* -DestinationPath RinLauncher.zip
+        run: python scripts/build_zip.py dist/RinLauncher RinLauncher.zip
+
+      - name: Verify zip size gate
+        shell: pwsh
+        run: |
+          $mb = [math]::Round((Get-Item RinLauncher.zip).Length / 1MB, 2)
+          Write-Host "RinLauncher.zip: $mb MB"
+          if ($mb -gt 55) { throw "RinLauncher.zip exceeds the 55 MB gate" }
 
       - name: Extract release notes
         shell: pwsh

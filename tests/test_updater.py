@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def test_version_tuple_handles_tags():
     assert version_tuple("v1.2.3") == (1, 2, 3)
     assert version_tuple("1.2.3-beta.1") == (1, 2, 3, 1)
+    assert version_tuple("1.2.4-pre") == (1, 2, 4)
     assert version_tuple("v2") == (2,)
     assert version_tuple("") == (0,)
 
@@ -200,6 +201,23 @@ def test_parse_releases_marks_current_version():
     assert parse_releases(payload)[0]["current"] is True
 
 
+def test_release_asset_selection_ignores_setup():
+    payload = [{
+        "tag_name": "v1.3.0",
+        "prerelease": False,
+        "assets": [
+            {"name": "RinLauncher-Setup-1.3.0.exe",
+             "browser_download_url": "https://example.com/setup.exe"},
+            {"name": "RinLauncher.zip",
+             "browser_download_url": "https://example.com/portable.zip"},
+        ],
+    }]
+    item = parse_releases(payload)[0]
+    # 安装器资产不能抢走自更新入口；名字比较忽略大小写。
+    assert item["assetName"] == "RinLauncher.zip"
+    assert item["downloadUrl"] == "https://example.com/portable.zip"
+
+
 def test_parse_releases_tolerates_garbage_and_limit():
     assert parse_releases(None) == []
     assert parse_releases({"message": "Not Found"}) == []
@@ -214,6 +232,48 @@ def test_release_label_marks_current_and_missing_asset():
     assert "当前" in label
     assert "预发布" in label
     assert "无更新包" in label
+
+
+def _zip_asset(name: str = "RinLauncher.zip") -> list[dict]:
+    return [{"name": name, "browser_download_url": f"https://example.com/{name}"}]
+
+
+def test_update_and_rollback_lists_are_separate(qapp, tmp_path):
+    payload = [
+        {"tag_name": "v1.3.0", "assets": _zip_asset()},
+        {"tag_name": "v1.2.2", "assets": _zip_asset()},
+        {"tag_name": "v1.2.1-pre", "prerelease": True, "assets": _zip_asset()},
+    ]
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    updater = UpdateManager(manager)
+    try:
+        updater._apply_releases(parse_releases(payload))
+        # 顶部默认选中较新的更新，但回滚列表只收低于当前版本的 Release。
+        assert updater.selectedRelease["version"] == "1.3.0"
+        assert updater.canDownload is True
+        assert [item["version"] for item in updater.rollbackReleases] == [
+            "1.2.2", "1.2.1-pre"]
+        assert updater.rollbackIndex == 0
+        assert updater.rollbackRelease["version"] == "1.2.2"
+
+        updater.selectRollback(1)
+        assert updater.rollbackRelease["version"] == "1.2.1-pre"
+        assert updater.selectedRelease["version"] == "1.3.0"
+        assert updater.canDownloadRollback is True
+    finally:
+        manager.stopWatching()
+
+
+def test_older_only_release_is_not_a_top_update(qapp, tmp_path):
+    manager = cm.ConfigManager(config_dir=tmp_path)
+    updater = UpdateManager(manager)
+    try:
+        updater._apply_releases(parse_releases(_release_payload()))
+        assert updater.canDownload is False
+        assert updater.rollbackLabels
+        assert updater.rollbackRelease["version"] == "1.1.8-pre"
+    finally:
+        manager.stopWatching()
 
 
 def test_selecting_release_updates_notes_and_url(qapp, tmp_path):

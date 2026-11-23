@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from rin_launcher import runtime
+
 logger = logging.getLogger(__name__)
 
 AUMID = "RinLauncher.Desktop"
@@ -31,7 +33,7 @@ def _shortcut_path() -> Path:
 
 def _target() -> tuple[str, str]:
     """返回 (可执行文件, 参数)。源码运行时指向 pythonw + main.py。"""
-    if getattr(sys, "frozen", False):
+    if runtime.is_frozen():
         return str(Path(sys.executable).resolve()), ""
     python = Path(sys.executable)
     windowed = python.with_name("pythonw.exe")

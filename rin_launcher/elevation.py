@@ -7,6 +7,7 @@ to launch a process through ``ShellExecuteExW`` with the ``runas`` verb.
 from __future__ import annotations
 
 import ctypes
+import ctypes.wintypes
 import logging
 import os
 import sys
@@ -14,7 +15,7 @@ import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 
-from rin_launcher import powershell
+from rin_launcher import powershell, runtime
 
 logger = logging.getLogger(__name__)
 
@@ -26,15 +27,35 @@ _RUN_KEY = r"Software\Microsoft\Windows\CurrentVersion\Run"
 _RUN_VALUE = "RinLauncher"
 
 
+class _SHELLEXECUTEINFOW(ctypes.Structure):
+    """ctypes 没有现成的 SHELLEXECUTEINFOW；Python 3.14 的 wintypes 也不导出它。"""
+
+    _fields_ = [
+        ("cbSize", ctypes.wintypes.DWORD),
+        ("fMask", ctypes.wintypes.ULONG),
+        ("hwnd", ctypes.wintypes.HWND),
+        ("lpVerb", ctypes.wintypes.LPCWSTR),
+        ("lpFile", ctypes.wintypes.LPCWSTR),
+        ("lpParameters", ctypes.wintypes.LPCWSTR),
+        ("lpDirectory", ctypes.wintypes.LPCWSTR),
+        ("nShow", ctypes.c_int),
+        ("hInstApp", ctypes.wintypes.HINSTANCE),
+        ("lpIDList", ctypes.c_void_p),
+        ("lpClass", ctypes.wintypes.LPCWSTR),
+        ("hkeyClass", ctypes.wintypes.HKEY),
+        ("dwHotKey", ctypes.wintypes.DWORD),
+        ("hIcon", ctypes.wintypes.HANDLE),
+        ("hProcess", ctypes.wintypes.HANDLE),
+    ]
+
+
 def _quote(args: Iterable[str]) -> str:
     return " ".join(f'"{arg}"' for arg in args)
 
 
 def _launch_elevated(target: str, params: str = "", cwd: str = "") -> bool:
     """Run *target* with the ``runas`` verb, triggering a UAC prompt."""
-    from ctypes import wintypes
-
-    request = wintypes.SHELLEXECUTEINFOW()
+    request = _SHELLEXECUTEINFOW()
     request.cbSize = ctypes.sizeof(request)
     request.fMask = _SEE_MASK
     request.lpVerb = "runas"
@@ -75,7 +96,7 @@ def _restart_target() -> tuple[str, list[str], str]:
     """
     args = [arg for arg in sys.argv[1:]
             if arg not in ("--recovery", "--safe-mode", "--diagnostic")]
-    if getattr(sys, "frozen", False):
+    if runtime.is_frozen():
         exe = sys.executable
         return exe, args, str(Path(exe).resolve().parent)
     entry = str(Path(sys.argv[0]).resolve())
@@ -138,7 +159,7 @@ def set_run_on_startup(enable: bool) -> bool:
 
     # 冻结包的 exe 路径可能含空格（Program Files / 中文目录）：Run 值里必须
     # 带引号，否则 Windows 会把路径截成第一个空格。
-    command = (f'"{sys.executable}"' if getattr(sys, "frozen", False)
+    command = (f'"{sys.executable}"' if runtime.is_frozen()
                else _quote([sys.executable, sys.argv[0]]))
     try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER, _RUN_KEY, 0, winreg.KEY_SET_VALUE) as key:

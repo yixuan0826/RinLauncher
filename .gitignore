@@ -11,8 +11,9 @@ venv/
 .ruff_cache/
 .pytest_cache/
 
-# PyInstaller
+# Build / release artifacts
 *.manifest
+RinLauncher.zip
 
 # Runtime（appmodset.conf 由 app_mode.load() 首次启动时生成，不随仓库分发）
 *.log
