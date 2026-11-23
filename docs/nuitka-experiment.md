@@ -92,6 +92,6 @@ UPX A/B（本机，3 次中位数）：
 
 ## 回滚
 
-1. 回退 `feat/nuitka-1.2.4-pre` 的提交，恢复 `build.spec` 与 PyInstaller 版本；
+1. 回退 `feat/nuitka-1.2.4-pre` 的提交，从 git 历史恢复 `build.spec` 与 PyInstaller 版本；
 2. 保留 `RinLauncher.zip` 资产名不变，旧版更新器即可继续工作；
 3. 若只是发布包异常，删除对应 tag / Release 后重发，不修改已发布资产内容。
