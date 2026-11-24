@@ -45,6 +45,9 @@ Item {
     property int currentIndex: 0
     property bool navCollapsed: false
 
+    readonly property string appVersion: ConfigManager
+        ? String(ConfigManager.getRuntimeInfo().version || "") : ""
+
     readonly property var updater: UpdateManager
     readonly property string updateState: updater ? updater.state : "idle"
     readonly property string updateMessage: updater ? updater.message : ""
@@ -81,16 +84,28 @@ Item {
         onTriggered: settingsPage.flush()
     }
 
+    // WinUI 3 NavigationView 的尺寸约定：展开 280 / 折叠 48。
+    // 页面内所有分类页用同一套左右留白，标题和卡片因此能严格对齐。
+    readonly property int navExpandedWidth: 280
+    readonly property int navCompactWidth: 48
+    readonly property real contentWidth: Math.max(
+        280, Math.min(settingsPage.width - navPane.width - 48, 860))
+    readonly property real contentX: Math.max(
+        24, (settingsPage.width - navPane.width - contentWidth) / 2)
+
     RowLayout {
         anchors.fill: parent
         spacing: 0
 
-        // ── 左侧分类栏 ────────────────────────────────────────────
+        // ── 左侧分类栏（WinUI NavigationView）────────────────────
         Rectangle {
-            id: navRail
+            id: navPane
+            objectName: "settingsNavPane"
             Layout.fillHeight: true
-            Layout.preferredWidth: settingsPage.navCollapsed ? 56 : 184
-            color: "transparent"
+            Layout.preferredWidth: settingsPage.navCollapsed
+                ? settingsPage.navCompactWidth
+                : settingsPage.navExpandedWidth
+            color: Theme.currentTheme.colors.layerColor
 
             Behavior on Layout.preferredWidth {
                 NumberAnimation {
@@ -109,93 +124,95 @@ Item {
 
             ColumnLayout {
                 anchors.fill: parent
-                anchors.margins: 8
-                spacing: 2
+                spacing: 0
 
+                // 汉堡按钮：展开时常驻左上角，折叠后仍留在同一位置。
                 Item {
                     Layout.fillWidth: true
-                    Layout.preferredHeight: 46
-                    Layout.bottomMargin: 4
+                    Layout.preferredHeight: 48
 
                     ToolButton {
-                        width: 32
-                        height: 32
+                        objectName: "settingsNavToggle"
+                        width: 40
+                        height: 40
+                        x: 4
                         anchors.verticalCenter: parent.verticalCenter
-                        x: settingsPage.navCollapsed
-                            ? (parent.width - width) / 2
-                            : parent.width - width
-                        icon.name: settingsPage.navCollapsed
-                            ? "ic_fluent_panel_left_expand_20_regular"
-                            : "ic_fluent_panel_left_contract_20_regular"
+                        icon.name: "ic_fluent_navigation_20_regular"
                         ToolTip.text: settingsPage.navCollapsed
                             ? qsTr("展开分类")
                             : qsTr("收起分类")
+                        ToolTip.delay: 400
                         onClicked: settingsPage.navCollapsed = !settingsPage.navCollapsed
                     }
                 }
 
-                Repeater {
-                    model: settingsPage.sections
+                // 导航项：40px 高、图标 20、文字与图标间距 16、左侧强调条。
+                ColumnLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 4
+                    spacing: 2
 
-                    delegate: Rectangle {
-                        id: navRow
+                    Repeater {
+                        model: settingsPage.sections
 
-                        readonly property bool active:
-                            settingsPage.currentIndex === index
+                        delegate: Item {
+                            id: navRow
 
-                        Layout.fillWidth: true
-                        Layout.preferredHeight: 42
-                        radius: Theme.currentTheme.appearance.smallRadius
-                        color: navRow.active
-                            ? Qt.rgba(Theme.currentTheme.colors.primaryColor.r,
-                                      Theme.currentTheme.colors.primaryColor.g,
-                                      Theme.currentTheme.colors.primaryColor.b,
-                                      0.14)
-                            : hoverHandler.hovered
-                                ? Theme.currentTheme.colors.subtleSecondaryColor
-                                : "transparent"
+                            readonly property bool active:
+                                settingsPage.currentIndex === index
 
-                        Behavior on color {
-                            ColorAnimation { duration: 120 }
-                        }
+                            Layout.fillWidth: true
+                            Layout.preferredHeight: 40
 
-                        Rectangle {
-                            width: 3
-                            height: 16
-                            radius: 2
-                            anchors.left: parent.left
-                            anchors.verticalCenter: parent.verticalCenter
-                            color: Theme.currentTheme.colors.primaryColor
-                            visible: navRow.active
-                        }
+                            Rectangle {
+                                id: navPill
+                                x: 4
+                                width: parent.width - 8
+                                height: 36
+                                anchors.verticalCenter: parent.verticalCenter
+                                radius: 4
+                                color: navRow.active
+                                    ? Qt.rgba(
+                                        Theme.currentTheme.colors.primaryColor.r,
+                                        Theme.currentTheme.colors.primaryColor.g,
+                                        Theme.currentTheme.colors.primaryColor.b,
+                                        0.14)
+                                    : hoverHandler.hovered
+                                        ? Theme.currentTheme.colors.subtleSecondaryColor
+                                        : "transparent"
 
-                        Icon {
-                            anchors.centerIn: parent
-                            visible: settingsPage.navCollapsed
-                            name: modelData.icon
-                            size: 18
-                            color: navRow.active
-                                ? Theme.currentTheme.colors.primaryColor
-                                : Theme.currentTheme.colors.textSecondaryColor
-                        }
+                                Behavior on color {
+                                    ColorAnimation { duration: 120 }
+                                }
+                            }
 
-                        RowLayout {
-                            anchors.fill: parent
-                            anchors.leftMargin: 14
-                            anchors.rightMargin: 10
-                            visible: !settingsPage.navCollapsed
-                            spacing: 12
+                            Rectangle {
+                                width: 3
+                                height: 16
+                                radius: 1.5
+                                x: 0
+                                anchors.verticalCenter: parent.verticalCenter
+                                color: Theme.currentTheme.colors.primaryColor
+                                visible: navRow.active
+                            }
 
                             Icon {
+                                x: settingsPage.navCollapsed
+                                    ? (parent.width - width) / 2
+                                    : 16
+                                anchors.verticalCenter: parent.verticalCenter
                                 name: modelData.icon
-                                size: 16
+                                size: 20
                                 color: navRow.active
-                                    ? Theme.currentTheme.colors.primaryColor
+                                    ? Theme.currentTheme.colors.textColor
                                     : Theme.currentTheme.colors.textSecondaryColor
                             }
 
                             Text {
-                                Layout.fillWidth: true
+                                visible: !settingsPage.navCollapsed
+                                x: 48
+                                width: parent.width - 60
+                                anchors.verticalCenter: parent.verticalCenter
                                 text: modelData.title
                                 wrapMode: Text.NoWrap
                                 elide: Text.ElideRight
@@ -203,23 +220,35 @@ Item {
                                     ? Theme.currentTheme.colors.textColor
                                     : Theme.currentTheme.colors.textSecondaryColor
                             }
-                        }
 
-                        ToolTip.visible: settingsPage.navCollapsed && hoverHandler.hovered
-                        ToolTip.text: modelData.title
-                        ToolTip.delay: 400
+                            ToolTip.visible: settingsPage.navCollapsed && hoverHandler.hovered
+                            ToolTip.text: modelData.title
+                            ToolTip.delay: 400
 
-                        HoverHandler {
-                            id: hoverHandler
-                        }
+                            HoverHandler {
+                                id: hoverHandler
+                            }
 
-                        TapHandler {
-                            onTapped: settingsPage.currentIndex = index
+                            TapHandler {
+                                onTapped: settingsPage.currentIndex = index
+                            }
                         }
                     }
                 }
 
                 Item { Layout.fillHeight: true }
+
+                Text {
+                    Layout.fillWidth: true
+                    Layout.leftMargin: 16
+                    Layout.rightMargin: 16
+                    Layout.bottomMargin: 16
+                    visible: !settingsPage.navCollapsed
+                    elide: Text.ElideRight
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.textSecondaryColor
+                    text: qsTr("Rin Launcher v%1").arg(settingsPage.appVersion)
+                }
             }
         }
 
@@ -229,15 +258,16 @@ Item {
             Layout.fillHeight: true
             spacing: 0
 
-            ColumnLayout {
+            // 与分类页内部的 Flickable 用同一套宽度公式，标题不再偏 8px。
+            Item {
                 Layout.fillWidth: true
-                Layout.leftMargin: 32
-                Layout.rightMargin: 32
-                Layout.topMargin: 22
-                Layout.bottomMargin: 8
-                spacing: 2
+                Layout.preferredHeight: 76
 
                 Text {
+                    x: settingsPage.contentX
+                    width: settingsPage.contentWidth
+                    anchors.bottom: parent.bottom
+                    anchors.bottomMargin: 18
                     typography: Typography.Title
                     color: Theme.currentTheme.colors.textColor
                     text: settingsPage.activeSection.title

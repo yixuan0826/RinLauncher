@@ -1897,10 +1897,18 @@ class ConfigManager(QObject):
     def restartWithMode(self, mode: str) -> bool:
         """带启动模式参数重启：recovery / safe / diagnostic / normal。"""
         mode = str(mode)
-        # appmodset.conf 的 recovery / failsafe 优先级高于命令行之外的一切；
+        # appmodset.conf 的 recovery / failsafe 优先级高于命令行之外的一切。
+        # 去恢复模式必须先把 recovery==true 落盘：重启等待期间命令行参数只是
+        # 一次性提示，文件标记才是「自动拉起后仍在恢复模式」的保证。
+        if mode == "recovery":
+            if not self._write_app_mode({"recovery": True, "failsafe": False}):
+                self.showToast.emit(
+                    "无法写入恢复标记（安装目录与数据目录不可写），程序不会重启",
+                    "error")
+                return False
         # 「继续使用」必须先把这两个标记清掉，否则重启后还是恢复进程。
-        if mode == "normal" and (self._app_mode_values.get("recovery")
-                                 or self._app_mode_values.get("failsafe")):
+        elif mode == "normal" and (self._app_mode_values.get("recovery")
+                                   or self._app_mode_values.get("failsafe")):
             if not self._write_app_mode({"recovery": False, "failsafe": False}):
                 # 两个位置都写不进去：重启只会再进恢复模式，先把原因说清楚。
                 self.showToast.emit(

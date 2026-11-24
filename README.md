@@ -4,7 +4,7 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.4-pre**（开发代号 **Hoshimi Miyabi**），
+即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.5-pre**（开发代号 **Hoshimi Miyabi**），
 是 1.3.0 的 Nuitka 预发布验证版（RinUI 0.5.0 / PySide6 6.12），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
@@ -84,7 +84,7 @@ python scripts/build_nuitka.py --zig --upx  # 本机没有 MSVC 时用 Nuitka �
 CI 生成 `RinLauncher.zip`。构建脚本会裁掉 WebEngine、3D、Charts、OpenGL 等
 未使用 Qt 模块；发布前可用 `scripts/bench_frozen.py` 测冻结包冷启动。
 
-1.2.4-pre 只发布便携 zip，不提供安装器；未签名产物的 SmartScreen 提示属预期。
+1.2.5-pre 只发布便携 zip，不提供安装器；未签名产物的 SmartScreen 提示属预期。
 
 ---
 
@@ -180,6 +180,11 @@ tests/          pytest 回归
 
 ## 版本记录
 
+- **1.2.5-pre**（Hoshimi Miyabi，1.3.0 预发布）：修复重启后不自动拉起、
+  源码模式重启入口错误和恢复模式标记未持久化；设置左侧导航改为标准
+  WinUI 3 NavigationView（280 / 48），设置标题与卡片统一对齐，最小窗口
+  调整为 900×620；新增重启与恢复标记回归测试。详见
+  [CHANGELOG.md](CHANGELOG.md)。
 - **1.2.4-pre**（Hoshimi Miyabi，1.3.0 预发布）：全面迁移到 Nuitka standalone，
   新增运行期路径兼容层、`--quit` 单实例命令与 UPX 主 exe 压缩；pypinyin 改为
   懒加载，裁掉未用 Qt 模块后 zip 约 51.8 MB；更新页拆出底部回滚区。详见

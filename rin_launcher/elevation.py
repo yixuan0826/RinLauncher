@@ -99,8 +99,12 @@ def _restart_target() -> tuple[str, list[str], str]:
     if runtime.is_frozen():
         exe = sys.executable
         return exe, args, str(Path(exe).resolve().parent)
-    entry = str(Path(sys.argv[0]).resolve())
-    return sys.executable, [entry, *args], str(Path(entry).parent)
+    # 源码模式不能拿 sys.argv[0] 当重启目标：README 推荐 ``python -m
+    # rin_launcher.main``，此时 argv[0] 是包里的 ``.../rin_launcher/main.py``，
+    # 直接按路径启动会走错 bootstrap（相对导入 / 资源根都不对）。统一用
+    # 模块入口，工作目录取可导入包的根（源码模式即仓库根）。
+    root = runtime.bundle_root()
+    return sys.executable, ["-m", "rin_launcher.main", *args], str(root)
 
 
 def _spawn_restart_helper(*, elevated: bool, extra: Iterable[str] = ()) -> bool:
@@ -123,8 +127,14 @@ def _spawn_restart_helper(*, elevated: bool, extra: Iterable[str] = ()) -> bool:
     if args:
         argument_list = "-ArgumentList @(" + ", ".join(quote(arg) for arg in args) + ")"
     verb = "-Verb RunAs" if elevated and not is_admin() else ""
+    # 不能只固定睡 2 秒：退出时要停托盘、热键、配置监听，偶尔会超过 2 秒。
+    # 新进程如果先看到旧实例的锁，会把 show 发给正在退出的旧进程然后自杀，
+    # 表现就是「点了重启，程序关掉后再也没起来」。这里直接等旧 PID 消失。
     script = "\n".join([
-        "Start-Sleep -Seconds 2",
+        "$deadline = (Get-Date).AddSeconds(30)",
+        f"while ((Get-Process -Id {os.getpid()} -ErrorAction SilentlyContinue) "
+        "-and ((Get-Date) -lt $deadline)) { Start-Sleep -Milliseconds 200 }",
+        "Start-Sleep -Milliseconds 300",
         f"Start-Process -FilePath {quote(exe)} {argument_list} {verb}".strip(),
         "Remove-Item -LiteralPath $PSCommandPath -Force -ErrorAction SilentlyContinue",
     ])

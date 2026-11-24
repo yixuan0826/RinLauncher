@@ -7,10 +7,11 @@ import "pages"
 FluentWindowBase {
     id: settingsWindow
 
-    width: 1000
+    width: 1040
     height: 760
-    minimumWidth: 860
-    minimumHeight: 600
+    // 280px 展开导航 + 至少 620px 内容，宽表格 / 双按钮行不会被裁切。
+    minimumWidth: 900
+    minimumHeight: 620
     title: qsTr("设置")
     titleEnabled: true
 

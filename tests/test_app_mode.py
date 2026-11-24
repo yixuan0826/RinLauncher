@@ -76,6 +76,38 @@ def test_complete_oobe_writes_first_run_false(qapp, tmp_path):
         manager.stopWatching()
 
 
+def test_restart_with_mode_persists_recovery(qapp, tmp_path, monkeypatch):
+    """重启到恢复模式必须写 recovery==true，否则新进程又回到普通模式。"""
+    from rin_launcher import config_manager as manager_module
+
+    manager = manager_module.ConfigManager(config_dir=tmp_path, app_mode_root=tmp_path)
+    calls = []
+
+    class _DummyApp:
+        @staticmethod
+        def quit():
+            calls.append("quit")
+
+    monkeypatch.setattr(
+        manager_module, "restart_application",
+        lambda extra=(): calls.append(list(extra)) or True)
+    monkeypatch.setattr(manager_module, "QCoreApplication", _DummyApp)
+    try:
+        assert manager.restartWithMode("recovery") is True
+        values, _, _ = app_mode.load(tmp_path)
+        assert values["recovery"] is True
+        assert values["failsafe"] is False
+        assert calls == [["--recovery"], "quit"]
+
+        assert manager.restartWithMode("normal") is True
+        values, _, _ = app_mode.load(tmp_path)
+        assert values["recovery"] is False
+        assert values["failsafe"] is False
+        assert calls[-2:] == [[], "quit"]
+    finally:
+        manager.stopWatching()
+
+
 def test_window_settings_are_normalized(qapp, tmp_path):
     from rin_launcher.config_manager import ConfigManager
 
