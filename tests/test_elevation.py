@@ -56,6 +56,22 @@ def test_restart_target_uses_module_entry_when_source(monkeypatch, tmp_path):
     assert Path(cwd) == tmp_path
 
 
+def test_restart_target_uses_canonical_exe(monkeypatch, tmp_path):
+    """从旧的 python.exe 入口启动时，重启也必须拉起 RinLauncher.exe。"""
+    exe = tmp_path / "RinLauncher.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(runtime, "_is_compiled", lambda: True)
+    monkeypatch.setattr(elevation.sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.setattr(elevation.sys, "argv", [str(tmp_path / "python.exe")])
+    monkeypatch.setattr(runtime, "launch_target", lambda: exe)
+
+    target, args, cwd = elevation._restart_target()
+
+    assert Path(target) == exe
+    assert args == []
+    assert Path(cwd) == tmp_path
+
+
 def test_restart_helper_waits_for_old_process(monkeypatch):
     """固定 sleep 会和慢退出撞上单实例锁；脚本必须等旧 PID 消失。"""
     captured = {}

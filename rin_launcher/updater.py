@@ -23,7 +23,6 @@ import logging
 import os
 import re
 import shutil
-import sys
 import threading
 import time
 import urllib.error
@@ -706,7 +705,7 @@ class UpdateManager(QObject):
             if not ok:
                 self._fail(f"更新包完整性校验失败：{detail}")
                 return
-            target = Path(sys.executable).resolve().parent
+            target = runtime.app_dir()
             script = self._updates_dir() / "apply-update.ps1"
             result = self._result_file()
             marker = self._updates_dir() / UPDATE_MARKER
@@ -813,7 +812,7 @@ class UpdateManager(QObject):
                 "没有找到更新前备份，无法自动回滚；请重新安装或运行 repair.ps1",
                 "warning")
             return
-        target = Path(sys.executable).resolve().parent
+        target = runtime.app_dir()
         script = self._updates_dir() / "restore-backup.ps1"
         powershell.write_script(script, self._restore_script())
         try:
@@ -821,7 +820,7 @@ class UpdateManager(QObject):
                 "-TargetPid", str(os.getpid()),
                 "-Backup", str(backup),
                 "-Target", str(target),
-                "-Exe", Path(sys.executable).name,
+                "-Exe", runtime.launch_target().name,
                 "-LogFile", str(self._result_file()),
             ], cwd=target)
             logger.info("Repair helper started: pid=%s backup=%s", proc.pid, backup)

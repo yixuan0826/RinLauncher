@@ -1,6 +1,6 @@
 # AGENTS.md — Rin Launcher 接手指南
 
-> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.6-pre`（commit `a052473`）。
+> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.7-pre`。
 > 先读完本文件再动代码。规则优先级：用户当场指令 > 本文件 > 个人偏好。
 > 不确定就查代码 / 官方文档，不要凭记忆断言。
 
@@ -24,8 +24,8 @@ Rin Launcher 是 Windows 10/11 的启动台：常驻右下角的小窗、托盘�
    `prerelease=true`、`make_latest=false`，不做安装器、不签名。SmartScreen
    提示是预期行为，不要用自签名证书“修”它。
 3. **版本号单一来源**：只改 `rin_launcher/__init__.py` 的 `__version__`。
-   构建时 Windows 文件版本由 `scripts/build_nuitka.py` 把 `1.2.6-pre` 转成
-   `1.2.6.0`；Release 版本从 git tag 取。不要在别处再写死版本号。
+   构建时 Windows 文件版本由 `scripts/build_nuitka.py` 把 `1.2.7-pre` 转成
+   `1.2.7.0`；Release 版本从 git tag 取。不要在别处再写死版本号。
 4. **Nuitka + UPX 策略**：只对主 exe 执行 `upx --best`。不要压 Qt DLL /
    插件：实测冷启动会从约 1.05 s 退化到约 2.2 s，已明确拒绝。
 5. **zip 体积门禁 55 MiB**（CI 用 PowerShell 的 1 MB = 1,048,576 B）。
@@ -109,6 +109,16 @@ Files 安装，需要把这段合并前移。
 - 源码模式重启用 `sys.executable -m rin_launcher.main`，工作目录
   `runtime.bundle_root()`。**不要回到 `sys.argv[0]`**：`python -m` 下它
   指向包内 `main.py`，直接按路径启动会走错 bootstrap。
+- **不要把 `sys.executable` 当安装 exe**：Nuitka standalone 默认把它设成
+  `<安装目录>\python.exe`（构建时 Python 的 basename），这个文件并不存在；
+  从旧快捷方式、8.3 短路径或改名副本启动时还可能指向别处。自启动、重启、
+  提权辅助、更新 / 修复、通知注册统一走 `runtime.launch_target()`。
+  `main.py` 在导入 Qt 之前会调用
+  `runtime.adopt_canonical_executable()` 把它归一到
+  `runtime.app_dir() / "RinLauncher.exe"`，启动日志里的 `Runtime:` 行会
+  记录 `exe / raw / processImage / launchTarget`。
+- 排查启动路径用 `RinLauncher.exe --runtime-info=<json>`；CI 的冻结包冒烟
+  会同时验收正常启动和「复制成 python.exe 启动」两种路径。
 - 重启辅助脚本会等旧 PID 消失（最多 60 s），再 `Start-Process`；拉起后观察
   1.5 s，子进程提前退出会重试（最多 5 次），全程写
   `%TEMP%\rinlauncher-restart-<pid>.log`。不要改回「固定睡 2 秒」：退出时停
@@ -264,11 +274,11 @@ git status --short                 # 必须干净
 
 ```powershell
 git add <具体文件>
-git commit -m "fix(1.2.6-pre): ..."
+git commit -m "fix(1.2.7-pre): ..."
 git push origin main
 
-git tag v1.2.6-pre
-git push origin v1.2.6-pre
+git tag v1.2.7-pre
+git push origin v1.2.7-pre
 ```
 
 tag 必须匹配 `^v\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$`，否则
@@ -301,7 +311,7 @@ Release 必须全部通过的关键步骤：
 
 ```powershell
 $rel = Invoke-RestMethod -Headers $h `
-  "https://api.github.com/repos/yixuan0826/RinLauncher/releases/tags/v1.2.6-pre"
+  "https://api.github.com/repos/yixuan0826/RinLauncher/releases/tags/v1.2.7-pre"
 $rel.prerelease          # True
 $rel.assets | Select-Object name, size, digest
 ```
@@ -328,20 +338,25 @@ $rel.assets | Select-Object name, size, digest
    统一走 `powershell.write_script()`：`BOM_UTF8 + text.encode("utf-8")`。
 2. **Nuitka 不设 `sys.frozen`**，只注入 `__compiled__`；路径判断统一走
    `runtime.py`。
-3. **源码重启不能用 `sys.argv[0]`**，用 `-m rin_launcher.main`。
-4. **固定 sleep 重启会撞单实例锁**；必须等旧 PID 退出。
-5. **恢复标记不落盘**会导致重启后回正常模式；恢复模式只认文件标记 +
+3. **Nuitka 的 `sys.executable` 不是安装 exe**：standalone 默认把它设成
+   `<安装目录>\python.exe`（构建 Python 的 basename），正常双击也会得到一个
+   不存在的路径。自启动、重启、更新、通知注册统一用
+   `runtime.launch_target()`；启动时 `adopt_canonical_executable()` 会把它
+   归一到 `RinLauncher.exe`。
+4. **源码重启不能用 `sys.argv[0]`**，用 `-m rin_launcher.main`。
+5. **固定 sleep 重启会撞单实例锁**；必须等旧 PID 退出。
+6. **恢复标记不落盘**会导致重启后回正常模式；恢复模式只认文件标记 +
    一次性命令行参数。
-6. **QML 图标名不存在时是空白**，不是报错；只用已验证的 `ic_fluent_*`。
-7. **设置标题与卡片宽度公式不一致**会产生 8 px 错位；改一边必须改另一边。
-8. **更新器只认 `RinLauncher.zip`**；Release 不要加第二个 zip 或改资产名。
-9. **zip 体积门禁很紧**（当前 54.47 / 55 MiB），新增依赖前先看产物。
-10. **qmllint 的 warning 走 stderr**；CI 必须通过
+7. **QML 图标名不存在时是空白**，不是报错；只用已验证的 `ic_fluent_*`。
+8. **设置标题与卡片宽度公式不一致**会产生 8 px 错位；改一边必须改另一边。
+9. **更新器只认 `RinLauncher.zip`**；Release 不要加第二个 zip 或改资产名。
+10. **zip 体积门禁很紧**（当前 54.51 / 55 MiB），新增依赖前先看产物。
+11. **qmllint 的 warning 走 stderr**；CI 必须通过
     `scripts/lint_qml.py`，不要用 PowerShell 直接循环调用。
-11. **本地根目录会生成 `appmodset.conf`**（源码探针 / 首次运行）；
+12. **本地根目录会生成 `appmodset.conf`**（源码探针 / 首次运行）；
     它被 `.gitignore` 忽略，但发布前要清掉。
-12. **`gh` 不可用**；不要假设能 `gh run watch`，用 REST API 或网页。
-13. **不需要本地完整构建**；CI 是发布构建的权威，除非用户明确要求本地
+13. **`gh` 不可用**；不要假设能 `gh run watch`，用 REST API 或网页。
+14. **不需要本地完整构建**；CI 是发布构建的权威，除非用户明确要求本地
     冻结包验证。
 
 ## 11. 当前基线与最近工作
@@ -373,6 +388,14 @@ $rel.assets | Select-Object name, size, digest
   - UWP 图标按真实像素面积取最大变体，图标与缩略图至少 128×128；
   - 启动时清理更新残留；托盘菜单样式、迷你条内边距；
   - 缩略图清理 / 自动备份延后到首帧之后。
+- **1.2.7-pre**：
+  - `runtime.launch_target()` / `adopt_canonical_executable()`：Nuitka 的
+    `sys.executable` 归一到安装目录的 `RinLauncher.exe`；
+  - 自启动、重启、提权辅助、更新 / 修复、通知注册改用归一后的路径；
+  - 启动日志增加 `Runtime:` 快照；隐藏入口 `--runtime-info=<json>`；
+  - 关于页诊断增加 Exe / Install / Startup；启动项失效时弹一次提示；
+  - `assets/` 改从 `runtime.bundle_root()` 取；
+  - CI 冻结包冒烟覆盖正常启动与「复制成 python.exe 启动」。
 
 ### 11.2 当前发布基线
 
@@ -388,8 +411,9 @@ $rel.assets | Select-Object name, size, digest
 
 ### 11.3 下一步建议
 
-1. 真机点一次「重启」「重启到恢复模式」「继续使用」，确认 GUI 端到端。
-2. 在设置里重新选择一次「管理员自启动」，重建指向当前程序的任务。
+1. 更新到 1.2.7 后看启动日志的 `Runtime:` 行，确认 `exe` / `launchTarget`
+   都是安装目录的 `RinLauncher.exe`；再在设置里重新选择一次「管理员自启动」。
+2. 真机点一次「重启」「重启到恢复模式」「继续使用」，确认 GUI 端到端。
 3. 1.3.0 前决定是否做 Inno Setup 安装器与代码签名；不做则继续便携 zip。
 4. 若支持 Program Files 安装，数据目录 `appmodset.conf` 覆盖已前移到单实例
    判断之前（1.2.6-pre）；后续只需补测试。

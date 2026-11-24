@@ -98,8 +98,8 @@ def _restart_target() -> tuple[str, list[str], str]:
     args = [arg for arg in sys.argv[1:]
             if arg not in ("--recovery", "--safe-mode", "--diagnostic")]
     if runtime.is_frozen():
-        exe = sys.executable
-        return exe, args, str(Path(exe).resolve().parent)
+        exe = runtime.launch_target()
+        return str(exe), args, str(exe.parent)
     # 源码模式不能拿 sys.argv[0] 当重启目标：README 推荐 ``python -m
     # rin_launcher.main``，此时 argv[0] 是包里的 ``.../rin_launcher/main.py``，
     # 直接按路径启动会走错 bootstrap（相对导入 / 资源根都不对）。统一用
@@ -216,7 +216,7 @@ def _startup_command() -> str:
     # 冻结包的 exe 路径可能含空格（Program Files / 中文目录）：Run 值里必须
     # 带引号，否则 Windows 会把路径截成第一个空格。
     if runtime.is_frozen():
-        return f'"{sys.executable}"'
+        return f'"{runtime.launch_target()}"'
     return _quote([sys.executable, sys.argv[0]])
 
 

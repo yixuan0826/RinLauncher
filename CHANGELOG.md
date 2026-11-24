@@ -3,6 +3,72 @@
 本文件记录 Rin Launcher 的用户可见变更。更早版本见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
 
+## 1.2.7-pre（1.3.0 预发布）— 2026-11-24
+
+> **预发布**：修复 Nuitka 迁移后暴露的启动路径问题。旧快捷方式 / 任务计划
+> 指向的 `python.exe` 已经不存在，导致管理员自启动、重启、更新和通知注册
+> 全部拿着一个坏路径。资产仍为 `RinLauncher.zip`，不提供安装器、未签名。
+
+### 根因
+
+Nuitka standalone 会把 `sys.executable` 设成「安装目录 + 构建时 Python 的
+文件名」，也就是 `<安装目录>\python.exe`，而不是 `RinLauncher.exe`。这个
+文件根本不存在——**即使正常双击 RinLauncher.exe 也会命中**；从改名副本、
+8.3 短路径或 PyInstaller 时代留下的 `python.exe` 快捷方式启动时还可能指向
+别处。这不是旧的 PyInstaller 残留文件，而是 Nuitka standalone 的默认行为。
+之后所有「再启动一个自己」的逻辑都会复制这个坏路径：
+
+- 管理员自启动任务 / 注册表指向 `python.exe`，登录时找不到文件；
+- 重启辅助脚本拉起一个不存在的 exe，表现为「关掉后再也没起来」——
+  1.2.5 只修了「等旧 PID 退出」，目标路径本身仍是坏的，所以冻结包里
+  重启依旧失败；
+- 更新修复脚本尝试启动 `python.exe`，更新完成后程序不回来；
+- 系统通知的开始菜单快捷方式也指向坏路径。
+
+更早版本创建的管理员自启动任务也是用这个坏路径写进去的；它看起来像
+PyInstaller 时代的残留，其实是 Nuitka standalone 的默认值。
+
+### 修复
+
+- **启动路径归一**：新增 `runtime.launch_target()` /
+  `runtime.adopt_canonical_executable()`。冻结包启动时（包括正常双击）
+  优先认安装目录下的 `RinLauncher.exe`，把 `sys.executable` 改回它。
+- **全部改用归一后的路径**：自启动命令与任务创建、重启辅助脚本、提权辅助
+  进程、更新 / 修复脚本的 `-Exe`、通知快捷方式注册，都不再直接信任
+  `sys.executable`。
+- **启动诊断**：启动日志新增一行
+  `Runtime: frozen=… exe=… raw=… image=… argv0=… app_dir=… launch=…`；
+  其中 `raw` 是归一旦前的原始 `sys.executable`（通常就是坏掉的
+  `<安装目录>\python.exe`）。新增隐藏入口 `--runtime-info=<路径>`，
+  把同一份信息写成 JSON。
+- **关于页诊断**：复制诊断信息里增加 `Exe` / `Install` / `Startup` 三项，
+  下次再遇到「启动项指向旧路径」可以直接看出来。
+- **启动项失效提示**：设置里开了自启动、系统里却没有（或仍指向旧程序）时，
+  启动 12 秒后弹一次警告，提示到「设置 → 通用 → 启动方式」重新选择。
+- **资源路径**：`assets/` 从 `runtime.bundle_root()` 取，不再依赖
+  `__file__`，Nuitka 的模块路径语义变化不会再把通知图标带偏。
+
+### 发布流程
+
+- 冻结包冒烟新增两项：`--runtime-info` 验收正常启动路径；把 exe 复制成
+  `python.exe` 再启动，验收归一逻辑真的把 `sys.executable` 改回
+  `RinLauncher.exe`。CI 会直接拦住这类回归。
+- 清掉本地 2.3 GB 旧构建残留（1.2.4 的 `dist/`、UPX 试验包、旧 zip），
+  避免手工测试误用旧产物。
+
+### 维护
+
+- 新增运行期路径、归一逻辑、自启动命令、重启目标、启动项提示的回归测试；
+  全量测试 232 项通过。
+- 版本号、更新日志、README、Roadmap、接手指南同步到 `1.2.7-pre`。
+
+### 已知事项
+
+- 已经被旧版本写成 `python.exe` 的任务 / 注册表项不会自动删除；本版会把
+  它标记为失效并提示，重新选择一次启动方式即可覆盖为
+  `RinLauncher.exe`。
+- Win10 22H2 冻结包仍未在本轮复测，正式验证以 CI 产物为准。
+
 ## 1.2.6-pre（1.3.0 预发布）— 2026-11-24
 
 > **预发布**：1.2.5-pre 之后的一轮综合修复，重点是重启与管理员自启动、

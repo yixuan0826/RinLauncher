@@ -132,6 +132,44 @@ def test_commands_match_ignores_quotes_and_slashes():
                               '"C:\\Other\\RinLauncher.exe"')
 
 
+def test_startup_command_uses_canonical_exe(monkeypatch, tmp_path):
+    exe = tmp_path / "RinLauncher.exe"
+    exe.write_bytes(b"")
+    monkeypatch.setattr(autostart.runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(autostart.runtime, "launch_target", lambda: exe)
+
+    assert autostart.startup_launcher_command() == f'"{exe}"'
+
+
+def test_create_task_uses_canonical_exe(monkeypatch, tmp_path):
+    """旧 python.exe 入口启动时，任务也必须写回 RinLauncher.exe。"""
+    exe = tmp_path / "RinLauncher.exe"
+    exe.write_bytes(b"")
+    calls = []
+
+    class _Result:
+        returncode = 0
+        stdout = b""
+        stderr = b""
+
+    monkeypatch.setattr(autostart.runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(autostart.runtime, "launch_target", lambda: exe)
+    monkeypatch.setattr(
+        autostart, "_schtasks", lambda args: calls.append(args) or _Result())
+
+    assert autostart.create_task() is True
+    assert calls and calls[0][:2] == ["/Create", "/F"]
+    assert calls[0][calls[0].index("/TR") + 1] == f'"{exe}"'
+
+
+def test_create_task_fails_cleanly_without_exe(monkeypatch, tmp_path):
+    monkeypatch.setattr(autostart.runtime, "is_frozen", lambda: True)
+    monkeypatch.setattr(
+        autostart.runtime, "launch_target", lambda: tmp_path / "missing.exe")
+
+    assert autostart.create_task() is False
+
+
 def test_source_launcher_must_point_at_current_bundle(tmp_path, monkeypatch):
     monkeypatch.setenv("RINLAUNCHER_CONFIG_DIR", str(tmp_path))
     launcher = autostart._source_launcher_path()

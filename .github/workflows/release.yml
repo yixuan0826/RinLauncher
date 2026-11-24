@@ -59,6 +59,52 @@ jobs:
         run: |
           $exe = Join-Path (Get-Location) "dist/RinLauncher/RinLauncher.exe"
           if (-not (Test-Path $exe)) { throw "missing $exe" }
+
+          # Nuitka standalone 的 sys.executable 来自启动时的 argv[0]；如果构建
+          # 机 / 启动副本把它写成 python.exe，自启动和重启都会指向不存在的文件。
+          # 这里用隐藏入口把运行期路径落成 JSON，直接验收归一步骤。
+          $infoPath = Join-Path (Get-Location) "runtime-info.json"
+          $proc = Start-Process -FilePath $exe -ArgumentList "--runtime-info=$infoPath" -Wait -PassThru
+          if ($proc.ExitCode -ne 0) { throw "runtime-info exited $($proc.ExitCode)" }
+          if (-not (Test-Path $infoPath)) { throw "runtime-info was not written" }
+          $info = Get-Content $infoPath -Raw | ConvertFrom-Json
+          if ($info.frozen -ne "True") { throw "runtime-info says frozen=$($info.frozen)" }
+          if ([IO.Path]::GetFileName($info.launchTarget) -ne "RinLauncher.exe") {
+            throw "launchTarget is not RinLauncher.exe: $($info.launchTarget)"
+          }
+          if (-not (Test-Path $info.launchTarget)) {
+            throw "launchTarget does not exist: $($info.launchTarget)"
+          }
+          if ([IO.Path]::GetFileName($info.executable) -ne "RinLauncher.exe") {
+            throw "sys.executable was not normalized: $($info.executable)"
+          }
+          Remove-Item $infoPath -Force
+          Write-Host "Frozen runtime paths OK: $($info.executable)"
+
+          # 复现用户现场：把 exe 复制成 python.exe 启动。Nuitka 会把
+          # sys.executable 设成这个副本名；归一逻辑必须把自启动 / 重启指回
+          # 安装目录的 RinLauncher.exe。
+          $renamed = Join-Path (Split-Path $exe) "python.exe"
+          Copy-Item $exe $renamed -Force
+          $renamedInfo = Join-Path (Get-Location) "runtime-info-renamed.json"
+          $renamedProc = Start-Process -FilePath $renamed `
+            -ArgumentList "--runtime-info=$renamedInfo" -Wait -PassThru
+          if ($renamedProc.ExitCode -ne 0) {
+            throw "renamed runtime-info exited $($renamedProc.ExitCode)"
+          }
+          $renamedData = Get-Content $renamedInfo -Raw | ConvertFrom-Json
+          if ([IO.Path]::GetFileName($renamedData.executable) -ne "RinLauncher.exe") {
+            throw "renamed launch was not normalized: $($renamedData.executable)"
+          }
+          if ([IO.Path]::GetFileName($renamedData.launchTarget) -ne "RinLauncher.exe") {
+            throw "renamed launchTarget: $($renamedData.launchTarget)"
+          }
+          if ([IO.Path]::GetFileName($renamedData.processImage) -ne "python.exe") {
+            throw "renamed processImage: $($renamedData.processImage)"
+          }
+          Remove-Item $renamed,$renamedInfo -Force
+          Write-Host "Renamed launch normalized OK: $($renamedData.executable)"
+
           $proc = Start-Process -FilePath $exe -ArgumentList "--recovery" -PassThru
           Start-Sleep -Seconds 8
           if ($proc.HasExited) { throw "frozen exe exited during recovery smoke test" }

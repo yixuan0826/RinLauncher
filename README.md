@@ -4,7 +4,7 @@
 > 自启动等功能会接触系统，请自行评估风险后使用。
 
 基于 **RinUI（PySide6 + QML）** 的 Windows 桌面启动台：常驻右下角的小窗负责「点一下
-即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.6-pre**（开发代号 **Hoshimi Miyabi**），
+即可」，启动台编辑与设置各自独立成窗。当前版本 **1.2.7-pre**（开发代号 **Hoshimi Miyabi**），
 是 1.3.0 的 Nuitka 预发布验证版（RinUI 0.5.0 / PySide6 6.12），完整变更见
 [更新日志](CHANGELOG.md)，历史发行见
 [Releases](https://github.com/yixuan0826/RinLauncher/releases)。
@@ -86,7 +86,7 @@ python scripts/build_nuitka.py --zig --upx  # 本机没有 MSVC 时用 Nuitka �
 CI 生成 `RinLauncher.zip`。构建脚本会裁掉 WebEngine、3D、Charts、OpenGL 等
 未使用 Qt 模块；发布前可用 `scripts/bench_frozen.py` 测冻结包冷启动。
 
-1.2.6-pre 只发布便携 zip，不提供安装器；未签名产物的 SmartScreen 提示属预期。
+1.2.7-pre 只发布便携 zip，不提供安装器；未签名产物的 SmartScreen 提示属预期。
 
 ---
 
@@ -177,11 +177,19 @@ tests/          pytest 回归
 - 下拉用 `onActivated: function (index) {...}`；弹窗用 `dialogs/AppDialog.qml`。
 - 检查：`ruff check rin_launcher tests scripts` 与 `pytest -q`。
 - 真机 UI 验证：`python scripts/verify_ui.py`（窗口自动置底，抓图输出到 `build/verify-ui/`）。
+- 启动路径诊断：`RinLauncher.exe --runtime-info=<json>`（源码 / 冻结都支持），
+  输出 `sys.executable`、真实进程映像、安装目录与归一后的启动目标；自启动 /
+  重启指向旧 exe 时先看这里。
 - 冷启动分段计时：`python scripts/bench_startup.py`（无头，适合同机前后对比）。
 - 重依赖（`winrt` / `pycaw` / `watchdog`）保持延迟导入，不要挪回模块顶层。
 
 ## 版本记录
 
+- **1.2.7-pre**（Hoshimi Miyabi，1.3.0 预发布）：修复 Nuitka 默认把
+  `sys.executable` 指到 `<安装目录>\python.exe` 导致的启动路径问题——
+  自启动、重启、更新与通知注册不再指向不存在的文件；新增启动诊断日志、
+  `--runtime-info` 与启动项失效提示；CI 冒烟覆盖「复制成 python.exe
+  启动」的归一场景。详见 [CHANGELOG.md](CHANGELOG.md)。
 - **1.2.6-pre**（Hoshimi Miyabi，1.3.0 预发布）：重启辅助脚本延长等待并
   自动重试，修复恢复模式被旧实例挡掉；管理员自启动改为校验命令是否指向
   当前程序；小窗右键菜单回归（快捷方式运行 / 管理员运行 / 编辑，存储卡

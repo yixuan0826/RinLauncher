@@ -34,7 +34,7 @@ def _shortcut_path() -> Path:
 def _target() -> tuple[str, str]:
     """返回 (可执行文件, 参数)。源码运行时指向 pythonw + main.py。"""
     if runtime.is_frozen():
-        return str(Path(sys.executable).resolve()), ""
+        return str(runtime.launch_target()), ""
     python = Path(sys.executable)
     windowed = python.with_name("pythonw.exe")
     exe = windowed if windowed.is_file() else python

@@ -2,8 +2,19 @@
 
 > 复盘于 2026-10-16（v1.0.0 之后）。按「先基建、后功能、再发布级」推进；
 > 已完成的条目直接从清单移除，历史见 git log。
-> 当前开发线：**1.2.6-pre（1.3.0 预发布验证线）**；1.2.0（Hoshimi Miyabi）
-> 已发布，1.2.4-pre / 1.2.5-pre / 1.2.6-pre 是 1.3.0 的预览版。
+> 当前开发线：**1.2.7-pre（1.3.0 预发布验证线）**；1.2.0（Hoshimi Miyabi）
+> 已发布，1.2.4-pre / 1.2.5-pre / 1.2.6-pre / 1.2.7-pre 是 1.3.0 的预览版。
+
+## 已完成（2026-11-24，1.2.7-pre）
+
+- [x] `runtime.launch_target()` / `adopt_canonical_executable()`：Nuitka 的
+      `sys.executable` 归一到安装目录的 `RinLauncher.exe`
+- [x] 自启动、重启、提权辅助、更新 / 修复、通知注册全部改用归一后的路径
+- [x] 启动日志增加 `Runtime:` 路径快照；新增隐藏入口 `--runtime-info=<json>`
+- [x] 关于页诊断增加 Exe / Install / Startup；启动项失效时弹一次提示
+- [x] `assets/` 改从 `runtime.bundle_root()` 取，不再依赖 `__file__`
+- [x] CI 冒烟覆盖正常启动与「复制成 python.exe 启动」两种路径
+- [x] 清理旧版 `dist/`、UPX 试验包与旧 zip 等本地构建残留
 
 ## 已完成（2026-11-24，1.2.6-pre）
 

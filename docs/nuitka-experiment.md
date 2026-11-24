@@ -12,6 +12,26 @@
 - `install-manifest.json`、`repair.ps1`、`data/` 同级写入、单实例行为都不变；
 - 不需要修改更新器的资产名 `rinlauncher.zip`。
 
+## `sys.executable` 与启动路径（1.2.7-pre）
+
+Nuitka standalone 会把 `sys.executable` 设成「安装目录 + 构建时 Python 的
+文件名」，也就是 `<安装目录>\python.exe`，而不是 `RinLauncher.exe`。这个
+文件并不存在——**正常双击也会命中**。从这些入口启动时还可能指向别处：
+
+- PyInstaller 时代留下的 `python.exe` 快捷方式 / 任务计划；
+- 8.3 短路径（如 `D:\RINLAU~1\...`）；
+- 为测试改名的副本（`python.exe`）。
+
+后果是所有「再启动一个自己」的逻辑都复制坏路径：管理员自启动、重启、
+更新 / 修复脚本、通知快捷方式。现在的规则：
+
+- 启动时 `runtime.adopt_canonical_executable()` 把 `sys.executable` 改回
+  `runtime.app_dir() / "RinLauncher.exe"`；
+- 业务代码统一用 `runtime.launch_target()`，不要直接读 `sys.executable`；
+- `RinLauncher.exe --runtime-info=<json>` 输出启动路径快照（含归一旦前的
+  `rawExecutable`）；
+- CI 冻结包冒烟会把 exe 复制成 `python.exe` 再启动，验收归一逻辑。
+
 ## 构建
 
 本地没有 MSVC 时：

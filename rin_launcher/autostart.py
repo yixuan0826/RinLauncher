@@ -137,7 +137,7 @@ def startup_launcher_command(write: bool = True) -> str:
     用户配置目录里，Run 值不需要工作目录也能起来。
     """
     if runtime.is_frozen():
-        return f'"{sys.executable}"'
+        return f'"{runtime.launch_target()}"'
     pythonw = Path(sys.executable).with_name("pythonw.exe")
     runner = pythonw if pythonw.exists() else Path(sys.executable)
     launcher = _source_launcher_path()
@@ -257,14 +257,19 @@ def refresh_task_exists_async(on_done=None) -> None:
 
 def create_task() -> bool:
     """创建 / 覆盖「管理员自启动」任务（登录触发 + 最高权限）。需要管理员。"""
-    command = startup_launcher_command()
     if runtime.is_frozen():
-        if not Path(sys.executable).is_file():
-            logger.error("当前 exe 不存在，无法创建自启动任务：%s", sys.executable)
+        exe = runtime.launch_target()
+        if not exe.is_file():
+            logger.error(
+                "找不到可创建自启动任务的 RinLauncher.exe："
+                "launch=%s app_dir=%s", sys.executable, runtime.app_dir())
             return False
-    elif not _source_launcher_path().is_file():
-        logger.error("源码模式的自启动入口没有落盘，无法创建任务")
-        return False
+        command = f'"{exe}"'
+    else:
+        command = startup_launcher_command()
+        if not _launcher_is_current():
+            logger.error("源码模式的自启动入口没有落盘或已失效，无法创建任务")
+            return False
     result = _schtasks([
         "/Create", "/F", "/TN", TASK_NAME, "/TR", command,
         "/SC", "ONLOGON", "/RL", "HIGHEST",
@@ -336,7 +341,8 @@ def spawn_apply_elevated(mode: str) -> bool:
     from rin_launcher.elevation import run_elevated
 
     if runtime.is_frozen():
-        return run_elevated(sys.executable, f"--set-startup-mode={mode}")
+        return run_elevated(str(runtime.launch_target()),
+                            f"--set-startup-mode={mode}")
     return run_elevated(
         sys.executable,
         f'"{Path(sys.argv[0]).resolve()}" --set-startup-mode={mode}')

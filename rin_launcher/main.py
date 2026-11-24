@@ -43,6 +43,14 @@ if str(_BOOT_ROOT) not in sys.path:
 
 from rin_launcher import runtime  # noqa: E402
 
+# Nuitka standalone 会把 sys.executable 设成启动时的 argv[0]；旧快捷方式 /
+# 改名副本 / 8.3 短路径可能指向一个早已删除的 python.exe。先归一到安装目录
+# 的 RinLauncher.exe，后面的自启动、重启、更新与通知注册才不会复制坏路径。
+try:
+    _ADOPTED_EXECUTABLE = runtime.adopt_canonical_executable()
+except Exception:  # 路径异常不该拖垮整个启动
+    _ADOPTED_EXECUTABLE = None
+
 PROJECT_ROOT = runtime.bundle_root()
 COMPACT_ENTRY = PROJECT_ROOT / "qml" / "CompactWindow.qml"
 EDITOR_ENTRY = PROJECT_ROOT / "qml" / "LauncherEditorWindow.qml"
@@ -123,6 +131,35 @@ def _setup_logging(config_manager: ConfigManager) -> None:
     log_file = logging_setup.setup(
         config_manager.config_dir, level_name, console=sys.stdout is not None)
     logger.info("Log file: %s", log_file)
+
+
+def _log_runtime_info() -> None:
+    """把启动路径写进日志：排查「自启动 / 重启指向旧 python.exe」时先看这里。"""
+    info = runtime.describe()
+    logger.info(
+        "Runtime: frozen=%s exe=%s raw=%s image=%s argv0=%s app_dir=%s "
+        "bundle=%s launch=%s meipass=%s",
+        info["frozen"], info["executable"], info["rawExecutable"],
+        info["processImage"] or "-", info["argv0"], info["appDir"],
+        info["bundleRoot"], info["launchTarget"], info["meipass"] or "-")
+    if _ADOPTED_EXECUTABLE is not None:
+        previous, canonical = _ADOPTED_EXECUTABLE
+        image = Path(info["processImage"]) if info["processImage"] else None
+        if image is not None and image.name.lower() != "rinlauncher.exe":
+            # 真正的改名副本 / 旧快捷方式：进程映像不是 RinLauncher.exe。
+            logger.warning(
+                "当前进程由 %s 启动，不是 RinLauncher.exe；已把程序路径归一到 %s",
+                info["processImage"], canonical)
+        else:
+            # Nuitka standalone 的默认行为：sys.executable 是 <安装目录>\python.exe。
+            logger.info(
+                "Nuitka 的 sys.executable 指向 %s，已归一到 %s",
+                previous, canonical)
+    target = Path(info["launchTarget"])
+    if info["frozen"] == "True" and not target.is_file():
+        logger.error(
+            "找不到 RinLauncher.exe，自启动 / 重启 / 更新都会失败："
+            "launch=%s app_dir=%s", target, info["appDir"])
 
 
 class Launcher:
@@ -792,6 +829,32 @@ class Launcher:
         else:
             logger.info("%s", note)
 
+    def _check_startup_mismatch(self) -> None:
+        """设置里开了自启动、系统里却没有（或指向旧程序）时提示一次。
+
+        旧版本用坏的 ``sys.executable`` 创建的任务 / Run 值会指向
+        ``python.exe``；这里只在启动后查一次，避免每帧读注册表。
+        """
+        if self.recovery_only or self.config_manager.isFirstRun():
+            return
+        configured = str(self.config_manager.config["settings"].get(
+            "startupMode", "off"))
+        if configured == "off":
+            return
+        from rin_launcher import autostart
+
+        try:
+            actual = autostart.startup_state()
+        except Exception:
+            logger.debug("检查启动项状态失败", exc_info=True)
+            return
+        if actual == configured:
+            return
+        logger.warning("启动项与设置不一致：设置=%s，实际=%s", configured, actual)
+        self.config_manager.showToast.emit(
+            "自启动项已失效，可能还指向旧版本；请在设置 → 通用 → 启动方式里重新选择一次。",
+            "warning")
+
     def quit(self) -> None:
         self.hotkey.unregister()
         self.tray.stop()
@@ -823,6 +886,7 @@ class Launcher:
             QTimer.singleShot(1200, self.config_manager.startWatching)
             QTimer.singleShot(4000, self.config_manager._start_startup_prefetch)
             QTimer.singleShot(5000, self._auto_check_updates)
+            QTimer.singleShot(12000, self._check_startup_mismatch)
 
         try:
             return self.app.exec()
@@ -832,6 +896,23 @@ class Launcher:
 
 def main() -> int:
     _install_crash_handler()
+    # 隐藏的诊断入口：把运行期路径写成 JSON，CI 用它确认冻结包的
+    # sys.executable / launchTarget 都指向 RinLauncher.exe。
+    for arg in sys.argv[1:]:
+        if arg.startswith("--runtime-info"):
+            _, _, raw_path = arg.partition("=")
+            payload = runtime.describe()
+            payload["version"] = __version__
+            text = json.dumps(payload, ensure_ascii=False, indent=2)
+            if raw_path:
+                try:
+                    Path(raw_path).write_text(text, encoding="utf-8")
+                except OSError as exc:
+                    print(f"cannot write runtime info: {exc}", file=sys.stderr)
+                    return 1
+            else:
+                print(text)
+            return 0
     # 隐藏的辅助入口：三态启动方式里的任务计划重活在提权进程里干完就退，
     # 完全不进 Qt、不抢单实例锁（见 rin_launcher/autostart.py）。
     for arg in sys.argv[1:]:
@@ -876,6 +957,7 @@ def main() -> int:
 
     launcher = Launcher(app)
     _setup_logging(launcher.config_manager)
+    _log_runtime_info()
     _install_qml_logging()
     launcher.log_startup_notes()
     if launcher.recovery_only:

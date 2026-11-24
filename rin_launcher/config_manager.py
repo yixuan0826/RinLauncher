@@ -80,7 +80,7 @@ from rin_launcher.system_theme import read_system_accent_color
 logger = logging.getLogger(__name__)
 
 DEFAULT_CONFIG_DIR = Path.home() / "AppData" / "Roaming" / "RinLauncher"
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+ASSETS_DIR = runtime.bundle_root() / "assets"
 BUNDLED_ICON_DIR = ASSETS_DIR / "icons" / "lawnicons"
 
 # ── 常驻小窗的两块 ──────────────────────────────────────────────────
@@ -2431,6 +2431,11 @@ class ConfigManager(QObject):
         if windows_build:
             system = f"{system} ({windows_build})"
         log_file = logging_setup.file_for(self.log_dir)
+        startup_mode = str(self.config["settings"].get("startupMode", "off"))
+        try:
+            startup_state = autostart.startup_state()
+        except Exception:
+            startup_state = "unknown"
         info: dict[str, Any] = {
             "version": APP_VERSION,
             "codename": APP_CODENAME,
@@ -2445,6 +2450,10 @@ class ConfigManager(QObject):
             "iconDir": str(self.icon_dir),
             "logDir": str(self.log_dir),
             "logFile": str(log_file),
+            "executable": str(runtime.launch_target()),
+            "appDir": str(runtime.app_dir()),
+            "startupMode": startup_mode,
+            "startupState": startup_state,
             "backend": "RinUI 0.5.0（pip 依赖，MIT）",
         }
         info["diagnostics"] = (
@@ -2452,6 +2461,9 @@ class ConfigManager(QObject):
             f"Python {platform.python_version()}\n"
             f"Qt {qVersion()} / PySide6 {pyside_version}\n"
             f"Windows {platform.release()} {info['windowsBuild']}\n"
+            f"Exe: {info['executable']}\n"
+            f"Install: {info['appDir']}\n"
+            f"Startup: {startup_mode} (system={startup_state})\n"
             f"Config: {self.config_dir}\n"
             f"Log: {log_file}"
         )
