@@ -1123,6 +1123,10 @@ class UpdateManager(QObject):
         if updates.is_dir():
             targets.extend(updates.glob("staging-*"))
             targets.extend(updates.glob("rollback-*.zip"))
+            # 下载完成后 install 脚本会删 payload；中断 / 手动安装会留下 zip。
+            # 启动阶段用户还没开始新下载，全部清掉是安全的。
+            targets.extend(updates.glob("RinLauncher-*.zip"))
+            targets.append(updates / "apply-update.ps1")
         for path in targets:
             try:
                 if path.is_dir():
@@ -1144,6 +1148,17 @@ class UpdateManager(QObject):
                 removed.append(stale.name)
         except OSError:
             logger.debug("无法清理旧的更新备份", exc_info=True)
+        # 安装结果日志只留最近 5 份；更早的已经诊断不到，只会占空间。
+        try:
+            results = sorted(
+                (path for path in self._config.log_dir.glob("update-apply-*.txt")
+                 if path.is_file()),
+                key=lambda path: path.stat().st_mtime, reverse=True)
+            for stale in results[5:]:
+                stale.unlink(missing_ok=True)
+                removed.append(stale.name)
+        except OSError:
+            logger.debug("无法清理旧的更新结果日志", exc_info=True)
         if removed:
             logger.info("已清理旧的更新残留：%s", ", ".join(removed))
 

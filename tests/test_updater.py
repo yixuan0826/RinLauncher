@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import ast
 import codecs
+import os
 import subprocess
 import sys
 import tempfile
@@ -416,3 +417,45 @@ def test_startup_cleans_legacy_update_residue(qapp, tmp_path):
     UpdateManager(manager)
     assert not (updates / "staging-1").exists()
     assert not (updates / "rollback-123.zip").exists()
+
+
+def test_cleanup_removes_downloads_and_keeps_recovery_marker(qapp, tmp_path, monkeypatch):
+    import rin_launcher.updater as updater_module
+
+    app_root = tmp_path / "app"
+    app_root.mkdir()
+    config_dir = tmp_path / "data"
+    manager = cm.ConfigManager(config_dir=config_dir)
+    updates = config_dir / "updates"
+    updates.mkdir(parents=True, exist_ok=True)
+
+    (app_root / "old.zip").write_bytes(b"0")
+    for index, name in enumerate(("backup-old", "backup-mid", "backup-new")):
+        folder = app_root / name
+        folder.mkdir()
+        (folder / "x.bin").write_bytes(b"0")
+        os.utime(folder, (1000 + index, 1000 + index))
+    (updates / "staging-1").mkdir()
+    (updates / "RinLauncher-1.2.3.zip").write_bytes(b"0")
+    (updates / "apply-update.ps1").write_text("old", encoding="ascii")
+    marker = updates / "update-in-progress.json"
+    marker.write_text("{}", encoding="utf-8")
+    for index in range(1, 8):
+        log = manager.log_dir / f"update-apply-{index}.txt"
+        log.write_text("start", encoding="utf-8")
+        os.utime(log, (1000 + index, 1000 + index))
+
+    monkeypatch.setattr(updater_module.runtime, "app_dir", lambda: app_root)
+    UpdateManager(manager)
+
+    assert not (app_root / "old.zip").exists()
+    assert not (updates / "staging-1").exists()
+    assert not (updates / "RinLauncher-1.2.3.zip").exists()
+    assert not (updates / "apply-update.ps1").exists()
+    # 标记文件是恢复 / 回滚的依据，清理不能碰。
+    assert marker.is_file()
+    assert not (app_root / "backup-old").exists()
+    assert (app_root / "backup-mid").is_dir()
+    assert (app_root / "backup-new").is_dir()
+    remaining = sorted(path.name for path in manager.log_dir.glob("update-apply-*.txt"))
+    assert remaining == [f"update-apply-{index}.txt" for index in range(3, 8)]

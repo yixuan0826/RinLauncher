@@ -23,6 +23,8 @@ Item {
 
     signal storageActivated()
     signal slotActivated(var slot)
+    signal storageContextRequested(real x, real y)
+    signal usbContextRequested(real x, real y)
 
     implicitHeight: 72
     readonly property int cardHeight: 66
@@ -70,7 +72,15 @@ Item {
                 MouseArea {
                     anchors.fill: parent
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.storageActivated()
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: {
+                        if (mouse.button === Qt.RightButton) {
+                            var global = mapToGlobal(mouse.x, mouse.y)
+                            root.storageContextRequested(global.x, global.y)
+                        } else {
+                            root.storageActivated()
+                        }
+                    }
                 }
 
                 RowLayout {
@@ -173,7 +183,18 @@ Item {
                     hoverEnabled: true
                     enabled: usbCard.device !== null
                     cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                    onClicked: ConfigManager.openRemovableDrive()
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: {
+                        if (mouse.button === Qt.RightButton) {
+                            if (!usbCard.device) {
+                                return
+                            }
+                            var global = mapToGlobal(mouse.x, mouse.y)
+                            root.usbContextRequested(global.x, global.y)
+                        } else {
+                            ConfigManager.openRemovableDrive()
+                        }
+                    }
                 }
 
                 RowLayout {

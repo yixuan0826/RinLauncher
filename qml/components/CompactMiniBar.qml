@@ -15,7 +15,10 @@ Item {
     property var usbDevices: []
 
     signal slotActivated(var slot)
+    signal slotContextRequested(var slot, real x, real y)
     signal storageActivated()
+    signal storageContextRequested(real x, real y)
+    signal usbContextRequested(real x, real y)
     // 传的是锚点 item：菜单要靠它算屏幕坐标。
     signal moreRequested(var anchor)
 
@@ -52,7 +55,15 @@ Item {
                     anchors.fill: parent
                     hoverEnabled: true
                     cursorShape: Qt.PointingHandCursor
-                    onClicked: root.slotActivated(modelData)
+                    acceptedButtons: Qt.LeftButton | Qt.RightButton
+                    onClicked: {
+                        if (mouse.button === Qt.RightButton) {
+                            var global = mapToGlobal(mouse.x, mouse.y)
+                            root.slotContextRequested(modelData, global.x, global.y)
+                        } else {
+                            root.slotActivated(modelData)
+                        }
+                    }
                 }
 
                 ToolTip.text: modelData.name || ""
@@ -75,6 +86,8 @@ Item {
                 anchors.fill: parent
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
                 spacing: 6
 
                 AppIcon {
@@ -114,7 +127,15 @@ Item {
                 anchors.fill: parent
                 hoverEnabled: true
                 cursorShape: Qt.PointingHandCursor
-                onClicked: root.storageActivated()
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: {
+                    if (mouse.button === Qt.RightButton) {
+                        var global = mapToGlobal(mouse.x, mouse.y)
+                        root.storageContextRequested(global.x, global.y)
+                    } else {
+                        root.storageActivated()
+                    }
+                }
             }
             ToolTip.text: String(root.storage.path || "")
             ToolTip.visible: storageMouse.containsMouse
@@ -136,6 +157,8 @@ Item {
                 anchors.fill: parent
                 anchors.leftMargin: 8
                 anchors.rightMargin: 8
+                anchors.topMargin: 4
+                anchors.bottomMargin: 4
                 spacing: 6
 
                 AppIcon {
@@ -176,7 +199,18 @@ Item {
                 hoverEnabled: true
                 enabled: root.usbDevices.length > 0
                 cursorShape: enabled ? Qt.PointingHandCursor : Qt.ArrowCursor
-                onClicked: ConfigManager.openRemovableDrive()
+                acceptedButtons: Qt.LeftButton | Qt.RightButton
+                onClicked: {
+                    if (mouse.button === Qt.RightButton) {
+                        if (root.usbDevices.length === 0) {
+                            return
+                        }
+                        var global = mapToGlobal(mouse.x, mouse.y)
+                        root.usbContextRequested(global.x, global.y)
+                    } else {
+                        ConfigManager.openRemovableDrive()
+                    }
+                }
             }
             ToolTip.text: root.usbDevices.length > 0
                 ? qsTr("%1 · 剩余 %2")

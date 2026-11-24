@@ -69,7 +69,21 @@ FluentWindowBase {
         editorWindow.closeRequested()
     }
 
+    // 小窗右键「编辑」由 main.py 写入 {row, index}；窗口可能刚创建，也可能
+    // 已经开着，所以放在属性变化里处理，不依赖信号连接时序。
+    property var pendingEdit: null
+
+    onPendingEditChanged: {
+        var target = pendingEdit
+        if (!target || target.row === undefined || target.index === undefined) {
+            return
+        }
+        pendingEdit = null
+        launcherSettingsPage.openSlotEditor(Number(target.row), Number(target.index))
+    }
+
     LauncherSettingsPage {
+        id: launcherSettingsPage
         anchors.fill: parent
     }
 }

@@ -143,6 +143,38 @@ def load(root: Path | None = None) -> tuple[dict[str, Any], list[str], Path]:
     return values, problems, path
 
 
+def load_effective(root: Path | None = None,
+                   data_dir: Path | None = None) -> tuple[dict[str, Any], list[str], Path]:
+    """读取安装目录配置，并叠加数据目录里的覆盖文件。
+
+    安装到 Program Files 这类只读目录时，``update()`` 会退到数据目录写
+    ``appmodset.conf``。抢单实例锁之前只有这个函数能看到覆盖值；否则
+    ``recovery==true`` 要等到 ``ConfigManager`` 构造完才生效，恢复模式会被
+    旧实例挡掉。
+    """
+    values, problems, path = load(root)
+    if data_dir is None:
+        return values, problems, path
+    override_path = Path(data_dir) / CONF_NAME
+    if not override_path.is_file():
+        return values, problems, path
+    try:
+        if override_path.resolve() == path.resolve():
+            return values, problems, path
+    except OSError:
+        pass
+    try:
+        override_values, override_problems, _ = load(Path(data_dir))
+    except OSError:
+        logger.debug("读取数据目录 appmodset 覆盖失败", exc_info=True)
+        return values, problems, path
+    for key in DEFAULTS:
+        if key in override_values:
+            values[key] = override_values[key]
+    problems.extend(f"用户目录覆盖：{item}" for item in override_problems)
+    return values, problems, path
+
+
 def update(root: Path | None, updates: dict[str, Any]) -> bool:
     """按行改写配置，保留未知行与用户的注释。
 

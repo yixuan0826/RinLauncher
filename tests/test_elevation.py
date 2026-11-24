@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import ctypes
+import subprocess
+import sys
+import time
 from pathlib import Path
 
+import pytest
+
 import rin_launcher.elevation as elevation
-from rin_launcher import runtime
+from rin_launcher import powershell, runtime
 
 
 def test_shell_execute_info_struct_exists():
@@ -75,3 +80,56 @@ def test_restart_helper_waits_for_old_process(monkeypatch):
     assert "Start-Sleep -Seconds 2" not in script
     assert "Start-Process -FilePath 'C:\\Apps\\RinLauncher.exe'" in script
     assert "-ArgumentList @('--demo')" in script
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell 重启脚本只在 Windows 可用")
+def test_restart_helper_launches_target_after_old_pid_exits(tmp_path):
+    fake = tmp_path / "fake_app.py"
+    fake.write_text(
+        "import pathlib, time\n"
+        "pathlib.Path('marker.txt').write_text('ok', encoding='ascii')\n"
+        "time.sleep(3)\n",
+        encoding="utf-8")
+    dummy = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(0.2)"])
+    log = elevation._restart_log_path(dummy.pid)
+    log.unlink(missing_ok=True)
+    try:
+        script = elevation._restart_script(
+            sys.executable, [str(fake)], str(tmp_path), dummy.pid,
+            run_as=False, timeout=10)
+        script_path = powershell.write_script(tmp_path / "restart.ps1", script)
+        proc = powershell.spawn_hidden(script_path)
+        assert proc.wait(timeout=30) == 0
+    finally:
+        dummy.wait(timeout=10)
+    marker = tmp_path / "marker.txt"
+    for _ in range(50):
+        if marker.exists():
+            break
+        time.sleep(0.1)
+    assert marker.is_file()
+    assert marker.read_text(encoding="ascii").strip() == "ok"
+    assert "OK" in powershell.read_text(log)
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="PowerShell 重启脚本只在 Windows 可用")
+def test_restart_helper_does_not_launch_when_old_pid_stays(tmp_path):
+    fake = tmp_path / "fake_app.py"
+    fake.write_text(
+        "import pathlib\npathlib.Path('marker.txt').write_text('ok', encoding='ascii')\n",
+        encoding="utf-8")
+    dummy = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(10)"])
+    log = elevation._restart_log_path(dummy.pid)
+    log.unlink(missing_ok=True)
+    try:
+        script = elevation._restart_script(
+            sys.executable, [str(fake)], str(tmp_path), dummy.pid,
+            run_as=False, timeout=1)
+        script_path = powershell.write_script(tmp_path / "restart.ps1", script)
+        proc = powershell.spawn_hidden(script_path)
+        assert proc.wait(timeout=30) == 2
+    finally:
+        dummy.terminate()
+        dummy.wait(timeout=10)
+    assert not (tmp_path / "marker.txt").exists()
+    assert "old-process-timeout" in powershell.read_text(log)

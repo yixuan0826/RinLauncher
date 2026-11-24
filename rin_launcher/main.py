@@ -53,7 +53,7 @@ ICON_FILE = PROJECT_ROOT / "assets" / "icon.ico"
 
 # RinUI 导入期就要把 HiDPI 配好，必须早于任何 QApplication 的创建。
 import RinUI  # noqa: F401
-from PySide6.QtCore import QStandardPaths, QTimer
+from PySide6.QtCore import QObject, QStandardPaths, QTimer
 from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QApplication
 from RinUI import RinUIWindow
@@ -132,9 +132,12 @@ class Launcher:
         self.app = app
         self.config_manager = ConfigManager()
         self.config_manager.action_executor = ActionExecutor(self.config_manager)
+        self.config_manager.editSlotRequested.connect(self.open_editor_slot)
 
         # 三个 QML 根：桌面小窗、启动台编辑窗口、设置窗口。后两个按需创建。
         self.compact: RinUIWindow | None = None
+        # 小窗右键 / 「更多」菜单是独立顶层窗口，需要单独裁圆角。
+        self._compact_menu: QObject | None = None
         self.editor: RinUIWindow | None = None
         self.settings: RinUIWindow | None = None
         self.recovery: RinUIWindow | None = None
@@ -387,6 +390,7 @@ class Launcher:
         root.openMainRequested.connect(self.show_page)
         root.hideRequested.connect(self.hide_compact)
         root.quitRequested.connect(self.quit)
+        self._wire_compact_menu(root)
 
         # 小窗不是 RinUI 的 FluentWindow，需要手动把 hwnd 注册给 ThemeManager，
         # 之后才能用和完整窗口同一套云母 / 增强云母。
@@ -433,6 +437,46 @@ class Launcher:
             dark = False
         effects.apply_backdrop(root, BackdropEffect.None_.value, dark)
         root.setProperty("backdropActive", False)
+
+    def _wire_compact_menu(self, root: QObject) -> None:
+        """给小窗里的独立菜单窗口补圆角。
+
+        菜单是不透明顶层窗口，圆角不能再靠「窗口透明 + QML 圆角矩形」，
+        否则透明表面一旦丢帧，整块菜单会变成透明的。Win11 让 DWM 裁，
+        Win10 用窗口 region 裁，和启动台本体同一套策略。
+        """
+        menu = root.findChild(QObject, "compactMenuWindow")
+        if menu is None:
+            logger.warning("Compact menu window is missing")
+            return
+        self._compact_menu = menu
+        effects.apply_win11_round_corners(menu)
+        for signal_name in ("widthChanged", "heightChanged", "visibleChanged"):
+            signal = getattr(menu, signal_name, None)
+            if signal is not None:
+                signal.connect(self._update_compact_menu_region)
+        self._update_compact_menu_region()
+
+    def _update_compact_menu_region(self, *_args) -> None:
+        """Win10：菜单显示 / 改尺寸时重设圆角 region。"""
+        menu = self._compact_menu
+        if menu is None or is_win11():
+            return
+        try:
+            height = int(menu.property("height") or 0)
+            visible = bool(menu.property("visible"))
+        except (TypeError, ValueError):
+            return
+        # 收起时 height 会回到 8；此时留着上一份 region，避免下次 show()
+        # 前把菜单裁成一条。真正显示前一定还会再调一次。
+        if height <= 8 and not visible:
+            return
+        try:
+            radius = int(menu.property("surfaceRadius") or 8)
+        except (TypeError, ValueError):
+            radius = 8
+        if not effects.apply_round_window_region(menu, radius):
+            logger.debug("Failed to apply compact menu region")
 
     def sync_primary_screen(self, *_args) -> None:
         """把主显示器的可用区域同步给小窗。
@@ -672,6 +716,14 @@ class Launcher:
         root.requestActivate()
         self._settle_backdrop(self.editor)
 
+    def open_editor_slot(self, row: int, index: int) -> None:
+        """小窗右键「编辑」：打开启动台编辑窗口并弹出对应格子的编辑器。"""
+        self.show_editor()
+        if self.editor is None or self.editor.root_window is None:
+            return
+        self.editor.root_window.setProperty(
+            "pendingEdit", {"row": int(row), "index": int(index)})
+
     def show_settings(self, section: str = "") -> None:
         if not self.ensure_settings_window():
             return
@@ -808,9 +860,13 @@ def main() -> int:
     # 恢复类模式是救命通道，不抢锁也不被旧实例拦截。
     recovery_mode = any(arg in RECOVERY_FLAGS for arg in sys.argv[1:])
     # appmodset.conf 的 failsafe / recovery 也属于恢复类启动，同样不抢单实例锁。
+    # 只读安装目录不够：Program Files 下恢复标记会写到数据目录的覆盖文件，
+    # 必须在抢锁之前就把覆盖值叠进来，否则恢复模式会被旧实例挡掉。
     from rin_launcher import app_mode as _app_mode
+    from rin_launcher.config_manager import peek_config_dir
 
-    conf_mode = _app_mode.effective_mode(_app_mode.load()[0])
+    conf_mode = _app_mode.effective_mode(
+        _app_mode.load_effective(None, peek_config_dir())[0])
     recovery_mode = recovery_mode or conf_mode.recovery_only
     if not recovery_mode:
         guard = acquire_single_instance()

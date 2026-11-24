@@ -1,6 +1,6 @@
 # AGENTS.md — Rin Launcher 接手指南
 
-> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.5-pre`（commit `441b7a6`）。
+> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.6-pre`（commit `<待填>`）。
 > 先读完本文件再动代码。规则优先级：用户当场指令 > 本文件 > 个人偏好。
 > 不确定就查代码 / 官方文档，不要凭记忆断言。
 
@@ -24,8 +24,8 @@ Rin Launcher 是 Windows 10/11 的启动台：常驻右下角的小窗、托盘�
    `prerelease=true`、`make_latest=false`，不做安装器、不签名。SmartScreen
    提示是预期行为，不要用自签名证书“修”它。
 3. **版本号单一来源**：只改 `rin_launcher/__init__.py` 的 `__version__`。
-   构建时 Windows 文件版本由 `scripts/build_nuitka.py` 把 `1.2.5-pre` 转成
-   `1.2.5.0`；Release 版本从 git tag 取。不要在别处再写死版本号。
+   构建时 Windows 文件版本由 `scripts/build_nuitka.py` 把 `1.2.6-pre` 转成
+   `1.2.6.0`；Release 版本从 git tag 取。不要在别处再写死版本号。
 4. **Nuitka + UPX 策略**：只对主 exe 执行 `upx --best`。不要压 Qt DLL /
    插件：实测冷启动会从约 1.05 s 退化到约 2.2 s，已明确拒绝。
 5. **zip 体积门禁 55 MiB**（CI 用 PowerShell 的 1 MB = 1,048,576 B）。
@@ -109,9 +109,11 @@ Files 安装，需要把这段合并前移。
 - 源码模式重启用 `sys.executable -m rin_launcher.main`，工作目录
   `runtime.bundle_root()`。**不要回到 `sys.argv[0]`**：`python -m` 下它
   指向包内 `main.py`，直接按路径启动会走错 bootstrap。
-- 重启辅助脚本会等旧 PID 消失（最多 30 s）再 `Start-Process`。不要改回
-  「固定睡 2 秒」：退出时停托盘 / 热键 / 监听偶尔更慢，新进程会撞上单实例
-  锁后静默退出，表现为「程序关掉后再也没起来」。
+- 重启辅助脚本会等旧 PID 消失（最多 60 s），再 `Start-Process`；拉起后观察
+  1.5 s，子进程提前退出会重试（最多 5 次），全程写
+  `%TEMP%\rinlauncher-restart-<pid>.log`。不要改回「固定睡 2 秒」：退出时停
+  托盘 / 热键 / 监听偶尔更慢，新进程会撞上单实例锁后静默退出，表现为
+  「程序关掉后再也没起来」。
 - 更新安装脚本自己会等 60 s + 1.2 s，再覆盖、校验、拉起；不要把这段等待
   删掉或缩短到不可靠的固定值。
 
@@ -158,8 +160,9 @@ Files 安装，需要把这段合并前移。
   左侧内容限制在行宽 60%，宽输入框会被挤变形。
 - 图标名必须是 `Utils.fontIconIndex` 里存在的 `ic_fluent_*`；不确定就用
   项目里已经出现的名字。`AppIcon` 支持 `lawnicons:`、`file:`、`url:`。
-- `CompactWindow.qml` 刻意不导入 `QtQuick.Window`，避免和 RinUI 的 Window
-  重名；该文件的注释说明了原因，不要“顺手”加回去。
+- `CompactWindow.qml` 在 `import RinUI` **之后**再 `import QtQuick.Window`：
+  QML 里后导入的类型优先，这样 `Window` / `Text` 解析到 Qt Quick 原生类型，
+  而不是 RinUI 自带标题栏与背景的窗口包装。不要调换导入顺序。
 - QML 用 `qsTr()`；中文正文用全角标点；文件 UTF-8；不要在代码 / 注释 /
   提交信息里写角色口癖或梗。
 
@@ -261,11 +264,11 @@ git status --short                 # 必须干净
 
 ```powershell
 git add <具体文件>
-git commit -m "fix(1.2.5-pre): ..."
+git commit -m "fix(1.2.6-pre): ..."
 git push origin main
 
-git tag v1.2.5-pre
-git push origin v1.2.5-pre
+git tag v1.2.6-pre
+git push origin v1.2.6-pre
 ```
 
 tag 必须匹配 `^v\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$`，否则
@@ -298,7 +301,7 @@ Release 必须全部通过的关键步骤：
 
 ```powershell
 $rel = Invoke-RestMethod -Headers $h `
-  "https://api.github.com/repos/yixuan0826/RinLauncher/releases/tags/v1.2.5-pre"
+  "https://api.github.com/repos/yixuan0826/RinLauncher/releases/tags/v1.2.6-pre"
 $rel.prerelease          # True
 $rel.assets | Select-Object name, size, digest
 ```
@@ -357,6 +360,19 @@ $rel.assets | Select-Object name, size, digest
   - 设置左侧导航改为 WinUI 3 NavigationView（280 / 48），标题与卡片
     统一宽度，最小窗口 900×620；
   - 新增重启与恢复标记回归测试。
+- **1.2.6-pre**：
+  - 重启辅助脚本等旧 PID 上限 60 s、拉起后观察 1.5 s 并在提前退出时重试，
+    全程写 `%TEMP%\rinlauncher-restart-<pid>.log`；软件内重启先返回 QML 栈，
+    再由 `QTimer.singleShot(0, quit)` 退出；
+  - 自启动解析 `schtasks /XML` 与 `HKCU\...\Run`，校验命令是否指向当前程序；
+    源码模式改用 `startup-launcher.py`；
+  - 抢单实例锁前合并数据目录 `appmodset.conf` 覆盖；
+  - 小窗右键菜单：快捷方式运行 / 管理员运行 / 编辑，存储卡打开 / 编辑，
+    U 盘打开 / 刷新；坐标统一 `mapToGlobal`，菜单改不透明窗口 +
+    DWM / Win10 region 圆角；
+  - UWP 图标按真实像素面积取最大变体，图标与缩略图至少 128×128；
+  - 启动时清理更新残留；托盘菜单样式、迷你条内边距；
+  - 缩略图清理 / 自动备份延后到首帧之后。
 
 ### 11.2 当前发布基线
 
@@ -373,11 +389,12 @@ $rel.assets | Select-Object name, size, digest
 ### 11.3 下一步建议
 
 1. 真机点一次「重启」「重启到恢复模式」「继续使用」，确认 GUI 端到端。
-2. 1.3.0 前决定是否做 Inno Setup 安装器与代码签名；不做则继续便携 zip。
-3. 若支持 Program Files 安装，把数据目录 `appmodset.conf` 覆盖合并前移到
-   单实例判断之前。
-4. 关注 zip 体积；新增依赖后先跑 CI 体积门禁。
-5. 更新器 / 恢复模式的新改动优先补纯逻辑测试，避免测试里真弹 UAC。
+2. 在设置里重新选择一次「管理员自启动」，重建指向当前程序的任务。
+3. 1.3.0 前决定是否做 Inno Setup 安装器与代码签名；不做则继续便携 zip。
+4. 若支持 Program Files 安装，数据目录 `appmodset.conf` 覆盖已前移到单实例
+   判断之前（1.2.6-pre）；后续只需补测试。
+5. 关注 zip 体积；新增依赖后先跑 CI 体积门禁。
+6. 更新器 / 恢复模式的新改动优先补纯逻辑测试，避免测试里真弹 UAC。
 
 ## 12. 交付格式
 

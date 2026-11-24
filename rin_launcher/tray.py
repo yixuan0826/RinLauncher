@@ -13,7 +13,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Signal
 from PySide6.QtGui import QAction, QIcon
-from PySide6.QtWidgets import QMenu, QSystemTrayIcon
+from PySide6.QtWidgets import QApplication, QMenu, QSystemTrayIcon
 
 logger = logging.getLogger(__name__)
 
@@ -71,8 +71,36 @@ class TrayIcon(QObject):
         if self._tray is not None:
             self._tray.showMessage(title, text, QSystemTrayIcon.Information, 3000)
 
+    @staticmethod
+    def _menu_style() -> str:
+        """给原生 QMenu 套一层接近 Fluent 的间距与配色。
+
+        QSystemTrayIcon 的菜单是 Qt 自绘的，QSS 能生效；系统托盘弹层本身
+        仍是原生窗口，所以不强行做透明圆角（那会出现方形底色）。
+        """
+        palette = QApplication.palette()
+        dark = palette.window().color().lightness() < 128
+        background = "#2b2b2b" if dark else "#f9f9f9"
+        text = "#f3f3f3" if dark else "#1a1a1a"
+        hover = "#3a3a3a" if dark else "#eaeaea"
+        border = "#4a4a4a" if dark else "#e0e0e0"
+        disabled = "#8a8a8a" if dark else "#9a9a9a"
+        return (
+            "QMenu {"
+            f" background-color: {background}; color: {text};"
+            f" border: 1px solid {border}; border-radius: 8px; padding: 6px;"
+            " }"
+            "QMenu::item {"
+            " padding: 7px 28px 7px 12px; border-radius: 4px; min-width: 180px;"
+            " }"
+            f"QMenu::item:selected {{ background-color: {hover}; color: {text}; }}"
+            f"QMenu::item:disabled {{ color: {disabled}; }}"
+            f"QMenu::separator {{ height: 1px; background: {border}; margin: 5px 8px; }}"
+        )
+
     def _build_menu(self, title: str) -> QMenu:
         menu = QMenu()
+        menu.setStyleSheet(self._menu_style())
 
         show = QAction(f"显示 {title}", menu)
         show.triggered.connect(self.showLauncherRequested.emit)

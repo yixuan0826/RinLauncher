@@ -13,14 +13,17 @@ import uuid
 from collections.abc import Callable
 from pathlib import Path
 
-from PySide6.QtCore import QFileInfo
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import QFileInfo, Qt
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QApplication, QFileDialog, QFileIconProvider
 
 from rin_launcher import start_menu
 from rin_launcher.drives import human_size
 
 logger = logging.getLogger(__name__)
+
+#: 小窗最大格子 88px，2x DPI 需要 176px；128 是兼容旧图标库的最低落盘尺寸。
+ICON_MIN_SIZE = 128
 
 # 这些后缀是「图片」，走导入；其余（exe/dll/lnk…）走系统图标提取。
 IMAGE_ICON_SUFFIXES: tuple[str, ...] = (".svg", ".png", ".ico", ".jpg", ".jpeg", ".bmp")
@@ -77,6 +80,16 @@ class IconStore:
         if self._notify is not None:
             self._notify(message, severity)
 
+    def _save_pixmap(self, pixmap: QPixmap, target: Path) -> str:
+        """把 shell 图标落成 PNG；小于 128 的图先放大，避免高分屏二次模糊。"""
+        if pixmap.isNull():
+            return ""
+        if pixmap.width() < ICON_MIN_SIZE or pixmap.height() < ICON_MIN_SIZE:
+            pixmap = pixmap.scaled(
+                ICON_MIN_SIZE, ICON_MIN_SIZE,
+                Qt.KeepAspectRatio, Qt.SmoothTransformation)
+        return icon_key(target) if pixmap.save(str(target), "PNG") else ""
+
     def import_file(self, path: str, notify: bool = True) -> str:
         """把一张图片（svg / png / ico / …）复制进图标库，返回它的 icon key。"""
         source = Path(path)
@@ -110,6 +123,9 @@ class IconStore:
         """从一个具体文件取图标；取不到返回空串。"""
         if not source.is_file():
             return ""
+        if QApplication.instance() is None:
+            logger.warning("No QApplication instance, skipping icon extraction")
+            return ""
         suffix = source.suffix.lower()
         if suffix in IMAGE_ICON_SUFFIXES:
             if suffix != ".ico":
@@ -117,22 +133,18 @@ class IconStore:
             # .ico 可能是多尺寸的：转成 256 的 PNG 再入库，小窗放大时不糊。
             icon = QIcon(str(source))
             pixmap = icon.pixmap(256, 256) if not icon.isNull() else None
-            if pixmap is None or pixmap.isNull():
+            if pixmap is None:
                 return ""
             target = self.icon_dir / f"{uuid.uuid4().hex[:8]}.png"
-            return icon_key(target) if pixmap.save(str(target), "PNG") else ""
+            return self._save_pixmap(pixmap, target)
 
         icon = self._provider.icon(QFileInfo(str(source)))
         if icon.isNull():
             return ""
-        # 取最大的一档，通常在 32~256 之间。
+        # 取最大的一档，通常在 32~256 之间；不足 128 时在 _save_pixmap 里补齐。
         pixmap = icon.pixmap(256, 256)
-        if pixmap.isNull():
-            return ""
         target = self.icon_dir / f"{uuid.uuid4().hex[:8]}.png"
-        if not pixmap.save(str(target), "PNG"):
-            return ""
-        return icon_key(target)
+        return self._save_pixmap(pixmap, target)
 
     def extract(self, path: str, notify: bool = True) -> str:
         """从程序 / 快捷方式 / DLL 里抽出图标，落成文件存进图标库。

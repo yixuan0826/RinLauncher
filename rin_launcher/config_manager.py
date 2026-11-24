@@ -36,7 +36,7 @@ from PySide6.QtCore import (
     Signal,
     Slot,
 )
-from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtGui import QDesktopServices, QGuiApplication, QImage
 from PySide6.QtWidgets import QFileDialog
 
 from rin_launcher import __codename__ as APP_CODENAME
@@ -208,6 +208,23 @@ def _migrate_legacy_data(data_dir: Path) -> None:
     logger.info("已把旧数据从 %s 迁移到 %s", DEFAULT_CONFIG_DIR, data_dir)
 
 
+def peek_config_dir() -> Path:
+    """抢单实例锁前的只读预判：不建目录、不迁移数据。
+
+    冻结包的数据目录还没落地时返回 ``%APPDATA%``；第一次真正启动后
+    ``resolve_config_dir`` 会建好 ``data/``，下一次启动这里就能看到。
+    """
+    override = os.environ.get("RINLAUNCHER_CONFIG_DIR", "").strip()
+    if override:
+        return Path(override).expanduser()
+    if not runtime.is_frozen():
+        return DEFAULT_CONFIG_DIR
+    data_dir = runtime.app_dir() / "data"
+    if data_dir.is_dir() and _dir_writable(data_dir):
+        return data_dir
+    return DEFAULT_CONFIG_DIR
+
+
 def resolve_config_dir() -> Path:
     """决定这次运行用哪个数据目录。
 
@@ -295,6 +312,8 @@ class ConfigManager(QObject):
     accentColorChanged = Signal(str)
     # 页面 / 窗口级的请求：QML 侧的页面够不到窗口对象，统一从这里转给 main.py。
     pageRequested = Signal(str)
+    # 小窗右键「编辑」：带上原始行号与原始下标，交给启动台编辑页打开对话框。
+    editSlotRequested = Signal(int, int)
     # 设置页分组跳转（标题栏「…」菜单里选一个分区）。
     settingsSectionRequested = Signal(str)
     # 任务计划状态的后台刷新完成（启动方式下拉据此回填真实值）。
@@ -328,7 +347,14 @@ class ConfigManager(QObject):
         self.icon_dir.mkdir(parents=True, exist_ok=True)
         self.log_dir.mkdir(parents=True, exist_ok=True)
         self.thumbnail_dir.mkdir(parents=True, exist_ok=True)
-        _prune_thumbnail_cache(self.thumbnail_dir)
+        # 缩略图清理要遍历整个 cache 目录，放到首帧之后再跑；用户配置很大时
+        # 这段同步 stat 会直接吃掉冷启动的几百毫秒。
+        self._prune_timer = QTimer(self)
+        self._prune_timer.setSingleShot(True)
+        self._prune_timer.setInterval(6000)
+        self._prune_timer.timeout.connect(
+            lambda: _prune_thumbnail_cache(self.thumbnail_dir))
+        self._prune_timer.start()
 
         self.action_executor = None
         # watchdog 的 Observer 是延迟导入的，这里只留一个不透明的句柄。
@@ -349,20 +375,10 @@ class ConfigManager(QObject):
         # 托盘气泡的投递出口：main.py 在托盘真正起来之后接进来。
         self._tray_sink: Callable[[str, str], Any] | None = None
         # appmodset.conf：启动模式与发布通道的单一来源。
-        values, problems, path = app_mode.load(app_mode_root)
         # 安装目录不可写时，写操作会退到用户数据目录的一份覆盖文件；这里把
         # 覆盖文件里的所有键读回来（first-run / channel / recovery / failsafe），
         # 否则「设置成功但重启后又变回去」。
-        override = self.config_dir / app_mode.CONF_NAME
-        if override.is_file() and override.resolve() != path.resolve():
-            try:
-                override_values, override_problems, _ = app_mode.load(self.config_dir)
-                for key in app_mode.DEFAULTS:
-                    if key in override_values:
-                        values[key] = override_values[key]
-                problems.extend(f"用户目录覆盖：{item}" for item in override_problems)
-            except OSError:
-                logger.debug("读取用户目录 appmodset 覆盖失败", exc_info=True)
+        values, problems, path = app_mode.load_effective(app_mode_root, self.config_dir)
         self._app_mode_values = values
         self._app_mode_problems = problems
         self.app_mode_path = path
@@ -395,7 +411,12 @@ class ConfigManager(QObject):
         # 任务计划状态不再在构造时预热：schtasks 子进程会跟小窗抢启动资源，
         # 等主界面稳定后由 main.py 延迟刷新（或第一次打开设置页时再查）。
         # 7 天一次的自动备份：启动先检查，之后每 6 小时再看一次。
-        self._maybe_auto_backup()
+        # 备份会压 config.yaml / icons，放到首帧之后，避免和小窗加载抢磁盘。
+        self._auto_backup_start = QTimer(self)
+        self._auto_backup_start.setSingleShot(True)
+        self._auto_backup_start.setInterval(8000)
+        self._auto_backup_start.timeout.connect(self._maybe_auto_backup)
+        self._auto_backup_start.start()
         self._backup_timer = QTimer(self)
         self._backup_timer.setInterval(6 * 60 * 60 * 1000)
         self._backup_timer.timeout.connect(self._maybe_auto_backup)
@@ -1921,7 +1942,9 @@ class ConfigManager(QObject):
         if not restart_application(extra):
             self.showToast.emit("重启失败，可以看看日志", "error")
             return False
-        QCoreApplication.quit()
+        # 先返回 QML，再退出事件循环：从托盘菜单 / 嵌套弹层里直接 quit
+        # 偶尔会留下未关闭的事件循环，辅助脚本等不到旧 PID 消失。
+        QTimer.singleShot(0, QCoreApplication.quit)
         return True
 
     @Slot(str)
@@ -1966,7 +1989,7 @@ class ConfigManager(QObject):
         if not restart_application():
             self.showToast.emit("重启失败，可以看看日志", "error")
             return False
-        QCoreApplication.quit()
+        QTimer.singleShot(0, QCoreApplication.quit)
         return True
 
     @Slot(result=bool)
@@ -1976,7 +1999,7 @@ class ConfigManager(QObject):
         if not restart_elevated_delayed():
             self.showToast.emit("提权重启失败，可以看看日志", "error")
             return False
-        QCoreApplication.quit()
+        QTimer.singleShot(0, QCoreApplication.quit)
         return True
 
     def _write_app_mode(self, updates: dict[str, Any]) -> bool:
@@ -2203,6 +2226,22 @@ class ConfigManager(QObject):
         found = shutil.which(text)
         return Path(found) if found else None
 
+    @staticmethod
+    def _save_thumbnail(origin: Path, target: Path) -> bool:
+        """缩略图统一落成 PNG；小于 128 的源图放大，避免高分屏二次模糊。"""
+        image = QImage(str(origin))
+        if not image.isNull():
+            if image.width() < 128 or image.height() < 128:
+                image = image.scaled(
+                    128, 128, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            return image.save(str(target), "PNG")
+        try:
+            shutil.copy2(origin, target)
+            return True
+        except OSError:
+            logger.debug("缩略图缓存失败: %s", origin, exc_info=True)
+            return False
+
     def _make_thumb(self, app: dict[str, Any], target: Path | None) -> str:
         if target is None:
             return ""
@@ -2228,10 +2267,8 @@ class ConfigManager(QObject):
             return ""
         try:
             target.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(origin, target)
-        except OSError:
-            logger.debug("缩略图缓存失败: %s", origin, exc_info=True)
-            return ""
+            if not self._save_thumbnail(origin, target):
+                return ""
         finally:
             # 只有「为了缓存临时抽出来」的图标才删；用户图标库里的原图必须保留。
             if temporary and origin.parent == self.icon_dir and origin != target:
@@ -2327,6 +2364,35 @@ class ConfigManager(QObject):
         if kind == SLOT_PATH:
             return self.openSlot(str(slot.get("path") or ""))
         return False
+
+    @Slot("QVariantMap", result=bool)
+    def runLauncherSlotAsAdmin(self, slot: dict) -> bool:
+        """右键「以管理员身份运行」：只对 file / cmd 动作有意义。"""
+        kind = str(slot.get("kind") or "")
+        inline = slot.get("action")
+        if kind != SLOT_ACTION or not isinstance(inline, dict) or not inline:
+            self.showToast.emit("这一格没有可提权运行的动作", "warning")
+            return False
+        action_type = str(inline.get("type") or "")
+        if action_type not in ("file", "cmd"):
+            self.showToast.emit("只有程序或命令动作支持管理员运行", "warning")
+            return False
+        payload = dict(inline)
+        payload["run_as"] = "admin"
+        payload["name"] = str(slot.get("name") or "")
+        self.executeAction(payload)
+        return True
+
+    @Slot(int, int)
+    def requestEditSlot(self, row: int, index: int) -> None:
+        """小窗右键「编辑」→ main.py 打开启动台编辑窗口并定位到这一格。"""
+        self.editSlotRequested.emit(int(row), int(index))
+
+    @Slot(result="QVariantList")
+    def refreshRemovableDevices(self) -> list[dict]:
+        """右键「刷新」：丢掉 U 盘缓存再读一次。"""
+        self._removable_cache = None
+        return self.getRemovableDevices()
 
     # ------------------------------------------------------------------
     # Shell integration

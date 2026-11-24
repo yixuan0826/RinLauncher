@@ -9,6 +9,8 @@ Item {
     property var slot: null
 
     signal activated(var slot)
+    // 右键菜单：坐标是全局屏幕坐标（mapToGlobal），菜单窗口直接使用。
+    signal contextMenuRequested(var slot, real x, real y)
 
     readonly property bool empty: !slot
     // 引用了被停用的条目时，Python 那边就不会把这一格解析出来，所以这里只兜底。
@@ -107,10 +109,16 @@ Item {
         id: pointer
         anchors.fill: parent
         hoverEnabled: true
+        acceptedButtons: Qt.LeftButton | Qt.RightButton
 
-        onReleased: {
-            // 只在左键按下、且释放仍在格子内时算一次点击；拖出去再松手不启动。
-            if (mouse.button === Qt.LeftButton && containsMouse && !tile.empty) {
+        onClicked: {
+            if (tile.empty) {
+                return
+            }
+            if (mouse.button === Qt.RightButton) {
+                var global = mapToGlobal(mouse.x, mouse.y)
+                tile.contextMenuRequested(tile.slot, global.x, global.y)
+            } else if (mouse.button === Qt.LeftButton) {
                 tile.activated(tile.slot)
             }
         }

@@ -189,8 +189,27 @@ def _xml_attr(node: Any, name: str) -> str:
     return ""
 
 
+def _image_area(path: Path) -> int:
+    """PNG 的像素面积；读不出来时返回 0（UWP 资源基本都是 PNG）。"""
+    try:
+        with open(path, "rb") as handle:
+            header = handle.read(24)
+    except OSError:
+        return 0
+    if (len(header) >= 24 and header.startswith(b"\x89PNG\r\n\x1a\n")
+            and header[12:16] == b"IHDR"):
+        width = int.from_bytes(header[16:20], "big")
+        height = int.from_bytes(header[20:24], "big")
+        return max(0, width) * max(0, height)
+    return 0
+
+
 def _resolve_uwp_logo(root: Path, logo: str) -> Path | None:
-    """把清单里的 Logo 属性解析成实际图片文件（含 scale / targetsize 变体）。"""
+    """把清单里的 Logo 属性解析成实际图片文件（含 scale / targetsize 变体）。
+
+    同一个 Logo 往往有 44 / 88 / 150 / 300 多个变体；这里按真实像素面积取
+    最大的那张，而不是按文件名里 targetsize / scale 的类别拍脑袋。
+    """
     text = str(logo or "").strip()
     if not text:
         return None
@@ -219,7 +238,8 @@ def _resolve_uwp_logo(root: Path, logo: str) -> Path | None:
         return path if path.is_file() else None
     if not candidates:
         return path if path.is_file() else None
-    return min(candidates, key=_asset_rank)
+    return min(candidates, key=lambda item: (
+        -_image_area(item), *_asset_rank(item)))
 
 
 def _uwp_icon(app_id: str) -> str:
@@ -231,12 +251,12 @@ def _uwp_icon(app_id: str) -> str:
     family, _, application = app_id.partition("!")
     root = _load_package_roots().get(family.lower())
     if root is not None and application:
-        logo = ""
+        logos: list[str] = []
+        fallback: list[str] = []
         try:
             import xml.etree.ElementTree as ET
 
             tree = ET.parse(root / "AppxManifest.xml")
-            first = ""
             for node in tree.iter():
                 if node.tag.split("}")[-1] != "Application":
                     continue
@@ -247,21 +267,36 @@ def _uwp_icon(app_id: str) -> str:
                 )
                 if visual is None:
                     continue
-                current = (_xml_attr(visual, "Square44x44Logo")
-                           or _xml_attr(visual, "Square150x150Logo")
-                           or _xml_attr(visual, "Logo"))
-                if node.get("Id", "").lower() == application.lower():
-                    logo = current
+                current = [
+                    _xml_attr(visual, name)
+                    for name in ("Square150x150Logo", "Square44x44Logo", "Logo")
+                ]
+                current = [value for value in current if value]
+                is_target = node.get("Id", "").lower() == application.lower()
+                if is_target:
+                    for value in current:
+                        if value not in logos:
+                            logos.append(value)
+                elif not fallback:
+                    fallback = current
+                if is_target and logos:
                     break
-                if not first:
-                    first = current
-            logo = logo or first
         except Exception:
             logger.debug("Cannot read the manifest of %s", root, exc_info=True)
-        if logo:
+        if not logos:
+            logos = fallback
+        best: Path | None = None
+        best_area = -1
+        for logo in logos:
             asset = _resolve_uwp_logo(root, logo)
-            if asset is not None:
-                icon = f"file:{asset}"
+            if asset is None:
+                continue
+            area = _image_area(asset)
+            if area > best_area:
+                best = asset
+                best_area = area
+        if best is not None:
+            icon = f"file:{best}"
     _uwp_icon_cache[key] = icon
     return icon
 

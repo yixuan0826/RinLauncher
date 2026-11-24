@@ -42,6 +42,32 @@ def test_update_preserves_comments_and_unknown_lines(tmp_path):
     assert "debug==true" in text
 
 
+def test_load_effective_merges_data_dir_override(tmp_path):
+    install = tmp_path / "app"
+    install.mkdir()
+    data = tmp_path / "data"
+    data.mkdir()
+    app_mode.update(install, {"recovery": True, "channel": "stable"})
+    app_mode.update(data, {"recovery": False, "channel": "prerelease"})
+
+    values, problems, path = app_mode.load_effective(install, data)
+
+    assert values["recovery"] is False
+    assert values["channel"] == "prerelease"
+    assert problems == []
+    assert path == install / app_mode.CONF_NAME
+
+
+def test_load_effective_ignores_missing_override(tmp_path):
+    install = tmp_path / "app"
+    install.mkdir()
+    app_mode.update(install, {"recovery": True})
+
+    values, _, _ = app_mode.load_effective(install, tmp_path / "absent")
+
+    assert values["recovery"] is True
+
+
 def test_effective_mode_priority():
     mode = app_mode.effective_mode({
         "first-run": True, "failsafe": True, "recovery": True, "debug": True,
@@ -94,12 +120,14 @@ def test_restart_with_mode_persists_recovery(qapp, tmp_path, monkeypatch):
     monkeypatch.setattr(manager_module, "QCoreApplication", _DummyApp)
     try:
         assert manager.restartWithMode("recovery") is True
+        qapp.processEvents()
         values, _, _ = app_mode.load(tmp_path)
         assert values["recovery"] is True
         assert values["failsafe"] is False
         assert calls == [["--recovery"], "quit"]
 
         assert manager.restartWithMode("normal") is True
+        qapp.processEvents()
         values, _, _ = app_mode.load(tmp_path)
         assert values["recovery"] is False
         assert values["failsafe"] is False

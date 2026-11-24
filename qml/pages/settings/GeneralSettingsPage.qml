@@ -14,6 +14,7 @@ Item {
 
     readonly property var startupModes: ["off", "normal", "admin"]
     property int startupPendingAttempts: 0
+    property bool startupMismatch: false
 
     Flickable {
         id: flick
@@ -43,6 +44,15 @@ Item {
                             pageRoot.applyStartup(index)
                         }
                     }
+                }
+
+                Text {
+                    Layout.fillWidth: true
+                    visible: pageRoot.startupMismatch
+                    wrapMode: Text.Wrap
+                    typography: Typography.Caption
+                    color: Theme.currentTheme.colors.systemCautionColor
+                    text: qsTr("系统里的启动项和设置不一致，可能还指向旧版本。重新选择一次启动方式即可修复。")
                 }
 
                 FormRow {
@@ -341,6 +351,10 @@ Item {
     function reloadStartup() {
         var info = ConfigManager.getStartupState()
         startupCombo.currentIndex = Math.max(0, startupModes.indexOf(info.state))
+        // 任务计划 / 注册表可能还指着旧版本的 exe（更新、移动目录后最常见）。
+        // 这时 state 会回落到 off，和设置的 mode 不一致；提示用户重新选一次。
+        startupMismatch = info.mode !== "off" && info.state !== info.mode
+            && startupPendingAttempts <= 0
     }
 
     onVisibleChanged: {

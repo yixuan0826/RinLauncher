@@ -303,6 +303,13 @@ Window {
                 slots: compact.panelSlots
                 sizeMode: compact.tileSizeMode
                 onActivated: compact.runSlot(slot)
+                onContextMenuRequested: function (slot, x, y) {
+                    if (compactMenu.visible) {
+                        compactMenu.closeMenu()
+                        return
+                    }
+                    compact.popupSlotMenu(slot, x, y)
+                }
             }
 
             // ── 第三行：存储位置 + 磁盘入口 ──
@@ -313,6 +320,20 @@ Window {
                 usbDevices: compact.usbDevices
                 onStorageActivated: compact.openStorage()
                 onSlotActivated: compact.runSlot(slot)
+                onStorageContextRequested: function (x, y) {
+                    if (compactMenu.visible) {
+                        compactMenu.closeMenu()
+                        return
+                    }
+                    compact.popupStorageMenu(x, y)
+                }
+                onUsbContextRequested: function (x, y) {
+                    if (compactMenu.visible) {
+                        compactMenu.closeMenu()
+                        return
+                    }
+                    compact.popupUsbMenu(x, y)
+                }
             }
 
             // ── 底部：系统控制（音量 / Wi-Fi / 热点） ──
@@ -335,6 +356,27 @@ Window {
             onSlotActivated: compact.runSlot(slot)
             onStorageActivated: compact.openStorage()
             onMoreRequested: compact.popupMoreMenu(anchor)
+            onSlotContextRequested: function (slot, x, y) {
+                if (compactMenu.visible) {
+                    compactMenu.closeMenu()
+                    return
+                }
+                compact.popupSlotMenu(slot, x, y)
+            }
+            onStorageContextRequested: function (x, y) {
+                if (compactMenu.visible) {
+                    compactMenu.closeMenu()
+                    return
+                }
+                compact.popupStorageMenu(x, y)
+            }
+            onUsbContextRequested: function (x, y) {
+                if (compactMenu.visible) {
+                    compactMenu.closeMenu()
+                    return
+                }
+                compact.popupUsbMenu(x, y)
+            }
         }
 
         // 常驻小窗没有 FloatLayer 那种容器，自绘一条提示更合适。
@@ -499,6 +541,21 @@ Window {
             { confirmText: qsTr("运行") })
     }
 
+    function askAdminRunAs(slot) {
+        _pendingAdminSlot = slot
+        var name = slot && slot.name ? slot.name : qsTr("这个动作")
+        adminConfirmDialog.ask(
+            qsTr("以管理员身份运行「%1」？会弹出 UAC 授权窗口。").arg(name),
+            function () {
+                var target = _pendingAdminSlot
+                _pendingAdminSlot = null
+                if (target) {
+                    ConfigManager.runLauncherSlotAsAdmin(target)
+                }
+            },
+            { confirmText: qsTr("运行") })
+    }
+
     function runTool(key) {
         switch (key) {
         case "launcherPage":
@@ -537,7 +594,68 @@ Window {
         compact.openMainRequested(page)
     }
 
-    // 菜单内容一律走独立窗口；屏幕坐标 = 窗口坐标 + 场景坐标。
+    // ── 右键菜单 ─────────────────────────────────────────────────────
+    // 只给「面板快捷方式 / 固定存储卡 / U 盘卡」开菜单；系统控制条等卡片保持
+    // 干净，避免整块小窗到处都能弹出菜单。
+    function popupSlotMenu(slot, x, y) {
+        if (!slot) {
+            return
+        }
+        var list = []
+        if (slot.enabled !== false) {
+            list.push({ icon: "ic_fluent_play_20_regular", text: qsTr("运行"),
+                        action: function () { compact.runSlot(slot) } })
+        }
+        if (slot.kind === "action"
+                && (slot.type === "file" || slot.type === "cmd")) {
+            list.push({ icon: "ic_fluent_shield_20_regular",
+                        text: qsTr("以管理员身份运行"),
+                        action: function () { compact.runSlotAsAdmin(slot) } })
+        }
+        if (list.length > 0) {
+            list.push({ separator: true })
+        }
+        list.push({ icon: "ic_fluent_edit_20_regular", text: qsTr("编辑"),
+                    action: function () {
+                        ConfigManager.requestEditSlot(slot.row, slot.rowIndex)
+                    } })
+        compactMenu.openAtCursor(x, y, list, menuArea())
+    }
+
+    function popupStorageMenu(x, y) {
+        compactMenu.openAtCursor(x, y, [
+            { icon: "ic_fluent_folder_open_20_regular", text: qsTr("打开"),
+              action: function () { compact.openStorage() } },
+            { separator: true },
+            { icon: "ic_fluent_edit_20_regular", text: qsTr("编辑"),
+              action: function () { compact.openMain("launcher") } }
+        ], menuArea())
+    }
+
+    function popupUsbMenu(x, y) {
+        var hasDevice = compact.usbDevices.length > 0
+        compactMenu.openAtCursor(x, y, [
+            { icon: "ic_fluent_folder_open_20_regular", text: qsTr("打开"),
+              enabled: hasDevice,
+              action: function () { ConfigManager.openRemovableDrive() } },
+            { icon: "ic_fluent_arrow_sync_20_regular", text: qsTr("刷新"),
+              action: function () {
+                  ConfigManager.refreshRemovableDevices()
+                  compact.refreshLive()
+              } }
+        ], menuArea())
+    }
+
+    function runSlotAsAdmin(slot) {
+        if (ConfigManager.getSettings().confirmAdminActions !== false) {
+            compact.askAdminRunAs(slot)
+            return
+        }
+        ConfigManager.runLauncherSlotAsAdmin(slot)
+    }
+
+    // 右键菜单直接传全局屏幕坐标；「更多」按锚点定位时才用
+    // 「屏幕坐标 = 窗口坐标 + 场景坐标」。
     function popupMoreMenu(anchor) {
         var item = anchor || moreButton
         var scene = item.mapToItem(null, item.width, 0)

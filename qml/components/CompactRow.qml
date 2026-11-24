@@ -14,6 +14,7 @@ Item {
     property real tileSizeOverride: 0
 
     signal activated(var slot)
+    signal contextMenuRequested(var slot, real x, real y)
 
     readonly property int gap: 10
     // 格子边长跟着宽度走，但有上下限：太少不至于撑成巨块，太多也不会缩成点。
@@ -55,6 +56,9 @@ Item {
                     height: row.tileSize
                     slot: modelData
                     onActivated: row.activated(slot)
+                    onContextMenuRequested: function (slot, x, y) {
+                        row.contextMenuRequested(slot, x, y)
+                    }
                 }
             }
         }
