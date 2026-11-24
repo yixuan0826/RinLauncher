@@ -1,6 +1,6 @@
 # AGENTS.md — Rin Launcher 接手指南
 
-> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.6-pre`（commit `<待填>`）。
+> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.6-pre`（commit `a052473`）。
 > 先读完本文件再动代码。规则优先级：用户当场指令 > 本文件 > 个人偏好。
 > 不确定就查代码 / 官方文档，不要凭记忆断言。
 
@@ -376,15 +376,15 @@ $rel.assets | Select-Object name, size, digest
 
 ### 11.2 当前发布基线
 
-- 分支：`main`，commit `441b7a6`（`fix(1.2.5-pre): 修复重启与恢复模式，重做设置导航`）
-- tag / Release：`v1.2.5-pre`
-- Release：https://github.com/yixuan0826/RinLauncher/releases/tag/v1.2.5-pre
-- Release run：`45313410658`，21 步全部成功
-- main CI：`45313403641`，成功
-- 资产：`RinLauncher.zip`，57,119,250 B（54.47 MiB）
-- SHA-256：`a811c36f8a4d886fb77b95597d4f1257546e17203778c635daf228f2f9a5ad7e`
-- 测试：202 passed；qmllint 45 个文件 0 失败
-- 冷启动：主 exe UPX 后约 1.05 s（历史基线，未在 1.2.5-pre 重测）
+- 分支：`main`，commit `a052473`（`fix(1.2.6-pre): 修复重启与自启动，恢复小窗右键菜单`）
+- tag / Release：`v1.2.6-pre`
+- Release：https://github.com/yixuan0826/RinLauncher/releases/tag/v1.2.6-pre
+- Release run：`45376728651`，21 步全部成功
+- main CI：`45376714549`，成功
+- 资产：`RinLauncher.zip`，57,157,094 B（54.51 MiB）
+- SHA-256：`4da7bc366f2d3a7caaf1a1729fe5539b138d5347324db10413ea3a760e9f6b7c`
+- 测试：215 passed；qmllint 45 个文件 0 失败
+- 冷启动：主 exe UPX 后约 1.05 s（历史基线，未在 1.2.6-pre 重测）
 
 ### 11.3 下一步建议
 
@@ -394,7 +394,8 @@ $rel.assets | Select-Object name, size, digest
 4. 若支持 Program Files 安装，数据目录 `appmodset.conf` 覆盖已前移到单实例
    判断之前（1.2.6-pre）；后续只需补测试。
 5. 关注 zip 体积；新增依赖后先跑 CI 体积门禁。
-6. 更新器 / 恢复模式的新改动优先补纯逻辑测试，避免测试里真弹 UAC。
+6. Win10 22H2 用同版本冻结包复测一次小窗 / 菜单圆角与材质。
+7. 更新器 / 恢复模式的新改动优先补纯逻辑测试，避免测试里真弹 UAC。
 
 ## 12. 交付格式
 
