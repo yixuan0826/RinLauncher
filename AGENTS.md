@@ -1,6 +1,6 @@
 # AGENTS.md — Rin Launcher 接手指南
 
-> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.7-pre`。
+> 面向下一位接手的 AI / 工程师。最后更新：2026-11-24，基线 `v1.2.7-pre`（commit `6ec2810`）。
 > 先读完本文件再动代码。规则优先级：用户当场指令 > 本文件 > 个人偏好。
 > 不确定就查代码 / 官方文档，不要凭记忆断言。
 
@@ -350,7 +350,7 @@ $rel.assets | Select-Object name, size, digest
 7. **QML 图标名不存在时是空白**，不是报错；只用已验证的 `ic_fluent_*`。
 8. **设置标题与卡片宽度公式不一致**会产生 8 px 错位；改一边必须改另一边。
 9. **更新器只认 `RinLauncher.zip`**；Release 不要加第二个 zip 或改资产名。
-10. **zip 体积门禁很紧**（当前 54.51 / 55 MiB），新增依赖前先看产物。
+10. **zip 体积门禁很紧**（当前 54.52 / 55 MiB），新增依赖前先看产物。
 11. **qmllint 的 warning 走 stderr**；CI 必须通过
     `scripts/lint_qml.py`，不要用 PowerShell 直接循环调用。
 12. **本地根目录会生成 `appmodset.conf`**（源码探针 / 首次运行）；
@@ -399,15 +399,15 @@ $rel.assets | Select-Object name, size, digest
 
 ### 11.2 当前发布基线
 
-- 分支：`main`，commit `a052473`（`fix(1.2.6-pre): 修复重启与自启动，恢复小窗右键菜单`）
-- tag / Release：`v1.2.6-pre`
-- Release：https://github.com/yixuan0826/RinLauncher/releases/tag/v1.2.6-pre
-- Release run：`45376728651`，21 步全部成功
-- main CI：`45376714549`，成功
-- 资产：`RinLauncher.zip`，57,157,094 B（54.51 MiB）
-- SHA-256：`4da7bc366f2d3a7caaf1a1729fe5539b138d5347324db10413ea3a760e9f6b7c`
-- 测试：215 passed；qmllint 45 个文件 0 失败
-- 冷启动：主 exe UPX 后约 1.05 s（历史基线，未在 1.2.6-pre 重测）
+- 分支：`main`，commit `6ec2810`（`fix(1.2.7-pre): 归一 Nuitka 启动路径，修复自启动与重启`）
+- tag / Release：`v1.2.7-pre`
+- Release：https://github.com/yixuan0826/RinLauncher/releases/tag/v1.2.7-pre
+- Release run：`45406179185`，21 步全部成功
+- main CI：`45406163544`，成功
+- 资产：`RinLauncher.zip`，57,172,467 B（54.52 MiB）
+- SHA-256：`63e4c090933534d52b314ed9b86b65ddf9987eb4d4a6116dcffc2e8f3f026b56`
+- 测试：232 passed；qmllint 45 个文件 0 失败
+- 冷启动：主 exe UPX 后约 1.05 s（历史基线，未在 1.2.7-pre 重测）
 
 ### 11.3 下一步建议
 
